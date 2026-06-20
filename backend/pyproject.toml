@@ -1,0 +1,36 @@
+[project]
+name = "cladewright-backend"
+version = "0.0.0"
+description = "Cladewright backend: serves the game-data asset, accounts, scores."
+requires-python = ">=3.12"
+dependencies = [
+    "django>=5.0",
+    "djangorestframework>=3.15",
+    "django-allauth[socialaccount]>=0.63",
+    "django-cors-headers>=4.4",
+]
+
+# The data pipeline (backend/pipeline/) additionally imports BICHO and Braidworks
+# from the sibling repos. They are NOT needed to serve requests, only to run
+# `manage.py build_gamedata`. Wire them in Phase 1, e.g. as editable/path installs:
+#   pip install -e ../../BICHOv2-as-package  # (BICHO currently runs via PYTHONPATH=src)
+#   pip install -e ../../braidworks/braidworks-core ../../braidworks/weavers/*
+# See backend/pipeline/README.md.
+[project.optional-dependencies]
+pipeline = [
+    # "bicho",       # TODO(phase-1): pin the BICHO ingest package
+    # "braidworks-core",
+]
+dev = [
+    "ruff>=0.6",
+    "pytest>=8",
+    "pytest-django>=4",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "cladewright.settings"
+python_files = "test_*.py"

@@ -1,0 +1,29 @@
+# --- Data artifacts (never commit; see AGENTS.md) ---
+/data/
+*.coldp
+*.tar.gz
+*.sqlite
+*.sqlite3
+
+# --- Python / Django ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+db.sqlite3
+/backend/staticfiles/
+.env
+
+# --- Node / frontend ---
+node_modules/
+/frontend/dist/
+/frontend/.vite/
+npm-debug.log*
+
+# --- Editor / OS ---
+.DS_Store
+.idea/
+.vscode/

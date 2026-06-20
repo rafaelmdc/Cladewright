@@ -1,0 +1,56 @@
+"""
+Internal pipeline types (not the wire format — that's docs/game-asset-format.md).
+
+These are the in-memory shapes passed between stages. Kept deliberately small;
+flesh out fields as stages are implemented in Phase 1.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Taxon:
+    """One accepted species from ColDP, with its denormalized ranked lineage."""
+
+    source_id: str
+    scientific_name: str
+    # ordered (rank, name) lineage from kingdom down to the parent of this species
+    lineage: list[tuple[str, str]]
+    vernacular: str | None = None          # CoL VernacularName, if present
+    environment: list[str] = field(default_factory=list)
+    biomes: list[str] = field(default_factory=list)
+    extinct: bool = False
+
+
+@dataclass
+class Node:
+    """Internal clade node in the backbone."""
+
+    id: str
+    rank: str
+    sci: str
+    common: str | None
+    parent: str | None
+    pool_count: int = 0
+
+
+@dataclass
+class Tree:
+    """The full backbone: id -> Node, plus the species tips hung beneath it."""
+
+    nodes: dict[str, Node]
+    root_id: str
+    # tip id -> (parent node id, Taxon)
+    tips: dict[str, tuple[str, Taxon]]
+
+
+@dataclass
+class EnrichedTip:
+    """A pool tip after common-name + fame enrichment."""
+
+    taxon: Taxon
+    common: str           # resolved display name (vernacular → wikidata → sci)
+    aliases: list[str]
+    fame: float
+    time_weight: float = 1.0

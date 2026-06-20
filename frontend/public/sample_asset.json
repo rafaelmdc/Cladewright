@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "schema": "1.0",
+  "scope": "kingdom=Animalia",
+  "pool_size": 6,
+  "thresholds": { "hidden_label_max": 15 },
+  "provenance": {
+    "coldp_release": "fixture",
+    "bicho_version": "fixture",
+    "braidworks_version": "fixture",
+    "built_at": "2026-06-20T00:00:00Z",
+    "note": "Hand-authored Phase 0 dev fixture — not real data."
+  },
+  "nodes": [
+    { "id": "kng:Animalia", "rank": "kingdom", "sci": "Animalia", "common": "animals", "parent": null, "pool_count": 6 },
+    { "id": "phy:Chordata", "rank": "phylum", "sci": "Chordata", "common": "chordates", "parent": "kng:Animalia", "pool_count": 6 },
+    { "id": "cls:Mammalia", "rank": "class", "sci": "Mammalia", "common": "mammals", "parent": "phy:Chordata", "pool_count": 4 },
+    { "id": "ord:Carnivora", "rank": "order", "sci": "Carnivora", "common": "carnivorans", "parent": "cls:Mammalia", "pool_count": 4 },
+    { "id": "fam:Ursidae", "rank": "family", "sci": "Ursidae", "common": "bears", "parent": "ord:Carnivora", "pool_count": 2 },
+    { "id": "gen:Ursus", "rank": "genus", "sci": "Ursus", "common": null, "parent": "fam:Ursidae", "pool_count": 2 },
+    { "id": "fam:Felidae", "rank": "family", "sci": "Felidae", "common": "cats", "parent": "ord:Carnivora", "pool_count": 2 },
+    { "id": "gen:Panthera", "rank": "genus", "sci": "Panthera", "common": null, "parent": "fam:Felidae", "pool_count": 1 },
+    { "id": "gen:Felis", "rank": "genus", "sci": "Felis", "common": null, "parent": "fam:Felidae", "pool_count": 1 },
+    { "id": "cls:Aves", "rank": "class", "sci": "Aves", "common": "birds", "parent": "phy:Chordata", "pool_count": 2 },
+    { "id": "ord:Passeriformes", "rank": "order", "sci": "Passeriformes", "common": "perching birds", "parent": "cls:Aves", "pool_count": 2 },
+    { "id": "fam:Corvidae", "rank": "family", "sci": "Corvidae", "common": "crows and jays", "parent": "ord:Passeriformes", "pool_count": 2 },
+    { "id": "gen:Corvus", "rank": "genus", "sci": "Corvus", "common": null, "parent": "fam:Corvidae", "pool_count": 2 }
+  ],
+  "tips": [
+    {
+      "id": "tip:Ursus_arctos", "sci": "Ursus arctos", "common": "brown bear", "parent": "gen:Ursus",
+      "lineage": ["kng:Animalia", "phy:Chordata", "cls:Mammalia", "ord:Carnivora", "fam:Ursidae", "gen:Ursus"],
+      "fame": 0.83, "time_weight": 1.0,
+      "traits": { "environment": ["terrestrial"], "biomes": ["Palearctic", "Nearctic"], "extinct": false }
+    },
+    {
+      "id": "tip:Ursus_maritimus", "sci": "Ursus maritimus", "common": "polar bear", "parent": "gen:Ursus",
+      "lineage": ["kng:Animalia", "phy:Chordata", "cls:Mammalia", "ord:Carnivora", "fam:Ursidae", "gen:Ursus"],
+      "fame": 0.88, "time_weight": 1.0,
+      "traits": { "environment": ["terrestrial", "marine"], "biomes": ["Arctic"], "extinct": false }
+    },
+    {
+      "id": "tip:Panthera_leo", "sci": "Panthera leo", "common": "lion", "parent": "gen:Panthera",
+      "lineage": ["kng:Animalia", "phy:Chordata", "cls:Mammalia", "ord:Carnivora", "fam:Felidae", "gen:Panthera"],
+      "fame": 0.95, "time_weight": 1.0,
+      "traits": { "environment": ["terrestrial"], "biomes": ["Afrotropical"], "extinct": false }
+    },
+    {
+      "id": "tip:Felis_catus", "sci": "Felis catus", "common": "domestic cat", "parent": "gen:Felis",
+      "lineage": ["kng:Animalia", "phy:Chordata", "cls:Mammalia", "ord:Carnivora", "fam:Felidae", "gen:Felis"],
+      "fame": 0.97, "time_weight": 1.0,
+      "traits": { "environment": ["terrestrial"], "biomes": ["Cosmopolitan"], "extinct": false }
+    },
+    {
+      "id": "tip:Corvus_corax", "sci": "Corvus corax", "common": "common raven", "parent": "gen:Corvus",
+      "lineage": ["kng:Animalia", "phy:Chordata", "cls:Aves", "ord:Passeriformes", "fam:Corvidae", "gen:Corvus"],
+      "fame": 0.72, "time_weight": 1.0,
+      "traits": { "environment": ["terrestrial"], "biomes": ["Holarctic"], "extinct": false }
+    },
+    {
+      "id": "tip:Corvus_corone", "sci": "Corvus corone", "common": "carrion crow", "parent": "gen:Corvus",
+      "lineage": ["kng:Animalia", "phy:Chordata", "cls:Aves", "ord:Passeriformes", "fam:Corvidae", "gen:Corvus"],
+      "fame": 0.55, "time_weight": 1.0,
+      "traits": { "environment": ["terrestrial"], "biomes": ["Palearctic"], "extinct": false }
+    }
+  ],
+  "aliases": {
+    "brown bear": ["tip:Ursus_arctos"],
+    "grizzly": ["tip:Ursus_arctos"],
+    "grizzly bear": ["tip:Ursus_arctos"],
+    "ursus arctos": ["tip:Ursus_arctos"],
+    "polar bear": ["tip:Ursus_maritimus"],
+    "ursus maritimus": ["tip:Ursus_maritimus"],
+    "bear": ["tip:Ursus_arctos", "tip:Ursus_maritimus"],
+    "lion": ["tip:Panthera_leo"],
+    "panthera leo": ["tip:Panthera_leo"],
+    "domestic cat": ["tip:Felis_catus"],
+    "house cat": ["tip:Felis_catus"],
+    "cat": ["tip:Felis_catus"],
+    "felis catus": ["tip:Felis_catus"],
+    "common raven": ["tip:Corvus_corax"],
+    "raven": ["tip:Corvus_corax"],
+    "corvus corax": ["tip:Corvus_corax"],
+    "carrion crow": ["tip:Corvus_corone"],
+    "crow": ["tip:Corvus_corone"],
+    "corvus corone": ["tip:Corvus_corone"]
+  }
+}

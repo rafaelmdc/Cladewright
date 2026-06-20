@@ -123,15 +123,21 @@ source) is **comprehensiveness, not fuzzy matching**: a big precomputed
 `normalized name → id` map, then an **exact lookup** at play time. No edit-distance
 engine; the dictionary is just rich enough.
 
-What feeds the alias index (richest sources first — the first two are the ones we
-were missing):
+What feeds the alias index (this is how the reference gets its coverage — verified
+against its `species.py`):
 
-- **Wikipedia redirects** (`prop=redirects`) — the colloquial gold: "panda bear",
-  "pandas", "land otter" all redirect to their species' article.
-- **Wikidata aliases** (`skos:altLabel`) — "the lion", "asiatic lion", spelling
-  variants, synonyms.
-- **Wikidata / CoL vernacular names** (`P1843`, `VernacularName.tsv`).
+- **enwiki sitelink title** — the *primary* source. The English Wikipedia article
+  for a clade is usually titled with the common name: Hyaenidae → "Hyena",
+  Pholidota → "Pangolin", Tachyglossidae → "Echidna", Ursidae → "Bear".
+- **Wikidata aliases** (`skos:altLabel`) + **label** — "the lion", "panda bear",
+  "kangaroos", spelling variants, synonyms.
+- **CoL / Wikidata vernacular names** (`VernacularName.tsv`, `P1843`).
 - **Scientific names** and **clade names** (genus/family/… — clades are nameable).
+- *(Optional, not yet: Wikipedia `prop=redirects` for the long tail — the reference
+  ships with this disabled, so we don't need it for parity.)*
+
+Crucially these are harvested for **clade nodes too**, not just species — that's how
+"bear"/"whale"/"sloth" resolve.
 
 All flattened through the same `normalize()` (lowercase, hyphens + underscores →
 spaces, punctuation folded, whitespace collapsed) and baked into the asset's
@@ -140,15 +146,19 @@ species** — that's how "bear" → *Ursidae*, "whale" → a cetacean clade, "sl
 *Folivora* resolve (the reference does the same by harvesting every taxon). No
 dropdowns / autocomplete UI — the player just types and it resolves.
 
-The frontend **resolve(query)** is deliberately tiny (no fuzzy engine):
+The frontend **resolve(query)** is deliberately tiny (no fuzzy engine, no dropdowns):
 
-1. `normalize(query)` → exact lookup in `aliases`.
-2. miss + ends in s/es/ies → retry the de-pluralized form ("bears" → "bear").
-3. multiple candidates → drop any that is an *ancestor* of another candidate
+1. `normalize(query)` → **one** lookup in `aliases`. Plurals are handled at *build*
+   time, not here: every alias is indexed under both its singular and plural form
+   (`index_keys`), so "bears" and "bear" both hit without the query trying variants.
+   Lookup stays O(1) per guess.
+2. multiple candidates → drop any that is an *ancestor* of another candidate
    (so "hippopotamus" → the species, not the genus); if still >1 (genuine
    ambiguity like "elk" = wapiti/moose), pick the **highest-fame** one.
 
-A miss after that just doesn't resolve (no wrong guess spent). See
+A miss just doesn't resolve (no wrong guess spent). Known edge: cross-kingdom
+scientific-name homonyms (e.g. *Pholidota* = pangolins *and* an orchid genus) can
+resolve to the wrong kingdom; scope the Wikidata lookup to Animalia to fix. See
 [`data-pipeline.md`](data-pipeline.md#stage-4--braidworks-enrichment-common-names--fame)
 for harvesting and [`game-asset-format.md`](game-asset-format.md#aliases--autocomplete--matching-index)
 for the index shape.

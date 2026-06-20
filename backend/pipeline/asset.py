@@ -13,7 +13,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .enrich import normalize
+from .enrich import index_keys
 from .ids import tip_id
 from .types import EnrichedTip, Tree
 
@@ -78,12 +78,11 @@ def build_asset(
     aliases: dict[str, list[str]] = {}
 
     def add_alias(name: str, target_id: str) -> None:
-        key = normalize(name)
-        if not key:
-            return
-        bucket = aliases.setdefault(key, [])
-        if target_id not in bucket:
-            bucket.append(target_id)
+        # Bake singular+plural keys at build; query stays a single normalize() lookup.
+        for key in index_keys(name):
+            bucket = aliases.setdefault(key, [])
+            if target_id not in bucket:  # dedup: never the same target twice
+                bucket.append(target_id)
 
     for node_id in induced:
         node = tree.nodes[node_id]

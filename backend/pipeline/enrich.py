@@ -37,6 +37,40 @@ def normalize(name: str) -> str:
     return _WS.sub(" ", _PUNCT.sub("", name.lower().replace("_", " "))).strip()
 
 
+def _singularize(word: str) -> str:
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"  # wallabies -> wallaby
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]  # bears -> bear, whales -> whale
+    return word
+
+
+def _pluralize(word: str) -> str:
+    if word.endswith(("s", "x", "z", "ch", "sh")):
+        return word + "es"
+    if len(word) > 1 and word.endswith("y") and word[-2] not in "aeiou":
+        return word[:-1] + "ies"  # wallaby -> wallabies
+    return word + "s"
+
+
+def index_keys(name: str) -> list[str]:
+    """Alias-index keys for a name: its normalized form PLUS the singular/plural of the
+    last word. Baking both forms at build time means resolution is a single O(1)
+    ``normalize(query)`` lookup that matches either form — without de-pluralizing (and
+    mangling) scientific names, since the original is always kept. Plurals sit on the
+    last word ("polar bears" -> "polar bear")."""
+    base = normalize(name)
+    if not base:
+        return []
+    parts = base.split(" ")
+    last = parts[-1]
+    keys = {base}
+    for variant in (_singularize(last), _pluralize(last)):
+        if variant != last:
+            keys.add(" ".join(parts[:-1] + [variant]))
+    return sorted(keys)
+
+
 class EnrichProvider(Protocol):
     """How the pipeline reaches common names + fame. Implemented by Braidworks.
 
@@ -109,7 +143,10 @@ class BraidworksProvider:
         if not todo:
             return
 
-        targets = {"organism.vernacular_names"}
+        # wikipedia.title is the enwiki article title — the reference's *primary*
+        # alias source ("Hyena" for Hyaenidae, "Pangolin" for Pholidota). wikidata
+        # produces it for free, so always request it.
+        targets = {"organism.vernacular_names", "wikipedia.title"}
         only = {"wikidata"}
         if with_pageviews:  # names-only is much faster for resolution-only builds
             targets.add("wikipedia.pageviews")
@@ -132,8 +169,13 @@ class BraidworksProvider:
                 continue
             pv_strand = ss.get("wikipedia.pageviews")
             vn_strand = ss.get("organism.vernacular_names")
+            title_strand = ss.get("wikipedia.title")
+            # Title first — it's usually the cleanest common name (and a great display).
+            names = [title_strand.value] if title_strand else []
+            names += list(vn_strand.value) if vn_strand else []
             self._cache[name_strand.value] = {
-                "names": list(vn_strand.value) if vn_strand else [],
+                # dedup while preserving order (the title often repeats a vernacular).
+                "names": list(dict.fromkeys(names)),
                 "pageviews": int(pv_strand.value) if pv_strand else 0,
             }
         self._max_log = max(

@@ -8,7 +8,7 @@ import json
 import time
 from pathlib import Path
 
-from pipeline import asset, backbone, enrich, ingest, pool, validate
+from pipeline import asset, backbone, enrich, ingest, paraphyletic, pool, validate
 
 t0 = time.time()
 coldp = Path("../data/coldp_mammalia")
@@ -20,6 +20,9 @@ print(f"ingest: {len(taxa)} accepted species", flush=True)
 tree = backbone.build_backbone(taxa)
 print(f"backbone: {len(tree.nodes)} clade nodes, {len(tree.tips)} tips", flush=True)
 
+group_aliases = paraphyletic.apply_groups(tree)  # virtual "Fox" etc.
+print(f"paraphyletic: {len(group_aliases)} virtual group nodes", flush=True)
+
 ptaxa = pool.select_pool(tree)  # all non-extinct
 print(f"pool: {len(ptaxa)} playable tips", flush=True)
 
@@ -30,7 +33,9 @@ print(f"  {time.time()-t0:.0f}s — harvesting clade-node names…", flush=True)
 node_names = enrich.enrich_clade_nodes(tree, provider)  # harvests ALL clade nodes
 print(f"  {len(node_names)} clade nodes got names ({time.time()-t0:.0f}s)", flush=True)
 
-doc = asset.build_asset(tree, enriched, node_names=node_names, scope="class=Mammalia")
+doc = asset.build_asset(
+    tree, enriched, node_names=node_names, group_aliases=group_aliases, scope="class=Mammalia"
+)
 validate.validate_asset(doc)
 asset.write_asset(doc, out)
 print(f"asset: pool_size={doc['pool_size']}, nodes={len(doc['nodes'])}, "
@@ -48,8 +53,9 @@ print(f"          {named_nodes}/{len(doc['nodes'])} clade nodes have a common na
       f"({100*named_nodes/len(doc['nodes']):.1f}%)", flush=True)
 
 # Spot-check the cases the user cares about.
-checks = ["anteater", "anteaters", "sloth", "armadillo", "bear", "bears",
-          "panda bear", "river otter", "giant panda", "lion", "blue whale"]
+checks = ["anteater", "sloth", "armadillo", "bear", "panda bear", "river otter",
+          "giant panda", "lion", "blue whale",
+          "fox", "foxes", "vixen", "vulpes", "red fox", "silver fox"]
 print("--- resolution spot-check ---", flush=True)
 nodes = {n["id"]: n for n in doc["nodes"]}
 tipmap = {t["id"]: t for t in tips}

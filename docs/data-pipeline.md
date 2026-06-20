@@ -120,13 +120,27 @@ so it is cheap and Braidworks' caching makes re-runs near-free.
 
 Name handling produced here:
 
-- A **display common name** per tip, by precedence: CoL `VernacularName` →
-  Wikidata vernacular → scientific name as last resort (the UI always shows both
-  anyway).
-- An **alias/autocomplete table**: every accepted common name, plus obvious
-  variants, mapping many↔one to tip ids. This is the backbone of typo-free
-  autocomplete and is where common-name ambiguity ("cat", "bear") gets resolved
-  deliberately rather than at play time.
+- A **display common name** per tip, by precedence (mirrors the reference, which makes
+  the enwiki article title the canonical name): **enwiki title** → CoL `VernacularName`
+  → first clean harvested name → scientific name. Two filters keep it clean: a title
+  that is merely the **binomial** (obscure species whose article is the Latin name)
+  yields to a real vernacular, and **authority strings** ("Vulpes Frisch, 1775") are
+  dropped via `enrich.is_junk_name` — they still make fine alias keys, just not display
+  names. (This is why "Vulpes vulpes" shows *Red fox*, not the "Silver Fox" altLabel.)
+- An **alias/autocomplete table**: every harvested name + variants, mapping to tip OR
+  clade ids. Built-time (not play-time) is where ambiguity is resolved.
+
+### Stage 3.5 — virtual paraphyletic groups
+
+Some common names are **paraphyletic**: "fox" spans *Vulpes*, *Urocyon*, *Lycalopex*,
+*Cerdocyon*, *Atelocynus*, *Otocyon* — scattered across Canidae, with no single clade to
+point at. Resolving "fox" to any one genus is arbitrary. Following the reference (which
+hand-builds a `VFOX` node), `pipeline/paraphyletic.py` inserts a curated **virtual clade
+node** (`grp:Fox`, parent Canidae) and re-parents the member genera under it; the asset
+then gives that node **exclusive ownership** of the group's alias keys, so "fox" →
+`grp:Fox` (a real, placeable "Fox" clade) while "vulpes" still → genus *Vulpes*. The
+list is curated for now (Wikipedia's 241 `{{Paraphyletic group}}` defs could automate
+the long tail later).
 
 ## Stage 5 — Asset build
 

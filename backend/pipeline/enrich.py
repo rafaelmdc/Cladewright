@@ -31,6 +31,18 @@ def despace(name: str) -> str:
     return name.replace("_", " ").strip()
 
 
+# A Wikidata altLabel like "Vulpes Frisch, 1775" or "Canis (Linnaeus, 1758)" is a
+# scientific-name-with-authority, not a common name — junk for display. Drop anything
+# ending in an author-year citation. (These still make fine *alias* keys; we only keep
+# them out of the chosen DISPLAY name.)
+_AUTHORITY_RE = re.compile(r",\s*\d{3,4}\)?\s*$")
+
+
+def is_junk_name(name: str) -> bool:
+    """True if a string is an authority citation rather than a usable common name."""
+    return bool(_AUTHORITY_RE.search(name.strip()))
+
+
 def normalize(name: str) -> str:
     """Lowercase, drop punctuation, fold underscores+whitespace — the alias-index key.
 
@@ -121,6 +133,7 @@ class BraidworksProvider:
 
     def __init__(self) -> None:
         self._cache: dict[str, list[str]] = {}  # scientific_name -> [name strings]
+        self._title: dict[str, str] = {}  # scientific_name -> enwiki article title
 
     def prepare(self, taxa: list[Taxon]) -> None:
         self.harvest([t.scientific_name for t in taxa])
@@ -158,21 +171,48 @@ class BraidworksProvider:
                 continue
             vn_strand = ss.get("organism.vernacular_names")
             title_strand = ss.get("wikipedia.title")
-            # Title first — it's usually the cleanest common name (and a great display).
+            # Title first — it's the cleanest common name (and the canonical display,
+            # following the reference). Kept separately too so display never falls back
+            # to non-deterministic SPARQL ordering of the altLabels.
             names = [title_strand.value] if title_strand else []
             names += list(vn_strand.value) if vn_strand else []
             # dedup while preserving order (the title often repeats a vernacular).
             self._cache[name_strand.value] = list(dict.fromkeys(names))
+            if title_strand:
+                self._title[name_strand.value] = title_strand.value
 
     def names_for(self, scientific_name: str) -> list[str]:
         """Harvested names for any scientific name (species or clade), despaced."""
         return [despace(n) for n in self._cache.get(scientific_name, [])]
 
+    def display_for(self, scientific_name: str, vernacular: str | None = None) -> str | None:
+        """The clean DISPLAY name. Mirrors the reference, which makes the enwiki article
+        title the canonical common name ("Red fox", not the "Silver Fox" altLabel) —
+        EXCEPT when that title is just the binomial (obscure species whose article is
+        titled with the Latin name), where a real vernacular reads better.
+
+        Precedence: enwiki title (if it's a real common name) → CoL vernacular → first
+        non-binomial non-junk harvested name → the binomial title as a last resort.
+        """
+        sci_key = normalize(scientific_name)
+
+        def usable(name: str | None) -> bool:
+            return bool(name) and not is_junk_name(name) and normalize(name) != sci_key
+
+        title = self._title.get(scientific_name)
+        if usable(title):
+            return despace(title)
+        if usable(vernacular):
+            return despace(vernacular)
+        for n in self._cache.get(scientific_name, []):
+            if usable(n):
+                return despace(n)
+        # Nothing better than the Latin name itself — return the title if we have one
+        # (it equals the binomial) so callers still get a value, else None.
+        return despace(title) if title and not is_junk_name(title) else None
+
     def common_name(self, taxon: Taxon) -> str | None:
-        if taxon.vernacular:
-            return despace(taxon.vernacular)
-        names = self._cache.get(taxon.scientific_name, [])
-        return despace(names[0]) if names else None
+        return self.display_for(taxon.scientific_name, taxon.vernacular)
 
     def names(self, taxon: Taxon) -> list[str]:
         """Every harvested name + CoL vernacular, despaced — the colloquial aliases

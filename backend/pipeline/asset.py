@@ -13,7 +13,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .enrich import index_keys
+from .enrich import index_keys, is_junk_name
 from .ids import tip_id
 from .types import EnrichedTip, Tree
 
@@ -34,12 +34,14 @@ def build_asset(
     enriched: list[EnrichedTip],
     *,
     node_names: dict[str, list[str]] | None = None,
+    group_aliases: dict[str, list[str]] | None = None,
     hidden_label_max: int = 15,
     scope: str = "kingdom=Animalia",
     version: int = 1,
     provenance: dict | None = None,
 ) -> dict:
     node_names = node_names or {}
+    group_aliases = group_aliases or {}
     # Resolve each pool tip to its backbone parent + lineage.
     tip_lineages: dict[str, list[str]] = {}
     pool_count: Counter[str] = Counter()
@@ -57,14 +59,16 @@ def build_asset(
     for node_id in induced:
         node = tree.nodes[node_id]
         harvested = node_names.get(node_id, [])
+        # Display common name for a clade, e.g. "Bear" for Ursidae — first non-junk
+        # harvested name (the list is enwiki-title-first), falling back to the backbone
+        # common or None. Junk = authority strings like "Vulpes Frisch, 1775".
+        node_common = next((h for h in harvested if not is_junk_name(h)), None)
         nodes.append(
             {
                 "id": node.id,
                 "rank": node.rank,
-                # Display common name for a clade, e.g. "Bear" for Ursidae (first
-                # harvested name), falling back to the backbone common or None.
                 "sci": node.sci,
-                "common": (harvested[0] if harvested else node.common),
+                "common": (node_common or node.common),
                 # Parent is always ancestral to the same tips, hence also induced.
                 "parent": node.parent,
                 "pool_count": pool_count[node_id],
@@ -77,12 +81,28 @@ def build_asset(
     # (animalist-style); the game rewards it only when it places a NEW node.
     aliases: dict[str, list[str]] = {}
 
+    # A virtual paraphyletic group (grp:Fox) claims its alias keys EXCLUSIVELY, so a
+    # vague name like "fox" resolves only to the group node — never to a member genus
+    # that happens to carry "fox" as a Wikidata alias. Build the claim map first.
+    claimed: dict[str, str] = {}  # alias key -> owning group node id
+    for gid, names in group_aliases.items():
+        for name in names:
+            for key in index_keys(name):
+                claimed[key] = gid
+
     def add_alias(name: str, target_id: str) -> None:
         # Bake singular+plural keys at build; query stays a single normalize() lookup.
         for key in index_keys(name):
+            if claimed.get(key, target_id) != target_id:
+                continue  # this name belongs to a paraphyletic group node
             bucket = aliases.setdefault(key, [])
             if target_id not in bucket:  # dedup: never the same target twice
                 bucket.append(target_id)
+
+    # The group nodes own their claimed names.
+    for gid, names in group_aliases.items():
+        for name in names:
+            add_alias(name, gid)
 
     for node_id in induced:
         node = tree.nodes[node_id]

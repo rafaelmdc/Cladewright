@@ -19,7 +19,7 @@ from pathlib import Path
 from django.core.management.base import BaseCommand, CommandError
 
 from pipeline import asset as asset_builder
-from pipeline import backbone, enrich, ingest, pool, validate
+from pipeline import backbone, enrich, ingest, paraphyletic, pool, validate
 
 
 class Command(BaseCommand):
@@ -58,6 +58,10 @@ class Command(BaseCommand):
         tree = backbone.build_backbone(taxa)
         self.stdout.write(f"      {len(tree.nodes)} clade nodes")
 
+        # Virtual clade nodes for paraphyletic vague names ("fox" -> a Fox group).
+        group_aliases = paraphyletic.apply_groups(tree)
+        self.stdout.write(f"      {len(group_aliases)} virtual group nodes")
+
         # One provider instance shared across stages so a Braidworks batch (network)
         # runs once and species + clade names both read its cache.
         provider = (
@@ -81,6 +85,7 @@ class Command(BaseCommand):
             tree,
             enriched,
             node_names=node_names,
+            group_aliases=group_aliases,
             hidden_label_max=opts["hidden_label_max"],
             scope=opts["scope"],
         )

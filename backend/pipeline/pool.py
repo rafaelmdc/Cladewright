@@ -7,13 +7,13 @@ range over the full clade, which (with the reveal threshold) naturally concentra
 hints on small terminal clades and rewards specificity. Used for well-covered clades
 and per-clade games. Extinct taxa are excluded from v1.
 
-Legacy curated mode (``size>0``): rank by fame and keep the top ``size`` WITH a
-per-clade floor so no major group is starved. The floor is a guarantee — every group
-keeps up to ``clade_floor`` tips even if that pushes the total past ``size``. Kept for
-poorly-covered scopes where an all-species pool would be mostly unknown organisms.
+Legacy curated mode (``size>0``): keep the top ``size`` by source_id WITH a per-clade
+floor so no major group is starved. The floor is a guarantee — every group keeps up to
+``clade_floor`` tips even if that pushes the total past ``size``. Kept only as a
+deterministic capped mode for poorly-covered scopes; the popularity ranking that once
+drove it ("fame") is post-MVP, so selection is now purely by source_id.
 
-Order is fully deterministic (fame desc, source_id tiebreak). See
-docs/data-pipeline.md §Stage 3.
+Order is fully deterministic (source_id). See docs/data-pipeline.md §Stage 3.
 """
 from __future__ import annotations
 
@@ -29,19 +29,16 @@ def _floor_group(taxon: Taxon, floor_rank: str) -> str:
 
 def select_pool(
     tree: Tree,
-    fame: dict[str, float],
     *,
     size: int = 0,
     clade_floor: int = 10,
     floor_rank: str = "order",
 ) -> list[Taxon]:
-    candidates = [t for _, t in tree.tips.values() if not t.extinct]
-
-    # Deterministic global ranking: fame desc, then source_id.
-    def sort_key(t: Taxon) -> tuple[float, str]:
-        return (-fame.get(t.source_id, 0.0), t.source_id)
-
-    candidates.sort(key=sort_key)
+    # Deterministic global order: source_id (fame ranking is post-MVP).
+    candidates = sorted(
+        (t for _, t in tree.tips.values() if not t.extinct),
+        key=lambda t: t.source_id,
+    )
 
     # size=0 -> "have them all": the whole non-extinct set is the pool.
     if size <= 0:
@@ -49,7 +46,7 @@ def select_pool(
 
     selected: dict[str, Taxon] = {}
 
-    # 1) Per-clade floor: top `clade_floor` by fame within each floor-rank group.
+    # 1) Per-clade floor: first `clade_floor` (by source_id) within each group.
     groups: dict[str, list[Taxon]] = {}
     for t in candidates:
         groups.setdefault(_floor_group(t, floor_rank), []).append(t)
@@ -57,11 +54,11 @@ def select_pool(
         for t in members[:clade_floor]:  # floor is a guarantee; not capped by size
             selected[t.source_id] = t
 
-    # 2) Fill remaining slots globally by fame.
+    # 2) Fill remaining slots globally.
     for t in candidates:
         if len(selected) >= size:
             break
         selected.setdefault(t.source_id, t)
 
     # Return in deterministic global order.
-    return sorted(selected.values(), key=sort_key)
+    return sorted(selected.values(), key=lambda t: t.source_id)

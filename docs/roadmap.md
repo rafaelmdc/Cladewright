@@ -16,15 +16,18 @@ Sequence is dependency-ordered. Each phase should leave something runnable.
 
 ## Phase 1 — Data pipeline ✅ (done)
 
-- **Braidworks weavers** built + verified: `wikidata_weaver` (vernacular names + QID
-  + enwiki title) and `wikipedia_weaver` (pageviews), `verify --strict` + live E2E.
+- **Braidworks weaver** built + verified: `wikidata_weaver` (vernacular names + QID +
+  enwiki title + `skos:altLabel` + `P13176` common-name stitch), `verify --strict` +
+  live E2E.
 - `manage.py build_gamedata`: ColDP ingest → backbone → pool select (**all species
-  in scope**; legacy fame+floor curated mode kept) → Braidworks enrich → validated
-  asset. Clades are nameable (node aliases); names matched underscore-free.
+  in scope**; legacy capped floor mode kept) → Braidworks enrich → validated asset.
+  Clades are nameable (node aliases); names matched underscore-free.
 - Real-data evaluation done on **all 6,459 Catalogue of Life Mammalia** (fetched via
   `scripts/fetch_clb_coldp.py`): 97.7% common-name coverage, valid 6,360-tip asset.
 - Remaining polish: per-clade dataset configs; fill clade common names from
-  higher-taxon vernacular; derive `time_weight` from pageviews.
+  higher-taxon vernacular.
+- **Deferred to post-MVP:** the "fame" system — `wikipedia_weaver` pageviews →
+  `time_weight` obscurity weighting. Dropped from the MVP; time bonus is novelty-only.
 
 ## Phase 2 — TreeRenderer (shared)
 
@@ -47,8 +50,8 @@ The riskiest UI work; do it early and deliberately.
 - **"N remaining"** labels with the three anti-clutter rules; tunable threshold.
   Implement the `O(L)` incremental design from [`performance.md`](performance.md)
   (interned indices, typed `found_count`, monotonic threshold crossing).
-- Timer + bonus weighted by **novelty + obscurity** (`time_weight` from pageviews);
-  game-over.
+- Timer + bonus weighted by **novelty** (MRCA depth); game-over. (Obscurity weighting
+  from pageviews is post-MVP.)
 - Optional "trait?" reveal.
 - **Both modes**: free play + daily-seeded run (server-authoritative seed).
 - Client-side scoring; server-side re-validation stub.

@@ -57,9 +57,8 @@ def coldp_dir(tmp_path: Path) -> Path:
 def build(coldp_dir: Path, **kw) -> dict:
     taxa = ingest.ingest_coldp(coldp_dir, scope="kingdom=Animalia")
     tree = backbone.build_backbone(taxa)
-    fame = enrich.fame_scores(taxa)
-    ptaxa = pool.select_pool(tree, fame, **kw)
-    enriched = enrich.enrich(ptaxa, fame)
+    ptaxa = pool.select_pool(tree, **kw)
+    enriched = enrich.enrich(ptaxa)
     doc = assetmod.build_asset(tree, enriched, scope="kingdom=Animalia")
     validate.validate_asset(doc)
     return doc

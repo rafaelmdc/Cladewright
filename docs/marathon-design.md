@@ -31,8 +31,8 @@ and `docs/examples/marathon hints example*.png`.
     naming "Mammalia" when you already have a mouse → nothing.
   Net effect: breadth (new branches) pays most, getting specific still pays a bit,
   and generalizing upward or repeating pays nothing — which promotes specificity.
-- **Timer.** Start ~60s. Each rewarded placement **adds time** (amount weighted by
-  novelty + obscurity — see below). Run out → game over.
+- **Timer.** Start ~60s. Each rewarded placement **adds time** (weighted by novelty —
+  how much new backbone the name opens; see below). Run out → game over.
 - **Pool = all species in scope** (not a curated top-N): every non-extinct species in
   the dataset is nameable and counted, so the tree can be filled to completion and
   the "N remaining" hints mean something all the way down. See
@@ -91,16 +91,18 @@ complexity table: [`performance.md`](performance.md).
 
 ### Time-bonus weighting
 
-A rewarded placement (a new node) adds time. How much is weighted by two factors:
+A rewarded placement (a new node) adds time, weighted by **novelty** — how much new
+backbone the name opens, i.e. the rank-depth of the MRCA between the new node and the
+existing tree. First echinoderm when you've only named mammals → near the root → big
+bonus; your fifth finch → shallow MRCA → small. (A refinement — naming a species under
+a clade you already have — gives a small flat bonus, per the reward tiers above.)
 
-- **Novelty** — how much new backbone the name opens, i.e. the rank-depth of the
-  MRCA between the new node and the existing tree. First echinoderm when you've only
-  named mammals → near the root → big bonus; your fifth finch → shallow MRCA → small.
-- **Obscurity** — `tip.time_weight`, derived from **Wikipedia pageviews** (the
-  `wikipedia_weaver` fame signal): an obscure species is worth *more* time than an
-  instantly-obvious one. Fame no longer gates *inclusion* (the pool is all species);
-  it only tunes reward/difficulty here. See
-  [`data-pipeline.md`](data-pipeline.md#stage-4--braidworks-enrichment-common-names--fame).
+> **Obscurity weighting is post-MVP.** The original plan also scaled the bonus by a
+> per-species *obscurity* signal (Wikipedia pageviews via a `wikipedia_weaver` "fame"
+> score), so an obscure species was worth more time than an obvious one. That whole
+> system is deferred: the pool is **all** species (fame never gated inclusion), and for
+> the MVP the time bonus is novelty-only. Pageviews can be reintroduced later purely as
+> a reward/difficulty tuner.
 
 Naming an ancestor you already have adds **no** time at all (it places no new node).
 Together with the hidden labels (which reward going *deep* to complete a clade), this
@@ -163,12 +165,14 @@ The frontend **resolve(query)** is deliberately tiny (no fuzzy engine, no dropdo
    Lookup stays O(1) per guess.
 2. multiple candidates → drop any that is an *ancestor* of another candidate
    (so "hippopotamus" → the species, not the genus); if still >1 (genuine
-   ambiguity like "elk" = wapiti/moose), pick the **highest-fame** one.
+   ambiguity like "elk" = wapiti/moose), pick deterministically (genus/species
+   tie-break, then id order). A popularity tie-break — pick the most-famous
+   candidate — is post-MVP, deferred with the rest of the fame system.
 
 A miss just doesn't resolve (no wrong guess spent). Known edge: cross-kingdom
 scientific-name homonyms (e.g. *Pholidota* = pangolins *and* an orchid genus) can
 resolve to the wrong kingdom — see the domain-scoping note above. See
-[`data-pipeline.md`](data-pipeline.md#stage-4--braidworks-enrichment-common-names--fame)
+[`data-pipeline.md`](data-pipeline.md#stage-4--braidworks-enrichment-common-names)
 for harvesting and [`game-asset-format.md`](game-asset-format.md#aliases--autocomplete--matching-index)
 for the index shape.
 

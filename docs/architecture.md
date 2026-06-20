@@ -25,7 +25,7 @@ you want for a game.
 ┌─────────────────────────────────────────────────────────────────┐
 │  DATA PIPELINE (offline, Python)                                  │
 │    ColDP ──BICHO ingest──▶ tips + ranked lineage + biomes         │
-│         ──Braidworks──────▶ common names + Wikipedia pageviews    │
+│         ──Braidworks──────▶ common names (Wikidata + enwiki)      │
 │         ──build──────────▶ game-data asset (versioned static file)│
 │    Driven by a Django management command; see data-pipeline.md    │
 └───────────────────────────────┬─────────────────────────────────┘
@@ -100,7 +100,7 @@ Anti-cheat depth is a later concern, not an MVP blocker.
 Covered in full in [`data-pipeline.md`](data-pipeline.md). The key architectural
 point: **BICHO and Braidworks stay independent tools** with their own contracts,
 and Cladewright depends on their *outputs*, not their internals. New enrichment
-(common names, pageviews) is added as **Braidworks weavers**, built through that
+(common names; pageviews are post-MVP) is added as **Braidworks weavers**, built through that
 project's Spec→Scaffold→Implement→Verify loop — not as throwaway scripts here.
 
 ## Why not the alternatives

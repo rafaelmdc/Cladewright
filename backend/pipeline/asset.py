@@ -3,8 +3,8 @@ Stage 5 — build + write the game-data asset.
 
 Precompute everything the client needs so play is O(lineage length): the
 pool-induced backbone (only nodes ancestral to some pool tip), per-node pool_count,
-per-tip ancestor-id lineage, traits, fame, time_weight, the alias index, and a
-provenance block. Exact shape: docs/game-asset-format.md.
+per-tip ancestor-id lineage, traits, the alias index, and a provenance block. Exact
+shape: docs/game-asset-format.md. (Fame/time_weight are post-MVP — not emitted.)
 """
 from __future__ import annotations
 
@@ -102,8 +102,6 @@ def build_asset(
                 "common": tip.common,
                 "parent": tree.tips[tid][0],
                 "lineage": tip_lineages[tid],
-                "fame": round(tip.fame, 6),
-                "time_weight": tip.time_weight,
                 "traits": {
                     "environment": tip.taxon.environment,
                     "biomes": tip.taxon.biomes,

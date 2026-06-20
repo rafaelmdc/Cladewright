@@ -11,8 +11,8 @@ Stages (one module each):
 |---|---|---|
 | `ingest.py`   | ColDP → tips + ranked lineage + biomes + CoL vernacular | **BICHO** (+ read `VernacularName.tsv`) |
 | `backbone.py` | denormalized lineages → one rooted tree | — |
-| `pool.py`     | select ~2,500 playable tips (fame + per-clade floor) | fame from `enrich` |
-| `enrich.py`   | fill common-name gaps + Wikipedia pageview fame | **Braidworks** weavers |
+| `pool.py`     | select playable tips (all non-extinct by default; capped mode optional) | — |
+| `enrich.py`   | fill common-name gaps (Wikidata label/altLabel/vernacular, enwiki title, P13176) | **Braidworks** weaver |
 | `asset.py`    | precompute induced backbone, counts, lineages, aliases → emit | — |
 | `validate.py` | structural conformance checks before write | — |
 
@@ -24,6 +24,8 @@ config); no unseeded randomness, no wall-clock ordering.
 
 Both are sibling repos imported as deps (see `backend/pyproject.toml [pipeline]`).
 BICHO's `taxa ingest` does not currently read `VernacularName.tsv` — either extend
-it or read that side table directly here. The common-name/pageview enrichment is
-added as **Braidworks weavers** (`wikidata_weaver`, pageviews) in the Braidworks
-repo via its Spec→Scaffold→Implement→Verify loop, then consumed here.
+it or read that side table directly here. The common-name enrichment is added as a
+**Braidworks weaver** (`wikidata_weaver`) in the Braidworks repo via its
+Spec→Scaffold→Implement→Verify loop, then consumed here. (The popularity/obscurity
+"fame" system — Wikipedia pageviews — is post-MVP; the pool is all species, so nothing
+gates inclusion on fame.)

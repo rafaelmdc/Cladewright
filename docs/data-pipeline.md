@@ -77,43 +77,43 @@ terminal clades, rewarding specificity (see
   scientific-only mode.
 - **Extinct excluded (v1).** Fossil/extinct-only taxa are filtered out and not
   counted; the `extinct` flag is **preserved** for a later themed paleo scope.
-- **Legacy curated mode** (`size>0`) remains in `select_pool`: fame-ranked top-N with
-  a per-clade floor guarantee — kept for any future scope too sparse for an
-  all-species pool. Not used for the well-covered clades.
+- **Legacy capped mode** (`size>0`) remains in `select_pool`: deterministic top-N (by
+  `source_id`) with a per-clade floor guarantee — kept for any future scope too sparse
+  for an all-species pool. Not used for the well-covered clades. (It once ranked by
+  fame; that popularity ranking is post-MVP, so selection is now purely by id.)
 
 Source for the dataset: a real ColDP can be fetched per-clade with no auth via
 `backend/scripts/fetch_clb_coldp.py` (pages the ChecklistBank read API — used to pull
 all 6,459 Mammalia species + vernacular names for the evaluation).
 
-## Stage 4 — Braidworks enrichment (common names + fame)
+## Stage 4 — Braidworks enrichment (common names)
 
 ColDP's `VernacularName.tsv` (Stage 1) covers most species in a well-covered clade
-but leaves gaps, and it gives us no popularity signal. Both are filled by
-**Braidworks** weavers (Spec→Scaffold→Implement→Verify, not ad-hoc scripts). CoL
-vernacular is the first pass; Braidworks fills missing names and supplies the fame
-score. **Fame no longer gates inclusion** (the pool is all species) — pageviews now
-only weight the Marathon **time bonus / difficulty** (obscure species are worth more
-time; see [`marathon-design.md`](marathon-design.md#time-bonus-weighting)). So this
-stage is enrichment, not a gate:
+but leaves gaps. Those are filled by a **Braidworks** weaver
+(Spec→Scaffold→Implement→Verify, not ad-hoc scripts). CoL vernacular is the first
+pass; Braidworks fills the missing names that make natural-name resolution feel
+right. This stage is pure enrichment — it never gates inclusion (the pool is all
+species):
 
-- **`wikidata_weaver`** — taxon scientific name → QID + enwiki title + **names for
-  the alias index**: `P1843` vernaculars **and `skos:altLabel` aliases** ("the lion",
-  variants, synonyms). Hangs off `organism.scientific_name`.
-- **`wikipedia_weaver`** — enwiki title → **pageviews** (fame/time weight) and
-  **`prop=redirects`** (colloquial names: "panda bear", "land otter" → the species'
-  article). Redirects are the single richest source of natural names and are what
-  makes resolution feel right — see
-  [`marathon-design.md`](marathon-design.md#name-resolution).
-- **`gbif_weaver`** *(optional)* — extra vernacular coverage where Wikidata is sparse.
+- **`wikidata_weaver`** — taxon scientific name (`P225`) → QID + **names for the alias
+  index**, UNIONed into one English-name stream: `rdfs:label`, `skos:altLabel`
+  ("the lion", variants, synonyms), `P1843` vernaculars, the **enwiki sitelink title**
+  (the *primary* common-name source — "Hyena" for Hyaenidae, "Bear" for Ursidae), and
+  the label of any separate **common-name item** linked via `P13176` ("seal",
+  "monkey", "kangaroo" live there, not on the family). Hangs off
+  `organism.scientific_name`; the whole batch resolves in chunked SPARQL `POST`s.
 
-> **Status: built (names + pageviews); alias-harvest extension in progress.**
-> `wikidata_weaver` + `wikipedia_weaver` exist (branch `cladewright-weavers`), pass
+> **Status: built.** `wikidata_weaver` exists (branch `cladewright-weavers`), passes
 > `verify --strict` + live E2E; the planner routes `organism.scientific_name →
-> wikipedia.pageviews`. Cladewright consumes them via `enrich.BraidworksProvider`.
-> **To do for resolution parity with animalist:** add `skos:altLabel` to the
-> wikidata weaver and a `prop=redirects` capability to the wikipedia weaver, then
-> feed both into the alias index. The default stays `OfflineProvider` so the pipeline
-> runs without the weavers installed.
+> {organism.vernacular_names, wikipedia.title}`. Cladewright consumes it via
+> `enrich.BraidworksProvider`, which harvests names for **species *and* clade nodes**
+> (so "bear" → Ursidae, "sloth" → Folivora resolve). The default stays
+> `OfflineProvider` so the pipeline runs without the weaver installed.
+>
+> **Post-MVP (deferred):** the popularity/obscurity "fame" system — a
+> `wikipedia_weaver` pageview score that would weight the Marathon time bonus by
+> obscurity. Dropped for the MVP; the time bonus is novelty-only. Optional future
+> sources: `prop=redirects` for the long tail, `gbif_weaver` for sparse vernaculars.
 
 Enrichment runs over the pool *candidates* (a few thousand), not all 3.2M animals,
 so it is cheap and Braidworks' caching makes re-runs near-free.
@@ -138,8 +138,9 @@ needs so play is O(lineage length):
   tip, with every degree-2 link kept only where a rank label or hint can attach.
 - Per node: `pool_count` (number of pool tips beneath it) — the denominator of
   "N remaining".
-- Per tip: ordered ancestor-id path (for O(L) MRCA), common+scientific names,
-  biome/trait flags, fame, and a Marathon time-bonus weight.
+- Per tip: ordered ancestor-id path (for O(L) MRCA), common+scientific names, and
+  biome/trait flags. (No fame/time_weight — the Marathon time bonus is novelty-only,
+  computed live; the pageview-based weighting is post-MVP.)
 - The alias/autocomplete index.
 - A **provenance block**: ColDP release, BICHO/Braidworks versions, pool config,
   build timestamp, asset `version`.

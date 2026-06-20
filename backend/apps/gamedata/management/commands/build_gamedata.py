@@ -32,54 +32,51 @@ class Command(BaseCommand):
                             help="Where to write the game-data asset JSON.")
         parser.add_argument("--scope", default="kingdom=Animalia",
                             help="BICHO scope filter (default: kingdom=Animalia).")
-        parser.add_argument("--pool-size", type=int, default=2500,
-                            help="Number of playable tips to keep (default: 2500).")
+        parser.add_argument("--pool-size", type=int, default=0,
+                            help="Playable tips to keep; 0 (default) = all non-extinct "
+                                 "species in scope (animalist-style 'have them all').")
         parser.add_argument("--clade-floor", type=int, default=10,
-                            help="Min tips guaranteed per major clade (per-clade floor).")
+                            help="Min tips guaranteed per major clade (capped mode only).")
         parser.add_argument("--hidden-label-max", type=int, default=15,
                             help="Default 'N remaining' reveal threshold baked into the asset.")
         parser.add_argument("--enrich", choices=["offline", "braidworks"], default="offline",
                             help="Enrichment provider: offline stub (default) or real "
-                                 "Braidworks (Wikidata names + Wikipedia pageviews).")
+                                 "Braidworks (Wikidata names + enwiki titles).")
 
     def handle(self, *args, **opts) -> None:
         coldp_dir: Path = opts["coldp_dir"]
         if not coldp_dir.exists():
             raise CommandError(f"ColDP dir not found: {coldp_dir}")
 
-        # Stage order: fame must be known before pool selection ranks within clades.
-        # TODO(phase-1): pass a Braidworks-backed EnrichProvider for real names/fame;
+        # TODO(phase-1): pass a Braidworks-backed EnrichProvider for real names;
         # the default OfflineProvider keeps this runnable without the weavers.
-        self.stdout.write("1/6 ingest (ColDP)…")
+        self.stdout.write("1/5 ingest (ColDP)…")
         taxa = ingest.ingest_coldp(coldp_dir, scope=opts["scope"])
         self.stdout.write(f"      {len(taxa)} accepted species")
 
-        self.stdout.write("2/6 backbone…")
+        self.stdout.write("2/5 backbone…")
         tree = backbone.build_backbone(taxa)
         self.stdout.write(f"      {len(tree.nodes)} clade nodes")
 
         # One provider instance shared across stages so a Braidworks batch (network)
-        # runs once and both fame + names read its cache.
+        # runs once and species + clade names both read its cache.
         provider = (
             enrich.BraidworksProvider() if opts["enrich"] == "braidworks"
             else enrich.OfflineProvider()
         )
 
-        self.stdout.write(f"3/6 fame scores ({opts['enrich']})…")
-        fame = enrich.fame_scores(taxa, provider)
-
-        self.stdout.write("4/6 pool select (fame + per-clade floor)…")
+        self.stdout.write("3/5 pool select…")
         pool_taxa = pool.select_pool(
-            tree, fame, size=opts["pool_size"], clade_floor=opts["clade_floor"]
+            tree, size=opts["pool_size"], clade_floor=opts["clade_floor"]
         )
         self.stdout.write(f"      {len(pool_taxa)} playable tips")
 
-        self.stdout.write("5/6 enrich (common names + aliases; species + clades)…")
-        enriched = enrich.enrich(pool_taxa, fame, provider)
+        self.stdout.write(f"4/5 enrich ({opts['enrich']}; species + clades)…")
+        enriched = enrich.enrich(pool_taxa, provider)
         node_names = enrich.enrich_clade_nodes(tree, provider)  # "bear"->Ursidae, …
         self.stdout.write(f"      {len(node_names)} clades got common names")
 
-        self.stdout.write("6/6 build + validate asset…")
+        self.stdout.write("5/5 build + validate asset…")
         doc = asset_builder.build_asset(
             tree,
             enriched,

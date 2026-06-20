@@ -47,10 +47,11 @@ class Tree:
 
 @dataclass
 class EnrichedTip:
-    """A pool tip after common-name + fame enrichment."""
+    """A pool tip after common-name enrichment.
+
+    (No fame/time_weight: the popularity/obscurity system is post-MVP.)
+    """
 
     taxon: Taxon
     common: str           # resolved display name (vernacular → wikidata → sci)
     aliases: list[str]
-    fame: float
-    time_weight: float = 1.0

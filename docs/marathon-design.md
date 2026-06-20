@@ -18,13 +18,19 @@ and `docs/examples/marathon hints example*.png`.
   taxon in scope: a species (e.g. "lion") or a clade (e.g. "Felidae" / "cats").
   Typos resolve to nothing and cost nothing. A name routes onto the shared induced
   tree through its lineage.
-- **Reward = placing a NEW node** (the specificity rule). You gain time + score when
-  a name adds a node not already on the tree. Naming something already present — a
-  duplicate, or a *parent of what you already have* — gives **nothing** (it just
-  recenters on the existing node). So: "Felidae" first → reward (new node); then
-  "cat" (= Felidae) → nothing (already there); then "lion" → reward (new, more
-  specific). Climbing to ancestors you already imply earns nothing; going deeper or
-  opening a new branch earns. This is what promotes specificity.
+- **Reward tiers (the specificity rule).** Three cases (cf. animalist, which we
+  mostly follow):
+  - **New lineage** — a node with no already-placed ancestor or descendant →
+    **full reward** (time + score).
+  - **Refinement** — a species *below a clade you already named* (e.g. you have
+    "Felidae", then say "lion") → the clade is struck through ("Replaced by more
+    specific *Lion*") and you get a **small reward** (animalist gives zero here; we
+    give a little to keep the dopamine of getting specific).
+  - **No reward** — a duplicate, or a *parent of what you already have* (climbing
+    up to a node already implied). "cat" after "Felidae" → nothing (same node);
+    naming "Mammalia" when you already have a mouse → nothing.
+  Net effect: breadth (new branches) pays most, getting specific still pays a bit,
+  and generalizing upward or repeating pays nothing — which promotes specificity.
 - **Timer.** Start ~60s. Each rewarded placement **adds time** (amount weighted by
   novelty + obscurity — see below). Run out → game over.
 - **Pool = all species in scope** (not a curated top-N): every non-extinct species in
@@ -107,6 +113,34 @@ Spend time/points to surface a vague, **nameless** clue about one hidden sister
 under a clade — drawn from `tip.traits` (environment / biome / extinct). E.g.
 "the hidden one here is marine." Helps when you know a clade has `2 hidden` but
 can't recall them, without handing over the answer.
+
+## Name resolution
+
+Players must be able to type natural names — "panda bear" → *Giant panda*, "river
+otter" → *North American river otter*, "panther" → *Panthera*, "the lion" → *Lion* —
+or the game is awkward. The approach (validated against rose.systems/animalist's
+source) is **comprehensiveness, not fuzzy matching**: a big precomputed
+`normalized name → id` map, then an **exact lookup** at play time. No edit-distance
+engine; the dictionary is just rich enough.
+
+What feeds the alias index (richest sources first — the first two are the ones we
+were missing):
+
+- **Wikipedia redirects** (`prop=redirects`) — the colloquial gold: "panda bear",
+  "pandas", "land otter" all redirect to their species' article.
+- **Wikidata aliases** (`skos:altLabel`) — "the lion", "asiatic lion", spelling
+  variants, synonyms.
+- **Wikidata / CoL vernacular names** (`P1843`, `VernacularName.tsv`).
+- **Scientific names** and **clade names** (genus/family/… — clades are nameable).
+
+All flattened through the same `normalize()` (lowercase, hyphens + underscores →
+spaces, punctuation folded, whitespace collapsed) and baked into the asset's
+`aliases` map. The frontend normalizes the typed query identically and does one
+lookup. See [`data-pipeline.md`](data-pipeline.md#stage-4--braidworks-enrichment-common-names--fame)
+for how these are harvested (Braidworks weavers) and
+[`game-asset-format.md`](game-asset-format.md#aliases--autocomplete--matching-index)
+for the index shape. Ambiguous keys ("panther", "bear") map to several ids → the
+combobox disambiguates, fame-ranked.
 
 ## Layout stability
 

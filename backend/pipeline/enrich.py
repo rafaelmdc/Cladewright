@@ -64,6 +64,10 @@ class OfflineProvider:
     def common_name(self, taxon: Taxon) -> str | None:
         return despace(taxon.vernacular) if taxon.vernacular else None
 
+    def names(self, taxon: Taxon) -> list[str]:
+        """All name strings for the alias index (offline: just the CoL vernacular)."""
+        return [despace(taxon.vernacular)] if taxon.vernacular else []
+
 
 class BraidworksProvider:
     """Real enrichment via Braidworks: organism.scientific_name -> vernacular names
@@ -131,6 +135,15 @@ class BraidworksProvider:
         names = entry["names"] if entry else []
         return despace(names[0]) if names else None
 
+    def names(self, taxon: Taxon) -> list[str]:
+        """Every harvested name (Wikidata label/altLabel/vernacular) + CoL vernacular,
+        despaced — the colloquial aliases that make resolution feel right."""
+        entry = self._cache.get(taxon.scientific_name)
+        names = list(entry["names"]) if entry else []
+        if taxon.vernacular:
+            names.append(taxon.vernacular)
+        return [despace(n) for n in names]
+
 
 def fame_scores(taxa: list[Taxon], provider: EnrichProvider | None = None) -> dict[str, float]:
     """source_id -> normalized fame. Used by Stage 3 (pool selection)."""
@@ -151,9 +164,12 @@ def enrich(
         # Display name precedence: CoL/Wikidata vernacular → scientific.
         common = provider.common_name(taxon) or taxon.scientific_name
 
-        # Alias set: common name + scientific name (normalized). Richer aliases
-        # (genus-level "bear", spelling variants) are a later enrichment.
-        aliases = sorted({normalize(common), normalize(taxon.scientific_name)} - {""})
+        # Alias set: scientific name + common name + every harvested name string
+        # (Wikidata label/altLabel/vernacular: "panda bear", "the lion", …), all
+        # normalized. This is what makes natural-name resolution work.
+        keys = {normalize(common), normalize(taxon.scientific_name)}
+        keys.update(normalize(n) for n in provider.names(taxon))
+        aliases = sorted(keys - {""})
 
         out.append(
             EnrichedTip(

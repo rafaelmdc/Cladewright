@@ -96,19 +96,24 @@ only weight the Marathon **time bonus / difficulty** (obscure species are worth 
 time; see [`marathon-design.md`](marathon-design.md#time-bonus-weighting)). So this
 stage is enrichment, not a gate:
 
-- **`wikidata_weaver`** — taxon → vernacular (common) names + Wikidata QID.
-  Hangs off the existing organism/NCBI-taxid hub.
-- **Wikipedia pageviews** — QID/title → pageview count = the objective fame score
-  that drives pool ranking. (Its own weaver or a capability on the Wikidata one.)
-- **`gbif_weaver`** *(optional)* — additional vernacular-name coverage / id
-  crosswalk where Wikidata is sparse.
+- **`wikidata_weaver`** — taxon scientific name → QID + enwiki title + **names for
+  the alias index**: `P1843` vernaculars **and `skos:altLabel` aliases** ("the lion",
+  variants, synonyms). Hangs off `organism.scientific_name`.
+- **`wikipedia_weaver`** — enwiki title → **pageviews** (fame/time weight) and
+  **`prop=redirects`** (colloquial names: "panda bear", "land otter" → the species'
+  article). Redirects are the single richest source of natural names and are what
+  makes resolution feel right — see
+  [`marathon-design.md`](marathon-design.md#name-resolution).
+- **`gbif_weaver`** *(optional)* — extra vernacular coverage where Wikidata is sparse.
 
-> **Status: built.** `wikidata_weaver` and `wikipedia_weaver` exist in the
-> braidworks repo (branch `cladewright-weavers`) — both pass `verify --strict` and a
-> live E2E, and the planner routes `organism.scientific_name → wikipedia.pageviews`.
-> Cladewright consumes them through `enrich.BraidworksProvider` (one batched braid
-> per build); `--enrich braidworks` on `build_gamedata` switches it on. The default
-> stays `OfflineProvider` so the pipeline runs without the weavers installed.
+> **Status: built (names + pageviews); alias-harvest extension in progress.**
+> `wikidata_weaver` + `wikipedia_weaver` exist (branch `cladewright-weavers`), pass
+> `verify --strict` + live E2E; the planner routes `organism.scientific_name →
+> wikipedia.pageviews`. Cladewright consumes them via `enrich.BraidworksProvider`.
+> **To do for resolution parity with animalist:** add `skos:altLabel` to the
+> wikidata weaver and a `prop=redirects` capability to the wikipedia weaver, then
+> feed both into the alias index. The default stays `OfflineProvider` so the pipeline
+> runs without the weavers installed.
 
 Enrichment runs over the pool *candidates* (a few thousand), not all 3.2M animals,
 so it is cheap and Braidworks' caching makes re-runs near-free.

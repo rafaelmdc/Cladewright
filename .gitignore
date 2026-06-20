@@ -1,3 +1,7 @@
+# --- Reference material (third-party; do not commit) ---
+/backend/reference/
+backend/pasted file.png
+
 # --- Data artifacts (never commit; see AGENTS.md) ---
 /data/
 *.coldp

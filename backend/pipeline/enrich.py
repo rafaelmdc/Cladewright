@@ -17,7 +17,7 @@ import hashlib
 import re
 from typing import Protocol
 
-from .types import EnrichedTip, Taxon
+from .types import EnrichedTip, Taxon, Tree
 
 _WS = re.compile(r"[\s_]+")  # underscores count as spaces (Wikipedia titles use them)
 _PUNCT = re.compile(r"[^\w\s]")
@@ -46,6 +46,8 @@ class EnrichProvider(Protocol):
     """
 
     def prepare(self, taxa: list[Taxon]) -> None: ...
+    def harvest(self, scientific_names: list[str], *, with_pageviews: bool) -> None: ...
+    def names_for(self, scientific_name: str) -> list[str]: ...
     def fame(self, taxon: Taxon) -> float: ...
     def common_name(self, taxon: Taxon) -> str | None: ...
 
@@ -56,6 +58,12 @@ class OfflineProvider:
 
     def prepare(self, taxa: list[Taxon]) -> None:
         return None
+
+    def harvest(self, scientific_names: list[str], *, with_pageviews: bool) -> None:
+        return None  # offline has no name source beyond CoL vernacular
+
+    def names_for(self, scientific_name: str) -> list[str]:
+        return []
 
     def fame(self, taxon: Taxon) -> float:
         digest = hashlib.sha1(taxon.source_id.encode("utf-8")).digest()
@@ -78,31 +86,43 @@ class BraidworksProvider:
     Call ``prepare(taxa)`` once before ``fame`` / ``common_name`` (the pipeline does).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, with_pageviews: bool = True) -> None:
         # scientific_name -> {"names": [...], "pageviews": int}
         self._cache: dict[str, dict[str, object]] = {}
         self._max_log = 1.0
+        self._with_pageviews = with_pageviews
 
     def prepare(self, taxa: list[Taxon]) -> None:
-        if self._cache:
-            return  # already prepared for this run (idempotent across stages)
+        self.harvest([t.scientific_name for t in taxa], with_pageviews=self._with_pageviews)
+
+    def harvest(self, scientific_names: list[str], *, with_pageviews: bool) -> None:
+        """Pull Wikidata names (+ optional pageviews) for any names not yet cached.
+        Reusable for species AND clade nodes — the reference resolves group names
+        ("bear", "whale") because it harvests higher taxa too."""
         import asyncio
         import math
 
         from braidworks.core import Braider, LocalExecutor, Strand, StrandSet
         from braidworks.core.discovery import build_registry_from_entry_points
 
-        registry = build_registry_from_entry_points(only=frozenset({"wikidata", "wikipedia"}))
+        todo = sorted({n for n in scientific_names if n and n not in self._cache})
+        if not todo:
+            return
+
+        targets = {"organism.vernacular_names"}
+        only = {"wikidata"}
+        if with_pageviews:  # names-only is much faster for resolution-only builds
+            targets.add("wikipedia.pageviews")
+            only.add("wikipedia")
+        registry = build_registry_from_entry_points(only=frozenset(only))
         braid = Braider(registry).plan(
             available_types=frozenset({"organism.scientific_name"}),
-            target_types=frozenset({"organism.vernacular_names", "wikipedia.pageviews"}),
+            target_types=frozenset(targets),
         )
-        # Dedup by scientific name; the input strand rides through to the output so we
-        # can map results back without relying on entity ids.
-        names = sorted({t.scientific_name for t in taxa})
+        # The input strand rides through to the output so we map results back by name.
         inputs = [
             StrandSet.from_strands(name, [Strand("organism.scientific_name", name)])
-            for name in names
+            for name in todo
         ]
         result = asyncio.run(LocalExecutor(registry).execute(braid, inputs))
 
@@ -119,6 +139,11 @@ class BraidworksProvider:
         self._max_log = max(
             (math.log1p(e["pageviews"]) for e in self._cache.values()), default=1.0
         ) or 1.0
+
+    def names_for(self, scientific_name: str) -> list[str]:
+        """Harvested names for any scientific name (species or clade), despaced."""
+        entry = self._cache.get(scientific_name)
+        return [despace(n) for n in entry["names"]] if entry else []
 
     def fame(self, taxon: Taxon) -> float:
         import math
@@ -181,3 +206,25 @@ def enrich(
             )
         )
     return out
+
+
+def enrich_clade_nodes(tree: Tree, provider: EnrichProvider | None = None) -> dict[str, list[str]]:
+    """Harvest common names for internal clade nodes so group names resolve —
+    "bear" → Ursidae, "whale" → Cetacea, "sloth" → Folivora. The reference does this
+    by harvesting names for every taxon (not just species); we do the same on our
+    backbone's clade scientific names. Returns node_id → harvested name strings.
+    """
+    provider = provider or OfflineProvider()
+    sci_to_nodes: dict[str, list[str]] = {}
+    for node in tree.nodes.values():
+        sci_to_nodes.setdefault(node.sci, []).append(node.id)
+
+    provider.harvest(list(sci_to_nodes), with_pageviews=False)
+
+    node_names: dict[str, list[str]] = {}
+    for sci, node_ids in sci_to_nodes.items():
+        names = provider.names_for(sci)
+        if names:
+            for node_id in node_ids:
+                node_names[node_id] = names
+    return node_names

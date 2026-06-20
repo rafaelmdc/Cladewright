@@ -135,12 +135,23 @@ were missing):
 
 All flattened through the same `normalize()` (lowercase, hyphens + underscores →
 spaces, punctuation folded, whitespace collapsed) and baked into the asset's
-`aliases` map. The frontend normalizes the typed query identically and does one
-lookup. See [`data-pipeline.md`](data-pipeline.md#stage-4--braidworks-enrichment-common-names--fame)
-for how these are harvested (Braidworks weavers) and
-[`game-asset-format.md`](game-asset-format.md#aliases--autocomplete--matching-index)
-for the index shape. Ambiguous keys ("panther", "bear") map to several ids → the
-combobox disambiguates, fame-ranked.
+`aliases` map. **Crucially, names are harvested for clade nodes too, not just
+species** — that's how "bear" → *Ursidae*, "whale" → a cetacean clade, "sloth" →
+*Folivora* resolve (the reference does the same by harvesting every taxon). No
+dropdowns / autocomplete UI — the player just types and it resolves.
+
+The frontend **resolve(query)** is deliberately tiny (no fuzzy engine):
+
+1. `normalize(query)` → exact lookup in `aliases`.
+2. miss + ends in s/es/ies → retry the de-pluralized form ("bears" → "bear").
+3. multiple candidates → drop any that is an *ancestor* of another candidate
+   (so "hippopotamus" → the species, not the genus); if still >1 (genuine
+   ambiguity like "elk" = wapiti/moose), pick the **highest-fame** one.
+
+A miss after that just doesn't resolve (no wrong guess spent). See
+[`data-pipeline.md`](data-pipeline.md#stage-4--braidworks-enrichment-common-names--fame)
+for harvesting and [`game-asset-format.md`](game-asset-format.md#aliases--autocomplete--matching-index)
+for the index shape.
 
 ## Layout stability
 

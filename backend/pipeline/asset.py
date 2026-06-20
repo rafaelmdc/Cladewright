@@ -33,11 +33,13 @@ def build_asset(
     tree: Tree,
     enriched: list[EnrichedTip],
     *,
+    node_names: dict[str, list[str]] | None = None,
     hidden_label_max: int = 15,
     scope: str = "kingdom=Animalia",
     version: int = 1,
     provenance: dict | None = None,
 ) -> dict:
+    node_names = node_names or {}
     # Resolve each pool tip to its backbone parent + lineage.
     tip_lineages: dict[str, list[str]] = {}
     pool_count: Counter[str] = Counter()
@@ -54,12 +56,15 @@ def build_asset(
     nodes = []
     for node_id in induced:
         node = tree.nodes[node_id]
+        harvested = node_names.get(node_id, [])
         nodes.append(
             {
                 "id": node.id,
                 "rank": node.rank,
+                # Display common name for a clade, e.g. "Bear" for Ursidae (first
+                # harvested name), falling back to the backbone common or None.
                 "sci": node.sci,
-                "common": node.common,
+                "common": (harvested[0] if harvested else node.common),
                 # Parent is always ancestral to the same tips, hence also induced.
                 "parent": node.parent,
                 "pool_count": pool_count[node_id],
@@ -84,7 +89,9 @@ def build_asset(
         node = tree.nodes[node_id]
         add_alias(node.sci, node_id)            # e.g. "felidae" -> fam:Felidae
         if node.common:
-            add_alias(node.common, node_id)     # e.g. "cats" -> fam:Felidae (when known)
+            add_alias(node.common, node_id)
+        for name in node_names.get(node_id, []):  # "bear" -> Ursidae, "whale" -> Cetacea
+            add_alias(name, node_id)
 
     tips = []
     for tip in enriched:

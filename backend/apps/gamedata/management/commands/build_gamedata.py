@@ -74,13 +74,16 @@ class Command(BaseCommand):
         )
         self.stdout.write(f"      {len(pool_taxa)} playable tips")
 
-        self.stdout.write("5/6 enrich (common names + aliases)…")
+        self.stdout.write("5/6 enrich (common names + aliases; species + clades)…")
         enriched = enrich.enrich(pool_taxa, fame, provider)
+        node_names = enrich.enrich_clade_nodes(tree, provider)  # "bear"->Ursidae, …
+        self.stdout.write(f"      {len(node_names)} clades got common names")
 
         self.stdout.write("6/6 build + validate asset…")
         doc = asset_builder.build_asset(
             tree,
             enriched,
+            node_names=node_names,
             hidden_label_max=opts["hidden_label_max"],
             scope=opts["scope"],
         )

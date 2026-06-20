@@ -38,6 +38,9 @@ class Command(BaseCommand):
                             help="Min tips guaranteed per major clade (per-clade floor).")
         parser.add_argument("--hidden-label-max", type=int, default=15,
                             help="Default 'N remaining' reveal threshold baked into the asset.")
+        parser.add_argument("--enrich", choices=["offline", "braidworks"], default="offline",
+                            help="Enrichment provider: offline stub (default) or real "
+                                 "Braidworks (Wikidata names + Wikipedia pageviews).")
 
     def handle(self, *args, **opts) -> None:
         coldp_dir: Path = opts["coldp_dir"]
@@ -55,8 +58,15 @@ class Command(BaseCommand):
         tree = backbone.build_backbone(taxa)
         self.stdout.write(f"      {len(tree.nodes)} clade nodes")
 
-        self.stdout.write("3/6 fame scores (Braidworks: Wikipedia pageviews)…")
-        fame = enrich.fame_scores(taxa)
+        # One provider instance shared across stages so a Braidworks batch (network)
+        # runs once and both fame + names read its cache.
+        provider = (
+            enrich.BraidworksProvider() if opts["enrich"] == "braidworks"
+            else enrich.OfflineProvider()
+        )
+
+        self.stdout.write(f"3/6 fame scores ({opts['enrich']})…")
+        fame = enrich.fame_scores(taxa, provider)
 
         self.stdout.write("4/6 pool select (fame + per-clade floor)…")
         pool_taxa = pool.select_pool(
@@ -65,7 +75,7 @@ class Command(BaseCommand):
         self.stdout.write(f"      {len(pool_taxa)} playable tips")
 
         self.stdout.write("5/6 enrich (common names + aliases)…")
-        enriched = enrich.enrich(pool_taxa, fame)
+        enriched = enrich.enrich(pool_taxa, fame, provider)
 
         self.stdout.write("6/6 build + validate asset…")
         doc = asset_builder.build_asset(

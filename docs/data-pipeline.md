@@ -96,9 +96,12 @@ missing names and supplies the fame score:
 - **`gbif_weaver`** *(optional)* — additional vernacular-name coverage / id
   crosswalk where Wikidata is sparse.
 
-> Building these weavers is itself tracked work — see [`roadmap.md`](roadmap.md).
-> Follow `braidworks/AGENTS.md`: real `source_sample`, provenance fields filled,
-> `verify --strict` green, live E2E run after touching any API backend.
+> **Status: built.** `wikidata_weaver` and `wikipedia_weaver` exist in the
+> braidworks repo (branch `cladewright-weavers`) — both pass `verify --strict` and a
+> live E2E, and the planner routes `organism.scientific_name → wikipedia.pageviews`.
+> Cladewright consumes them through `enrich.BraidworksProvider` (one batched braid
+> per build); `--enrich braidworks` on `build_gamedata` switches it on. The default
+> stays `OfflineProvider` so the pipeline runs without the weavers installed.
 
 Enrichment runs over the pool *candidates* (a few thousand), not all 3.2M animals,
 so it is cheap and Braidworks' caching makes re-runs near-free.

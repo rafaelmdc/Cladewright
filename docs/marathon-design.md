@@ -132,12 +132,21 @@ against its `species.py`):
 - **Wikidata aliases** (`skos:altLabel`) + **label** — "the lion", "panda bear",
   "kangaroos", spelling variants, synonyms.
 - **CoL / Wikidata vernacular names** (`VernacularName.tsv`, `P1843`).
+- **Common-name-item stitch** (`P13176`) — group names like "seal", "monkey",
+  "kangaroo", "dolphin" live on a *separate* Wikidata vernacular item linked to the
+  taxon, not on the family; the weaver UNIONs those in.
 - **Scientific names** and **clade names** (genus/family/… — clades are nameable).
 - *(Optional, not yet: Wikipedia `prop=redirects` for the long tail — the reference
   ships with this disabled, so we don't need it for parity.)*
 
 Crucially these are harvested for **clade nodes too**, not just species — that's how
-"bear"/"whale"/"sloth" resolve.
+"bear"/"seal"/"sloth" resolve.
+
+**Domain scoping** was evaluated to fix cross-kingdom homonyms (*Pholidota* =
+pangolin *and* an orchid): an in-query `wdt:P171* wd:Q729` (descends-from-Animalia)
+filter is correct but **times out on the Wikidata Query Service for batches**, so it's
+not used. The handful of affected homonyms remain a known edge (a per-candidate `ASK`
+could disambiguate them later).
 
 All flattened through the same `normalize()` (lowercase, hyphens + underscores →
 spaces, punctuation folded, whitespace collapsed) and baked into the asset's
@@ -158,7 +167,7 @@ The frontend **resolve(query)** is deliberately tiny (no fuzzy engine, no dropdo
 
 A miss just doesn't resolve (no wrong guess spent). Known edge: cross-kingdom
 scientific-name homonyms (e.g. *Pholidota* = pangolins *and* an orchid genus) can
-resolve to the wrong kingdom; scope the Wikidata lookup to Animalia to fix. See
+resolve to the wrong kingdom — see the domain-scoping note above. See
 [`data-pipeline.md`](data-pipeline.md#stage-4--braidworks-enrichment-common-names--fame)
 for harvesting and [`game-asset-format.md`](game-asset-format.md#aliases--autocomplete--matching-index)
 for the index shape.

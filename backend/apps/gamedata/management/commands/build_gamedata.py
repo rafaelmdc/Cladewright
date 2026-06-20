@@ -44,26 +44,37 @@ class Command(BaseCommand):
         if not coldp_dir.exists():
             raise CommandError(f"ColDP dir not found: {coldp_dir}")
 
-        # TODO(phase-1): wire the stages. Each currently raises NotImplementedError.
-        self.stdout.write("1/5 ingest (BICHO)…")
+        # Stage order: fame must be known before pool selection ranks within clades.
+        # TODO(phase-1): pass a Braidworks-backed EnrichProvider for real names/fame;
+        # the default OfflineProvider keeps this runnable without the weavers.
+        self.stdout.write("1/6 ingest (ColDP)…")
         taxa = ingest.ingest_coldp(coldp_dir, scope=opts["scope"])
+        self.stdout.write(f"      {len(taxa)} accepted species")
 
-        self.stdout.write("2/5 backbone…")
+        self.stdout.write("2/6 backbone…")
         tree = backbone.build_backbone(taxa)
+        self.stdout.write(f"      {len(tree.nodes)} clade nodes")
 
-        self.stdout.write("3/5 pool select…")
-        pool_tips = pool.select_pool(
-            tree, size=opts["pool_size"], clade_floor=opts["clade_floor"]
+        self.stdout.write("3/6 fame scores (Braidworks: Wikipedia pageviews)…")
+        fame = enrich.fame_scores(taxa)
+
+        self.stdout.write("4/6 pool select (fame + per-clade floor)…")
+        pool_taxa = pool.select_pool(
+            tree, fame, size=opts["pool_size"], clade_floor=opts["clade_floor"]
         )
+        self.stdout.write(f"      {len(pool_taxa)} playable tips")
 
-        self.stdout.write("4/5 enrich (Braidworks: common names + pageviews)…")
-        enriched = enrich.enrich(pool_tips)
+        self.stdout.write("5/6 enrich (common names + aliases)…")
+        enriched = enrich.enrich(pool_taxa, fame)
 
-        self.stdout.write("5/5 build + validate asset…")
+        self.stdout.write("6/6 build + validate asset…")
         doc = asset_builder.build_asset(
-            tree, enriched, hidden_label_max=opts["hidden_label_max"]
+            tree,
+            enriched,
+            hidden_label_max=opts["hidden_label_max"],
+            scope=opts["scope"],
         )
         validate.validate_asset(doc)
         asset_builder.write_asset(doc, opts["out"])
 
-        self.stdout.write(self.style.SUCCESS(f"Wrote {opts['out']}"))
+        self.stdout.write(self.style.SUCCESS(f"Wrote {opts['out']} (pool_size={doc['pool_size']})"))

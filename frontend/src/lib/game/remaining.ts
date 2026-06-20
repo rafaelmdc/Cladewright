@@ -31,6 +31,12 @@ export class RemainingTracker {
     return this.asset.poolCount[nodeIdx] - this.foundCount[nodeIdx];
   }
 
+  /** Clear all progress (new game) without reallocating the asset-derived arrays. */
+  reset(): void {
+    this.foundCount.fill(0);
+    this.activeLabels.clear();
+  }
+
   private maybeActivate(nodeIdx: number): void {
     if (this.activeLabels.has(nodeIdx)) return;
     if (this.foundCount[nodeIdx] >= 1 && this.remaining(nodeIdx) <= this.asset.hiddenLabelMax) {

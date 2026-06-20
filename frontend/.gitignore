@@ -1,0 +1,6 @@
+node_modules
+dist
+*.local
+# real game asset is built/gitignored; sample_asset.json is the committed default
+public/mammalia.json
+*.tsbuildinfo

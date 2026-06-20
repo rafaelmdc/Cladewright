@@ -16,8 +16,8 @@ export interface AssetTip {
   common: string;
   parent: string;
   lineage: string[]; // ordered root→parent ancestor node ids; MRCA = last shared prefix
-  fame: number;
-  time_weight: number;
+  // (No fame/time_weight: the pageview popularity system is post-MVP; the Marathon
+  //  time bonus is novelty-only, computed live. Keep in sync with backend asset.py.)
   traits: {
     environment: string[];
     biomes: string[];
@@ -34,8 +34,13 @@ export interface GameAsset {
   provenance: Record<string, unknown>;
   nodes: AssetNode[];
   tips: AssetTip[];
-  aliases: Record<string, string[]>; // normalized name -> tip ids
+  aliases: Record<string, string[]>; // normalized name -> tip OR clade-node ids
 }
+
+/** A resolved placement target: a species tip or a nameable clade node. */
+export type Target =
+  | { kind: "tip"; id: string; tip: AssetTip }
+  | { kind: "node"; id: string; node: AssetNode };
 
 // ---- Runtime form (after interning; see performance.md) ----
 // The loader interns string ids to contiguous integer indices and packs the hot
@@ -52,5 +57,9 @@ export interface InternedAsset {
   parent: Int32Array;
   /** tip id -> Int32Array of ancestor node indices (root→parent) */
   tipLineage: Map<string, Int32Array>;
+  /** tip id -> tip record */
+  tipById: Map<string, AssetTip>;
+  /** clade-node id -> node record */
+  nodeById: Map<string, AssetNode>;
   hiddenLabelMax: number;
 }

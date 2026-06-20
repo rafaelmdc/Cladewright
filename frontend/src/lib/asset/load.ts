@@ -3,12 +3,16 @@
 // docs/performance.md. This much is implemented because it's the load-bearing
 // foundation everything else builds on.
 
-import type { GameAsset, InternedAsset } from "./types";
+import type { AssetNode, AssetTip, GameAsset, InternedAsset } from "./types";
 
-const DEFAULT_URL = import.meta.env.VITE_GAMEDATA_URL ?? "/sample_asset.json";
+// Dev serves the real (gitignored) Mammalia asset from public/; a fresh clone without
+// it falls back to the committed tiny sample so the app still boots.
+const PRIMARY_URL = import.meta.env.VITE_GAMEDATA_URL ?? "/mammalia.json";
+const FALLBACK_URL = "/sample_asset.json";
 
-export async function loadAsset(url: string = DEFAULT_URL): Promise<InternedAsset> {
-  const res = await fetch(url);
+export async function loadAsset(url: string = PRIMARY_URL): Promise<InternedAsset> {
+  let res = await fetch(url);
+  if (!res.ok && url !== FALLBACK_URL) res = await fetch(FALLBACK_URL);
   if (!res.ok) throw new Error(`Failed to load game asset: ${res.status}`);
   const raw: GameAsset = await res.json();
   return intern(raw);
@@ -34,13 +38,18 @@ export function intern(raw: GameAsset): InternedAsset {
   }
 
   const tipLineage = new Map<string, Int32Array>();
+  const tipById = new Map<string, AssetTip>();
   for (const tip of raw.tips) {
     const arr = new Int32Array(tip.lineage.length);
     for (let k = 0; k < tip.lineage.length; k++) {
       arr[k] = nodeIndex.get(tip.lineage[k]) ?? -1;
     }
     tipLineage.set(tip.id, arr);
+    tipById.set(tip.id, tip);
   }
+
+  const nodeById = new Map<string, AssetNode>();
+  for (const node of raw.nodes) nodeById.set(node.id, node);
 
   return {
     raw,
@@ -49,6 +58,8 @@ export function intern(raw: GameAsset): InternedAsset {
     poolCount,
     parent,
     tipLineage,
+    tipById,
+    nodeById,
     hiddenLabelMax: raw.thresholds.hidden_label_max,
   };
 }

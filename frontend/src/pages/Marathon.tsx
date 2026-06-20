@@ -5,14 +5,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { SettingsPanel } from "../components/SettingsPanel";
 import { TreeRenderer } from "../components/TreeRenderer";
 import { loadAsset } from "../lib/asset/load";
 import type { InternedAsset } from "../lib/asset/types";
 import { RemainingTracker } from "../lib/game/remaining";
 import { resolve } from "../lib/game/resolve";
+import { loadSettings, saveSettings, type GameSettings } from "../lib/game/settings";
 import { createInducedTree, place, type InducedTree, type Placement } from "../lib/tree/induced";
-
-const START_SECONDS = 60;
 
 interface Flash {
   text: string;
@@ -35,15 +35,23 @@ function Game({ asset }: { asset: InternedAsset }) {
   const tracker = useMemo(() => new RemainingTracker(asset), [asset]);
   const [rev, setRev] = useState(0);
 
+  const [settings, setSettings] = useState<GameSettings>(loadSettings);
+  function updateSettings(next: GameSettings) {
+    setSettings(next);
+    saveSettings(next);
+    // Flipping infinite-time on revives a finished run so you can keep exploring.
+    if (next.infiniteTime && !running) setRunning(true);
+  }
+
   const [input, setInput] = useState("");
   const [score, setScore] = useState(0);
   const [count, setCount] = useState(0);
-  const [seconds, setSeconds] = useState(START_SECONDS);
+  const [seconds, setSeconds] = useState(settings.startSeconds);
   const [running, setRunning] = useState(true);
   const [flash, setFlash] = useState<Flash | null>(null);
 
   useEffect(() => {
-    if (!running) return;
+    if (!running || settings.infiniteTime) return;
     const id = setInterval(() => {
       setSeconds((s) => {
         if (s <= 1) {
@@ -54,16 +62,17 @@ function Game({ asset }: { asset: InternedAsset }) {
       });
     }, 1000);
     return () => clearInterval(id);
-  }, [running]);
+  }, [running, settings.infiniteTime]);
 
   function rewardFor(p: Placement): { time: number; points: number } {
     if (p.kind === "duplicate") return { time: 0, points: 0 };
-    if (p.kind === "refinement") return { time: 2, points: 1 }; // small dopamine
+    if (p.kind === "refinement") return { time: settings.timePerRefinement, points: 1 };
     // Novelty: a shallow MRCA (little overlap with the existing tree) opens more
-    // backbone → bigger bonus. mrcaIdx === -1 is the very first placement (most novel).
+    // backbone → bigger bonus. depth 0 (root-ish) earns the full novelty bonus,
+    // tapering to 0 by depth 6.
     const depth = p.mrcaIdx < 0 ? 0 : lineageDepth(asset, p.mrcaIdx);
-    const novelty = Math.max(0, 6 - depth); // root-ish placements worth more
-    return { time: 4 + novelty, points: 10 };
+    const novelty = Math.round(settings.noveltyBonus * Math.max(0, 1 - depth / 6));
+    return { time: settings.timePerNew + novelty, points: 10 };
   }
 
   function submit(e: React.FormEvent) {
@@ -87,7 +96,7 @@ function Game({ asset }: { asset: InternedAsset }) {
       const { time, points } = rewardFor(p);
       setScore((v) => v + points);
       setCount((v) => v + 1);
-      setSeconds((s) => Math.min(START_SECONDS * 3, s + time));
+      setSeconds((s) => Math.min(9999, s + time));
       setFlash({
         text: `${label} +${time}s${p.kind === "refinement" ? " (refined)" : ""}`,
         tone: p.kind === "refinement" ? "small" : "good",
@@ -105,10 +114,14 @@ function Game({ asset }: { asset: InternedAsset }) {
 
   return (
     <div className="relative h-screen w-screen bg-clade-bg">
+      <SettingsPanel settings={settings} onChange={updateSettings} />
+
       {/* HUD */}
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-col items-center gap-2 p-4">
         <div className="flex items-center gap-6 font-mono text-sm text-clade-ink/70">
-          <span className={seconds <= 10 ? "text-red-500" : ""}>⏱ {seconds}s</span>
+          <span className={!settings.infiniteTime && seconds <= 10 ? "text-red-500" : ""}>
+            ⏱ {settings.infiniteTime ? "∞" : `${seconds}s`}
+          </span>
           <span>{score} pts</span>
           <span>{count} on the tree</span>
         </div>
@@ -139,7 +152,7 @@ function Game({ asset }: { asset: InternedAsset }) {
               tracker.reset();
               setScore(0);
               setCount(0);
-              setSeconds(START_SECONDS);
+              setSeconds(settings.startSeconds);
               setFlash(null);
               setRev((n) => n + 1);
               setRunning(true);

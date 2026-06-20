@@ -96,20 +96,30 @@ One entry per internal node kept in the induced tree.
 
 ## `aliases` — autocomplete / matching index
 
-Resolves player text to tip ids, with ambiguity decided at build time rather than
-at play time.
+Resolves player text to a **tip OR an internal clade node** (clades are nameable,
+animalist-style), with ambiguity decided at build time rather than at play time.
+Targets are distinguishable by id prefix: `tip:` = species, anything else (`fam:`,
+`ord:`, …) = clade node.
 
 ```jsonc
 {
   "brown bear": ["tip:Ursus_arctos"],
   "grizzly":    ["tip:Ursus_arctos"],
-  "bear":       ["tip:Ursus_arctos","tip:Ursus_maritimus", "..."]  // ambiguous → disambiguate in UI
+  "bear":       ["tip:Ursus_arctos","tip:Ursus_maritimus", "..."], // ambiguous → disambiguate in UI
+  "felidae":    ["fam:Felidae"],                                    // clade name → a node
+  "cats":       ["fam:Felidae"]
 }
 ```
 
-- Keys are normalized (lowercase, punctuation-folded). Scientific names index too.
-- One key may map to several tips (genuine ambiguity); the combobox disambiguates.
+- Keys are **normalized**: lowercase, punctuation dropped, and **underscores folded to
+  spaces** so a Wikipedia-title source (`Brown_bear`) matches a typed "brown bear".
+  Players never type underscores, and no display name (`tip.common`, `node.sci`)
+  carries one. The frontend must normalize the player's query the *same* way before
+  lookup. Scientific names index too.
+- One key may map to several targets (genuine ambiguity); the combobox disambiguates.
   A typo that matches nothing simply doesn't resolve — no wrong "guess" is spent.
+- Naming a clade target is allowed but only *rewards* the player when it places a new
+  node (see [`marathon-design.md`](marathon-design.md)).
 
 ## Client-side state derived at runtime (not in the asset)
 

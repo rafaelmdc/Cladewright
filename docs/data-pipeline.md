@@ -59,35 +59,42 @@ Turn the denormalized lineages into a single rooted tree:
 
 ## Stage 3 — Pool selection (what's playable and counted)
 
-The **playable pool** is the curated subset of species that are nameable in-game
-and that the "N remaining" counts range over. Bounding the counts to the pool is
-what makes "8/10 bears, 2 hidden" meaningful instead of a five-digit number over
-every sequenced subspecies.
+The **playable pool** is the set of species nameable in-game and over which the "N
+remaining" counts range.
 
-Selection = **rank pool-eligible animals by fame, keep the top N, with a per-clade
-floor** (`POOL_SIZE ≈ 2,500` for v1, expandable — it is just a threshold). Fame
-score comes from Stage 4. The rules:
+**Decided: keep all non-extinct species in scope** (`select_pool(size=0)`) — the
+rose.systems/animalist model. Real-data evaluation justified this: for a
+well-covered clade the common-name coverage is excellent (Mammalia: **97.7%** CoL +
+~90% Wikidata), so there's no need to curate down to a famous few. With the whole
+clade in, the "N remaining" counts mean something all the way to the tips, and the
+reveal threshold keeps near-root counts hidden — so hints concentrate on small
+terminal clades, rewarding specificity (see
+[`marathon-design.md`](marathon-design.md)).
 
-- **Per-clade floor (decided).** Guarantee a minimum number of tips from each major
-  group (e.g. each class/order) so no big clade is starved — pure fame ranking
-  otherwise over-fills mammals/birds and leaves reptiles/insects nearly empty. Fill
-  by fame *within* each group up to the floor, then fill remaining slots globally by
-  fame. (No per-clade *ceiling* in v1 — famous animals are never dropped to even out
-  a group.)
-- **Extinct excluded (v1).** Fossil/extinct-only taxa are filtered out of the
-  nameable pool and not counted. The `extinct` flag is **preserved** through the
-  pipeline so a later themed "paleo" Marathon can build its own pool from it — see
-  [`marathon-design.md`](marathon-design.md#decisions). v1 simply excludes them.
-- The pool size, the floor, and the group level it applies at are **config**,
-  re-runnable without code changes.
+- **Scope = a well-covered clade** (Mammalia, Aves, herps, fish, …), each also a
+  potential per-clade game. The poorly-covered long tail of all-Animalia is left out
+  by default (common-name coverage collapses there); open it later behind a
+  scientific-only mode.
+- **Extinct excluded (v1).** Fossil/extinct-only taxa are filtered out and not
+  counted; the `extinct` flag is **preserved** for a later themed paleo scope.
+- **Legacy curated mode** (`size>0`) remains in `select_pool`: fame-ranked top-N with
+  a per-clade floor guarantee — kept for any future scope too sparse for an
+  all-species pool. Not used for the well-covered clades.
+
+Source for the dataset: a real ColDP can be fetched per-clade with no auth via
+`backend/scripts/fetch_clb_coldp.py` (pages the ChecklistBank read API — used to pull
+all 6,459 Mammalia species + vernacular names for the evaluation).
 
 ## Stage 4 — Braidworks enrichment (common names + fame)
 
-ColDP's `VernacularName.tsv` (Stage 1) covers the famous animals but leaves gaps,
-and it gives us **no popularity signal** for Stage 3. Both gaps are closed by
-**Braidworks**, added as proper **weavers** via its Spec→Scaffold→Implement→Verify
-loop (not ad-hoc scripts). CoL vernacular is the first pass; Braidworks fills
-missing names and supplies the fame score:
+ColDP's `VernacularName.tsv` (Stage 1) covers most species in a well-covered clade
+but leaves gaps, and it gives us no popularity signal. Both are filled by
+**Braidworks** weavers (Spec→Scaffold→Implement→Verify, not ad-hoc scripts). CoL
+vernacular is the first pass; Braidworks fills missing names and supplies the fame
+score. **Fame no longer gates inclusion** (the pool is all species) — pageviews now
+only weight the Marathon **time bonus / difficulty** (obscure species are worth more
+time; see [`marathon-design.md`](marathon-design.md#time-bonus-weighting)). So this
+stage is enrichment, not a gate:
 
 - **`wikidata_weaver`** — taxon → vernacular (common) names + Wikidata QID.
   Hangs off the existing organism/NCBI-taxid hub.

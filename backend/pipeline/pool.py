@@ -1,15 +1,19 @@
 """
 Stage 3 — select the playable pool.
 
-Rank pool-eligible tips by fame, keep the top ``size``, WITH a per-clade floor so no
-major group is starved (decided: floor, no ceiling). Extinct taxa are excluded from
-v1. The pool is the universe the "N remaining" counts range over. Order is fully
-deterministic (fame desc, source_id tiebreak). See docs/data-pipeline.md §Stage 3.
+Default (``size=0``, the chosen design): **keep all non-extinct species** in scope —
+the pool is everything, like rose.systems/animalist. The "N remaining" counts then
+range over the full clade, which (with the reveal threshold) naturally concentrates
+hints on small terminal clades and rewards specificity. Used for well-covered clades
+and per-clade games. Extinct taxa are excluded from v1.
 
-The floor is a **guarantee**: every group keeps up to ``clade_floor`` tips even if
-that pushes the total past ``size`` (only possible when the floors sum to more than
-``size`` — a misconfiguration for the real ~2,500 pool). ``size`` is the target for
-the global fill stage, not a hard cap on the floors.
+Legacy curated mode (``size>0``): rank by fame and keep the top ``size`` WITH a
+per-clade floor so no major group is starved. The floor is a guarantee — every group
+keeps up to ``clade_floor`` tips even if that pushes the total past ``size``. Kept for
+poorly-covered scopes where an all-species pool would be mostly unknown organisms.
+
+Order is fully deterministic (fame desc, source_id tiebreak). See
+docs/data-pipeline.md §Stage 3.
 """
 from __future__ import annotations
 
@@ -27,7 +31,7 @@ def select_pool(
     tree: Tree,
     fame: dict[str, float],
     *,
-    size: int = 2500,
+    size: int = 0,
     clade_floor: int = 10,
     floor_rank: str = "order",
 ) -> list[Taxon]:
@@ -38,6 +42,10 @@ def select_pool(
         return (-fame.get(t.source_id, 0.0), t.source_id)
 
     candidates.sort(key=sort_key)
+
+    # size=0 -> "have them all": the whole non-extinct set is the pool.
+    if size <= 0:
+        return candidates
 
     selected: dict[str, Taxon] = {}
 

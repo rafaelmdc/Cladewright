@@ -13,6 +13,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .enrich import normalize
 from .ids import tip_id
 from .types import EnrichedTip, Tree
 
@@ -66,8 +67,26 @@ def build_asset(
         )
     nodes.sort(key=lambda n: n["id"])
 
-    tips = []
+    # Aliases resolve a typed name to a tip OR an internal clade node (ids are
+    # distinguishable by prefix: "tip:" vs rank prefixes). Naming a clade is allowed
+    # (animalist-style); the game rewards it only when it places a NEW node.
     aliases: dict[str, list[str]] = {}
+
+    def add_alias(name: str, target_id: str) -> None:
+        key = normalize(name)
+        if not key:
+            return
+        bucket = aliases.setdefault(key, [])
+        if target_id not in bucket:
+            bucket.append(target_id)
+
+    for node_id in induced:
+        node = tree.nodes[node_id]
+        add_alias(node.sci, node_id)            # e.g. "felidae" -> fam:Felidae
+        if node.common:
+            add_alias(node.common, node_id)     # e.g. "cats" -> fam:Felidae (when known)
+
+    tips = []
     for tip in enriched:
         tid = tip_id(tip.taxon.scientific_name)
         tips.append(
@@ -87,9 +106,7 @@ def build_asset(
             }
         )
         for alias in tip.aliases:
-            bucket = aliases.setdefault(alias, [])
-            if tid not in bucket:
-                bucket.append(tid)
+            add_alias(alias, tid)
 
     tips.sort(key=lambda t: t["id"])
 

@@ -13,14 +13,27 @@ and `docs/examples/marathon hints example*.png`.
 
 - **The tree canvas is the whole UI.** No side panels. A floating top HUD over the
   canvas holds: countdown timer, a single text input ("name an organism — it lands
-  on the tree…"), and a live count of tips placed.
-- **Naming.** Type an organism; autocomplete restricts to real pool taxa (typos
-  resolve to nothing and cost nothing). A valid, not-yet-named organism sprouts as
-  a tip on the shared induced tree, routed in through its lineage.
-- **Timer.** Start ~60s. Each valid new organism **adds time**; more for organisms
-  that open new ground (see novelty bonus). Run out → game over.
-- **Score.** Tips placed. Leaderboard-bearing, so scoring is re-validated
-  server-side at submit (see [`architecture.md`](architecture.md)).
+  on the tree…"), and a live count.
+- **Naming — species *or* clades** (animalist-style). Autocomplete offers any real
+  taxon in scope: a species (e.g. "lion") or a clade (e.g. "Felidae" / "cats").
+  Typos resolve to nothing and cost nothing. A name routes onto the shared induced
+  tree through its lineage.
+- **Reward = placing a NEW node** (the specificity rule). You gain time + score when
+  a name adds a node not already on the tree. Naming something already present — a
+  duplicate, or a *parent of what you already have* — gives **nothing** (it just
+  recenters on the existing node). So: "Felidae" first → reward (new node); then
+  "cat" (= Felidae) → nothing (already there); then "lion" → reward (new, more
+  specific). Climbing to ancestors you already imply earns nothing; going deeper or
+  opening a new branch earns. This is what promotes specificity.
+- **Timer.** Start ~60s. Each rewarded placement **adds time** (amount weighted by
+  novelty + obscurity — see below). Run out → game over.
+- **Pool = all species in scope** (not a curated top-N): every non-extinct species in
+  the dataset is nameable and counted, so the tree can be filled to completion and
+  the "N remaining" hints mean something all the way down. See
+  [`data-pipeline.md`](data-pipeline.md#stage-3--pool-selection-what-s-playable-and-counted).
+- **Score.** New nodes placed (a player chasing score is pushed toward specific
+  species, since shallow ancestors are quickly "already there"). Leaderboard-bearing,
+  so scoring is re-validated server-side at submit (see [`architecture.md`](architecture.md)).
 
 ## The "N remaining" mechanic
 
@@ -70,20 +83,23 @@ because `remaining` only ever decreases, each branch crosses the reveal threshol
 nodes. The full pool and backbone are never iterated during play. Full design and
 complexity table: [`performance.md`](performance.md).
 
-### Novelty time bonus
+### Time-bonus weighting
 
-"Rarer clade = more time" needs a concrete definition. Use **novelty**, not raw
-rarity: the bonus scales with **how much new backbone the tip opens** — i.e. the
-rank-depth of the MRCA between the new tip and the existing tree.
+A rewarded placement (a new node) adds time. How much is weighted by two factors:
 
-- First echinoderm when you've only named mammals → MRCA is near the root → big
-  bonus (you cracked open a new branch).
-- Your fifth finch → MRCA is a shallow genus/family node → small bonus.
+- **Novelty** — how much new backbone the name opens, i.e. the rank-depth of the
+  MRCA between the new node and the existing tree. First echinoderm when you've only
+  named mammals → near the root → big bonus; your fifth finch → shallow MRCA → small.
+- **Obscurity** — `tip.time_weight`, derived from **Wikipedia pageviews** (the
+  `wikipedia_weaver` fame signal): an obscure species is worth *more* time than an
+  instantly-obvious one. Fame no longer gates *inclusion* (the pool is all species);
+  it only tunes reward/difficulty here. See
+  [`data-pipeline.md`](data-pipeline.md#stage-4--braidworks-enrichment-common-names--fame).
 
-This rewards breadth and exploration over spamming one dense clade, and pairs
-naturally with the hidden labels (which reward the opposite — going *deep* to
-complete a clade). The two mechanics together give Marathon its rhythm: sweep wide
-for time, then dive to mop up `N hidden` for score.
+Naming an ancestor you already have adds **no** time at all (it places no new node).
+Together with the hidden labels (which reward going *deep* to complete a clade), this
+gives Marathon its rhythm: open new branches and dive into specifics; don't bother
+generalizing upward or spamming names you've already covered.
 
 ### Optional: the "trait?" reveal
 
@@ -120,15 +136,22 @@ scale (lean on the silhouette style ② if "?" + count gets cramped).
   like Classic — see [`architecture.md`](architecture.md)); free play is an
   unlimited fresh run any time. The leaderboard is per-day for daily, all-time best
   for free play.
-- **Off-pool names can't happen — autocomplete is pool-only.** The input only offers
-  pool taxa, so a real-but-unincluded animal never resolves and never costs the
-  player anything. No backbone-wide name matching needed. (If this feels too
-  restrictive in playtest, the ghost-tip option is the fallback.)
-- **Extinct taxa are excluded from v1**, but the design keeps the door open for a
-  later **themed "paleo" Marathon** (dinosaurs, trilobites, …). Concretely: the
-  pipeline preserves the `extinct` flag and *can* ingest fossil taxa, but v1's pool
-  selection filters them out and they are neither nameable nor counted. The paleo
-  mode is a later, separate pool — not built now.
+- **Pool = all species in scope; scope is a well-covered clade (or a per-clade
+  game).** Every non-extinct species in the loaded dataset is nameable + counted,
+  plus its clades. "Scope" is chosen for good common-name coverage — e.g. Mammalia
+  (97.7% CoL common names), birds, herps, fish — and each can also be its own themed
+  game ("Mammals marathon"). The long tail of all-Animalia (insects, worms) is *not*
+  loaded by default because common-name coverage collapses there; a scientific-only
+  mode can open it later.
+- **Names are matched space-insensitively / underscore-free.** Players type natural
+  names ("brown bear", "Felidae") — never underscores. The alias index is normalized
+  (lowercase, punctuation/underscore folded to spaces) at build time, so any
+  underscore-bearing source (e.g. a Wikipedia title `Brown_bear`) still matches a
+  space-typed query. No player-facing display name carries underscores.
+- **Naming outside the loaded scope just doesn't resolve** — autocomplete only offers
+  taxa in the current dataset, so it can't be typed and costs nothing.
+- **Extinct taxa are excluded from v1**, with the `extinct` flag preserved for a later
+  themed **paleo** marathon — a separate scope, not built now.
 
 ## Still to settle by playtest
 

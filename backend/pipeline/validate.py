@@ -68,11 +68,11 @@ def validate_asset(doc: dict) -> None:
                 f"node {n['id']} pool_count={n['pool_count']} != recomputed {recomputed[n['id']]}"
             )
 
-    # Aliases target real tips.
+    # Aliases target real tips OR internal clade nodes (clades are nameable).
     for alias, targets in doc["aliases"].items():
-        for tid in targets:
-            if tid not in tips:
-                raise AssetValidationError(f"alias {alias!r} targets unknown tip {tid}")
+        for target in targets:
+            if target not in tips and target not in nodes:
+                raise AssetValidationError(f"alias {alias!r} targets unknown id {target}")
 
     if len(doc["tips"]) != doc["pool_size"]:
         raise AssetValidationError("pool_size does not match number of tips")

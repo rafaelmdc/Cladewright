@@ -19,13 +19,22 @@ from typing import Protocol
 
 from .types import EnrichedTip, Taxon
 
-_WS = re.compile(r"\s+")
+_WS = re.compile(r"[\s_]+")  # underscores count as spaces (Wikipedia titles use them)
 _PUNCT = re.compile(r"[^\w\s]")
 
 
+def despace(name: str) -> str:
+    """Turn a Wikipedia-style title into a display name: 'Brown_bear' -> 'Brown bear'."""
+    return name.replace("_", " ").strip()
+
+
 def normalize(name: str) -> str:
-    """Lowercase, drop punctuation, collapse whitespace — the alias-index key form."""
-    return _WS.sub(" ", _PUNCT.sub("", name.lower())).strip()
+    """Lowercase, drop punctuation, fold underscores+whitespace — the alias-index key.
+
+    Players type natural names ('brown bear'), never underscores, so any underscore in
+    a source string must collapse to a space for the lookup to match.
+    """
+    return _WS.sub(" ", _PUNCT.sub("", name.lower().replace("_", " "))).strip()
 
 
 class EnrichProvider(Protocol):
@@ -53,7 +62,7 @@ class OfflineProvider:
         return int.from_bytes(digest[:4], "big") / 0xFFFFFFFF
 
     def common_name(self, taxon: Taxon) -> str | None:
-        return taxon.vernacular
+        return despace(taxon.vernacular) if taxon.vernacular else None
 
 
 class BraidworksProvider:
@@ -117,10 +126,10 @@ class BraidworksProvider:
 
     def common_name(self, taxon: Taxon) -> str | None:
         if taxon.vernacular:
-            return taxon.vernacular
+            return despace(taxon.vernacular)
         entry = self._cache.get(taxon.scientific_name)
         names = entry["names"] if entry else []
-        return names[0] if names else None
+        return despace(names[0]) if names else None
 
 
 def fame_scores(taxa: list[Taxon], provider: EnrichProvider | None = None) -> dict[str, float]:

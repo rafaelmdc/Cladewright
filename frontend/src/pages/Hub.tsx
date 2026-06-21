@@ -5,8 +5,10 @@ import { Link } from "react-router-dom";
 
 import { LeafMark, TopBar } from "../components/Brand";
 import { LeafBackground } from "../components/LeafBackground";
+import { useTitle } from "../lib/useTitle";
 
 export function Hub() {
+  useTitle();
   return (
     <div className="min-h-screen">
       <LeafBackground density={30} />
@@ -16,10 +18,6 @@ export function Hub() {
         <p className="mt-8 font-mono text-xs uppercase tracking-wider text-clade-ink/45">
           data: Catalogue of Life · every taxon shown common + scientific
         </p>
-
-        <h1 className="mt-4 max-w-3xl font-hand text-7xl font-bold leading-[0.95] text-clade-ink sm:text-8xl">
-          Guess your way across the tree of life.
-        </h1>
 
         <div className="mt-10 max-w-2xl">
           <ModeCard

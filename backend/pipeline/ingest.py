@@ -21,6 +21,14 @@ from .types import Taxon
 
 ACCEPTED_STATUSES = {"accepted", "provisionally accepted"}
 
+# We stream the dump row-by-row (csv.reader is a lazy iterator — the 1.8 GB file is never
+# loaded whole). The only memory risk is a single pathological field; real CoL dumps carry
+# occasional fat cells (long `remarks`/reference strings in columns we don't even use) that
+# exceed csv's default 131072-byte cap. Lift the cap to a BOUNDED 16 MiB — generous for any
+# legit taxonomic field, but still bounded, so one bad row can't balloon memory.
+_MAX_FIELD_BYTES = 16 * 1024 * 1024
+csv.field_size_limit(_MAX_FIELD_BYTES)
+
 
 def _col(headers: list[str]):
     """Return a getter that finds a ColDP column by name, with/without ``col:``."""

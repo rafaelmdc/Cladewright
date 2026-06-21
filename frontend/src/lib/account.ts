@@ -18,11 +18,20 @@ export interface RecentRun {
   at: string;
 }
 
+/** One day with at least one run, for the activity heatmap. */
+export interface DayActivity {
+  date: string; // YYYY-MM-DD
+  best: number;
+  games: number;
+}
+
 export interface AccountStats {
   user: { username: string; email: string; joined: string };
   modes: ModeStat[];
   totals: { games_played: number; total_named: number; unique_named: number };
   recent_runs: RecentRun[];
+  activity: DayActivity[];
+  heatmap_days: number;
 }
 
 /** null = not authenticated or backend down. */

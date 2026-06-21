@@ -5,7 +5,12 @@ am I?", read per-game stats for the account page, log out, and delete the accoun
 """
 from __future__ import annotations
 
+import datetime as dt
+
 from django.contrib.auth import logout
+from django.db.models import Count, Max
+from django.db.models.functions import TruncDate
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework.permissions import IsAuthenticated
@@ -16,6 +21,7 @@ from rest_framework.views import APIView
 from apps.scores.models import GameMode, PlayerStat, Run
 
 RECENT_RUNS = 30
+HEATMAP_DAYS = 7 * 13  # ~13 weeks, GitHub-style
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -71,6 +77,18 @@ class AccountStatsView(APIView):
             .order_by("-created_at")
             .values("mode", "scope", "score", "created_at")[:RECENT_RUNS]
         ]
+        # Day-bucketed activity for the GitHub-style heatmap: best score + game count per
+        # day over the last ~13 weeks. Only days with runs are sent; the client lays out
+        # the full grid and looks days up.
+        since = timezone.now() - dt.timedelta(days=HEATMAP_DAYS - 1)
+        activity = [
+            {"date": d["day"].isoformat(), "best": d["best"], "games": d["games"]}
+            for d in Run.objects.filter(user=u, created_at__gte=since)
+            .annotate(day=TruncDate("created_at"))
+            .values("day")
+            .annotate(best=Max("score"), games=Count("id"))
+            .order_by("day")
+        ]
         return Response(
             {
                 "user": {
@@ -81,6 +99,8 @@ class AccountStatsView(APIView):
                 "modes": modes,
                 "totals": totals,
                 "recent_runs": recent_runs,
+                "activity": activity,
+                "heatmap_days": HEATMAP_DAYS,
             }
         )
 

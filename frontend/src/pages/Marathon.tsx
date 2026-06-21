@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Wordmark } from "../components/Brand";
+import { EndGameButton } from "../components/EndGameButton";
 import { GameOverCard } from "../components/GameOverCard";
 import { ScopePicker } from "../components/ScopePicker";
 import { SettingsPanel } from "../components/SettingsPanel";
@@ -266,6 +267,8 @@ function Game({
         <ScopePicker scopes={scopes} value={scopeKey} onChange={onScope} />
       </div>
       <SettingsPanel settings={settings} onChange={updateSettings} onAutofill={autofill} />
+      {/* End-the-run control sits just left of the settings gear; only while playing. */}
+      {running && <EndGameButton onEnd={() => setRunning(false)} />}
 
       {/* HUD — timer (left) and tally (right) hug the corners, BELOW the wordmark/scope
           row so the picker never overlaps the timer. The search bar + notification are

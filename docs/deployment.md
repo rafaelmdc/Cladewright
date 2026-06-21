@@ -46,10 +46,10 @@ named `cladewright-rafael-*` and an `ExternalSecret` per the portfolio template:
 
 | Bitwarden item | becomes env |
 |---|---|
-| `cladewright-rafael-django-secret-key` | `DJANGO_SECRET_KEY` |
-| `cladewright-rafael-db-username` / `-db-password` | CNPG bootstrap + `POSTGRES_USER/PASSWORD` |
-| `cladewright-rafael-google-oauth-client-id` | `GOOGLE_OAUTH_CLIENT_ID` |
-| `cladewright-rafael-google-oauth-secret` | `GOOGLE_OAUTH_SECRET` |
+| `rafael-cladewright-django-secret-key` | `DJANGO_SECRET_KEY` |
+| `rafael-cladewright-db-username` / `-db-password` | CNPG bootstrap + `POSTGRES_USER/PASSWORD` |
+| `rafael-cladewright-google-oauth-client-id` | `GOOGLE_OAUTH_CLIENT_ID` |
+| `rafael-cladewright-google-oauth-secret` | `GOOGLE_OAUTH_SECRET` |
 
 ## Prod env (all already env-driven)
 

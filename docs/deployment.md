@@ -90,10 +90,18 @@ Service the SPA's nginx proxies `/api`+`/accounts` to).
 
 ## Google OAuth
 
-Register the prod redirect URI in the Google console:
-`https://cladewright.duarte-correia.pt/accounts/google/login/callback/`. The consent screen is
-in Testing (owner is a test user) — **Publish** at launch. Same client id/secret as dev, fed
-via Bitwarden.
+Same client id/secret as dev (fed via Bitwarden) — **add** the prod URIs to the existing
+client, don't replace the dev ones (so local login keeps working).
+
+- **Authorized redirect URIs** (allauth's server-side flow uses these — exact match, trailing
+  slash, always the MAIN domain since sign-in is through the SPA proxy):
+  - `http://localhost:5173/accounts/google/login/callback/` (dev)
+  - `https://cladewright.duarte-correia.pt/accounts/google/login/callback/` (prod)
+- **Authorized JavaScript origins** — not needed (top-level redirect flow, no Google JS SDK);
+  leave empty, or set `https://cladewright.duarte-correia.pt` if you prefer.
+
+`SECURE_PROXY_SSL_HEADER` makes allauth build the `https://` callback behind the tunnel. The
+consent screen is in Testing (owner is a test user) — **Publish** at launch.
 
 ## The CoL dump
 

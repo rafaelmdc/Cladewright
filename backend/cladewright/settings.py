@@ -163,9 +163,14 @@ SOCIALACCOUNT_LOGIN_ON_GET = True
 ACCOUNT_EMAIL_VERIFICATION = "none"
 ACCOUNT_LOGIN_METHODS = {"email"}
 ACCOUNT_SIGNUP_FIELDS = ["email*"]
+# Google-first login: if a Google account's (provider-verified) email matches an existing
+# user, log in as — and auto-link to — that user instead of dead-ending on allauth's
+# "an account already exists, connect it first" page. Safe because Google verifies emails.
+SOCIALACCOUNT_EMAIL_AUTHENTICATION = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
 
-# After login/logout, bounce back to the SPA (same-origin in dev via the proxy).
-LOGIN_REDIRECT_URL = os.environ.get("LOGIN_REDIRECT_URL", "/marathon")
+# After login/logout, bounce back to the SPA hub (same-origin in dev via the proxy).
+LOGIN_REDIRECT_URL = os.environ.get("LOGIN_REDIRECT_URL", "/")
 ACCOUNT_LOGOUT_REDIRECT_URL = "/"
 
 # Session cookie must survive the OAuth redirect round-trip; Lax is correct for a

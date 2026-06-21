@@ -251,16 +251,16 @@ function Game({
       {/* decorative field-notebook frame around the canvas */}
       <div className="pointer-events-none absolute inset-2 z-0 rounded-[26px] border-2 border-clade-ink/15" />
 
-      <div className="absolute left-4 top-4 z-30 flex flex-col items-start gap-2">
+      <div className="absolute left-4 top-4 z-30 flex items-center gap-3">
         <Wordmark size="text-2xl" />
         <ScopePicker scopes={scopes} value={scopeKey} onChange={onScope} />
       </div>
       <SettingsPanel settings={settings} onChange={updateSettings} onAutofill={autofill} />
 
-      {/* HUD — timer (left) and tally (right) hug the corners; the search bar and its
-          notification are centered on the viewport independently, so the bar reads as
-          dead-center regardless of how wide the side stats grow. */}
-      <div className="pointer-events-none absolute inset-x-0 top-16 z-10 flex items-start justify-between px-6">
+      {/* HUD — timer (left) and tally (right) hug the corners, BELOW the wordmark/scope
+          row so the picker never overlaps the timer. The search bar + notification are
+          centered on the viewport independently, so the bar reads as dead-center. */}
+      <div className="pointer-events-none absolute inset-x-0 top-20 z-10 flex items-start justify-between px-6">
         <div className="leading-none">
           <span className="font-mono text-[10px] uppercase tracking-widest text-clade-ink/45">
             Time

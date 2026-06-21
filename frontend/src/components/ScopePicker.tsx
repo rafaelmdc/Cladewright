@@ -40,14 +40,12 @@ export function ScopePicker({
 
   return (
     <div ref={ref} className="pointer-events-auto relative">
-      <span className="mb-0.5 block font-mono text-[10px] uppercase tracking-widest text-clade-ink/45">
-        Scope
-      </span>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
+        title="Scope"
         className="flex items-center gap-2 rounded-2xl border-2 border-clade-ink/80 bg-clade-paper/90 px-3.5 py-1.5 font-hand text-2xl leading-none text-clade-ink shadow-sm backdrop-blur transition hover:border-clade-accent focus:border-clade-accent focus:outline-none"
       >
         <span>{current?.label ?? "Choose a clade"}</span>

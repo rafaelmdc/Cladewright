@@ -106,6 +106,10 @@ Each is built with `--enrich braidworks --include-extinct` (the `extinct` flag i
 the client can toggle extant-only; counts carry both `pool_count` and `pool_count_extant`).
 Load one with `make seed ASSET=/data/out/<key>.json`.
 
+> **Building from the admin instead?** [`pipeline-jobs.md`](pipeline-jobs.md) is a copy-paste
+> reference of the standard scopes (key, label, CoL filter, enrich) for the admin's
+> *Pipeline jobs → Add* form — same manifest, no shell needed.
+
 > **Dinosaurs:** not buildable from CoL — `Dinosauria` and the famous non-avian genera
 > (*Tyrannosaurus*, *Triceratops*, …) aren't in the checklist at all. A dinosaur scope
 > needs a separate source (Paleobiology Database, or Wikidata); deferred until the rest is

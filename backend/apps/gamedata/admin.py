@@ -59,7 +59,9 @@ class PipelineJobAdmin(admin.ModelAdmin):
         (None, {
             "fields": ("kind",),
             "description": "Build an asset, or download a fresh CoL dump (replaces the old "
-                           "one). A separate worker runs the job — refresh to watch status.",
+                           "one). A separate worker runs the job — refresh to watch status. "
+                           "Standard scope filters (mammalia/aves/reptilia/amphibia/fish) are "
+                           "listed in docs/pipeline-jobs.md.",
         }),
         ("Build asset (ignored for a Download job)", {
             "fields": ("scope_key", "label", "scope_filter", "enrich", "include_extinct",

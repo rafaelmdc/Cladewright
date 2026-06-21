@@ -18,6 +18,15 @@ class GameMode(models.TextChoices):
     CLASSIC = "classic", "Classic (daily)"
 
 
+class Difficulty(models.TextChoices):
+    """How names are shown in play — and a separate leaderboard per choice. 'common' shows
+    vernacular names; 'scientific' shows Latin only (harder to recognise what you've placed
+    and what's missing)."""
+
+    COMMON = "common", "Common names"
+    SCIENTIFIC = "scientific", "Scientific only"
+
+
 class Run(models.Model):
     """One completed game. For Marathon, ``score`` = tips placed."""
 
@@ -28,6 +37,11 @@ class Run(models.Model):
     # Which scope this run was played on (e.g. "mammalia", "fish") — leaderboards are
     # per-scope since the pools differ. Blank for scope-agnostic modes.
     scope = models.CharField(max_length=128, blank=True, default="")
+    # Difficulty (Common vs Scientific) — its own leaderboard, since the two play
+    # differently.
+    difficulty = models.CharField(
+        max_length=16, choices=Difficulty.choices, default=Difficulty.COMMON
+    )
     # Canonical, server-re-scored result (never the client's posted number).
     score = models.IntegerField(default=0)
     asset_version = models.IntegerField()
@@ -40,8 +54,8 @@ class Run(models.Model):
 
     class Meta:
         indexes = [
-            # Leaderboard reads: a mode+scope(+day) ordered by score.
-            models.Index(fields=["mode", "scope", "puzzle_date", "-score"]),
+            # Leaderboard reads: a mode+scope+difficulty(+day) ordered by score.
+            models.Index(fields=["mode", "scope", "difficulty", "puzzle_date", "-score"]),
             models.Index(fields=["user", "mode"]),
         ]
 

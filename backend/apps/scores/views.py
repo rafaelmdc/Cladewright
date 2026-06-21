@@ -18,7 +18,7 @@ from rest_framework.views import APIView
 
 from apps.gamedata.models import AssetVersion, TaxonNode, TaxonTip
 
-from .models import GameMode, NamedSpecies, PlayerStat, Run, Streak
+from .models import Difficulty, GameMode, NamedSpecies, PlayerStat, Run, Streak
 from .scoring import rescore
 
 LEADERBOARD_LIMIT = 50
@@ -44,6 +44,9 @@ class SubmitRunView(APIView):
             return Response({"error": "invalid mode"}, status=400)
 
         scope = (data.get("scope") or "").strip()
+        difficulty = data.get("difficulty") or Difficulty.COMMON
+        if difficulty not in Difficulty.values:
+            return Response({"error": "invalid difficulty"}, status=400)
         transcript = data.get("transcript") or []
         if not isinstance(transcript, list):
             return Response({"error": "transcript must be a list of ids"}, status=400)
@@ -73,6 +76,7 @@ class SubmitRunView(APIView):
                 user=request.user,
                 mode=mode,
                 scope=scope,
+                difficulty=difficulty,
                 score=result.score,
                 asset_version=av.version,
                 puzzle_date=puzzle_date,
@@ -82,10 +86,12 @@ class SubmitRunView(APIView):
                 _bump_streak(request.user, mode, puzzle_date)
             _update_player_stats(request.user, mode, result.score, result.placed_tips)
 
-        # Rank among distinct users with a strictly better run for this mode/scope/day.
+        # Rank among distinct users with a strictly better run for this board
+        # (mode/scope/difficulty/day).
         rank = (
             Run.objects.filter(
-                mode=mode, scope=scope, puzzle_date=puzzle_date, score__gt=result.score
+                mode=mode, scope=scope, difficulty=difficulty,
+                puzzle_date=puzzle_date, score__gt=result.score,
             )
             .values("user")
             .distinct()
@@ -105,8 +111,11 @@ class LeaderboardView(APIView):
         if mode not in GameMode.values:
             return Response({"error": "invalid mode"}, status=400)
         scope = (request.query_params.get("scope") or "").strip()
+        difficulty = request.query_params.get("difficulty", Difficulty.COMMON)
+        if difficulty not in Difficulty.values:
+            return Response({"error": "invalid difficulty"}, status=400)
 
-        qs = Run.objects.filter(mode=mode, scope=scope)
+        qs = Run.objects.filter(mode=mode, scope=scope, difficulty=difficulty)
         if mode in (GameMode.MARATHON_DAILY, GameMode.CLASSIC):
             day = _parse_date(request.query_params.get("date")) or dt.date.today()
             qs = qs.filter(puzzle_date=day)
@@ -131,7 +140,7 @@ class LeaderboardView(APIView):
             )
             if len(rows) >= LEADERBOARD_LIMIT:
                 break
-        return Response({"mode": mode, "scope": scope, "entries": rows})
+        return Response({"mode": mode, "scope": scope, "difficulty": difficulty, "entries": rows})
 
 
 def _parse_date(s: str | None) -> dt.date | None:

@@ -4,6 +4,8 @@
 
 import { csrfToken } from "./auth";
 
+export type Difficulty = "common" | "scientific";
+
 export interface SubmitResult {
   score: number;
   new: number;
@@ -21,6 +23,7 @@ export type SubmitOutcome =
 export async function submitRun(payload: {
   mode: string;
   scope: string;
+  difficulty: Difficulty;
   asset_version: number;
   transcript: string[];
 }): Promise<SubmitOutcome> {
@@ -46,10 +49,14 @@ export interface LeaderEntry {
   at: string;
 }
 
-export async function fetchLeaderboard(mode: string, scope: string): Promise<LeaderEntry[]> {
+export async function fetchLeaderboard(
+  mode: string,
+  scope: string,
+  difficulty: Difficulty,
+): Promise<LeaderEntry[]> {
   try {
     const res = await fetch(
-      `/api/scores/leaderboard/?mode=${encodeURIComponent(mode)}&scope=${encodeURIComponent(scope)}`,
+      `/api/scores/leaderboard/?mode=${encodeURIComponent(mode)}&scope=${encodeURIComponent(scope)}&difficulty=${difficulty}`,
     );
     if (!res.ok) return [];
     return ((await res.json()).entries ?? []) as LeaderEntry[];

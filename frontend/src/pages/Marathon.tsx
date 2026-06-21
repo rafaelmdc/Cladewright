@@ -8,10 +8,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Wordmark } from "../components/Brand";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { TreeRenderer } from "../components/TreeRenderer";
+import { createEmptyAsset } from "../lib/asset/growable";
 import { loadAsset } from "../lib/asset/load";
 import type { InternedAsset, Target } from "../lib/asset/types";
 import { RemainingTracker } from "../lib/game/remaining";
-import { resolve } from "../lib/game/resolve";
+import { resolveTarget } from "../lib/game/resolveTarget";
 import { loadSettings, saveSettings, type GameSettings } from "../lib/game/settings";
 import { createInducedTree, place, type InducedTree, type Placement } from "../lib/tree/induced";
 
@@ -23,7 +24,15 @@ interface Flash {
 export function Marathon() {
   const [asset, setAsset] = useState<InternedAsset | null>(null);
   useEffect(() => {
-    loadAsset().then(setAsset).catch(console.error);
+    // TEMP entry hook (until the scope picker, task #5): `?remote=<scope>` starts a huge-
+    // scope game served incrementally — empty asset grown via /resolve. Otherwise the
+    // normal blob asset is downloaded whole.
+    const remoteScope = new URLSearchParams(window.location.search).get("remote");
+    if (remoteScope) {
+      setAsset(createEmptyAsset(remoteScope, 15));
+    } else {
+      loadAsset().then(setAsset).catch(console.error);
+    }
   }, []);
 
   if (!asset) return <p className="p-6 text-clade-ink/60">Loading the tree…</p>;
@@ -81,13 +90,15 @@ function Game({ asset }: { asset: InternedAsset }) {
     return { time: settings.timePerNew + novelty, points: 10 };
   }
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
     const query = input.trim();
     setInput("");
     if (!running || !query) return;
 
-    const target = resolve(asset, query);
+    // Async to cover remote mode (/search + /resolve); blob mode resolves synchronously
+    // inside and just awaits an already-settled value.
+    const target = await resolveTarget(asset, query);
     if (!target) {
       setFlash({ text: `"${query}" — no match`, tone: "none" });
       return;

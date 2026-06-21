@@ -3,6 +3,12 @@
 How Cladewright is put together and *why*. This is the design rationale; the
 build order lives in [`roadmap.md`](roadmap.md).
 
+> **Doc map:** [`games-model.md`](games-model.md) (games/difficulty/daily/streak model) ·
+> [`admin.md`](admin.md) (the admin surface) · [`pipeline-jobs.md`](pipeline-jobs.md)
+> (standard build jobs) · [`data-pipeline.md`](data-pipeline.md) · [`development.md`](development.md)
+> · [`deployment.md`](deployment.md) (k8s/Argo) · [`game-asset-format.md`](game-asset-format.md)
+> · [`marathon-design.md`](marathon-design.md) · [`performance.md`](performance.md).
+
 ## The one big idea: gameplay is client-side, data is precomputed
 
 The taxonomy is large and static. A game session — the tree, the timer, the
@@ -31,7 +37,8 @@ you want for a game.
 │         ──Braidworks──────▶ common names (Wikidata + enwiki)      │
 │         ──build──────────▶ game-data asset (versioned JSON)       │
 │         ──load_gamedata──▶ Postgres (blob + relational mirror)    │
-│    Driven by Django management commands; see data-pipeline.md     │
+│    Runs on a separate Celery worker (admin-queued); web never     │
+│    builds. See data-pipeline.md + admin.md                        │
 └───────────────────────────────┬─────────────────────────────────┘
                                 │  game-data asset (the contract)
 ┌───────────────────────────────▼─────────────────────────────────┐
@@ -40,7 +47,8 @@ you want for a game.
 │    • incr. mode: /search (trigram) + /resolve (huge scopes)       │
 │    • accounts: django-allauth, Google OAuth                       │
 │    • persistence: scores, streaks, leaderboards                   │
-│    • daily seed: server-authoritative mystery-of-the-day (Classic)│
+│    • daily: admin-tunable rotation/pins, one-shot, global streak  │
+│    • admin: themed Django admin — scopes, games, pipeline jobs     │
 └───────────────────────────────┬─────────────────────────────────┘
                                 │  REST (JSON)
 ┌───────────────────────────────▼─────────────────────────────────┐

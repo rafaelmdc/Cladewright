@@ -33,6 +33,11 @@ body {
   .pill-active {
     @apply border-clade-ink bg-clade-ink text-clade-bg;
   }
+  /* Keep the active pill's text light on hover (the base .pill:hover darkens text, which
+     would be black-on-black over the filled background). */
+  .pill-active:hover {
+    @apply border-clade-ink text-clade-bg;
+  }
 
   /* Primary call-to-action — green handwriting pill. */
   .btn-play {

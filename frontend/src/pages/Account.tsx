@@ -87,7 +87,8 @@ export function Account() {
               </h2>
               {stats.modes.length === 0 ? (
                 <p className="font-mono text-sm text-clade-ink/45">
-                  No games played yet — go place some organisms.
+                  No games yet — a run only counts once you reach the end (the timer runs
+                  out, or you end it). Finish one and your stats land here.
                 </p>
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -507,6 +508,14 @@ function SelectionSummary({
     : 0;
   const busiest = items.reduce((m, it) => Math.max(m, it.v.plays), 0);
 
+  // With many days the bars overflow the card — make the strip scroll, pinned to the most
+  // recent (right) end on selection change.
+  const barsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = barsRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [items.length]);
+
   return (
     <div className="mt-4 rounded-xl border border-clade-ink/10 bg-clade-bg/40 p-4">
       <div className="mb-3 flex items-baseline justify-between">
@@ -532,14 +541,14 @@ function SelectionSummary({
         )}
       </div>
 
-      <div className="flex h-24 items-end gap-1">
+      <div ref={barsRef} className="flex h-24 items-end gap-1 overflow-x-auto pb-1">
         {items.map((it) => {
           const v = it.v.value;
           const pct = (v / vmax) * 100;
           return (
             <div
               key={it.key}
-              className="flex h-full min-w-[6px] max-w-[2rem] flex-1 flex-col justify-end"
+              className="flex h-full w-3 min-w-[0.75rem] max-w-[2rem] flex-1 flex-col justify-end"
             >
               {showLabels && (
                 <span className="mb-0.5 text-center font-mono text-[9px] leading-none text-clade-ink/45">

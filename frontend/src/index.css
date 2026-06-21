@@ -2,18 +2,53 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+/* Palette as space-separated RGB channels so Tailwind's /opacity modifiers keep working
+   (tailwind.config maps each to rgb(var(--…) / <alpha-value>)). Themes swap these via
+   <html data-theme>; the default (no attribute) is the warm field-notebook look.
+   See src/lib/theme.ts. */
+:root,
+[data-theme="notebook"] {
   color-scheme: light;
+  --clade-bg: 236 231 219; /* #ece7db warm cream paper */
+  --clade-paper: 245 241 232; /* #f5f1e8 lighter card */
+  --clade-ink: 38 34 25; /* #262219 warm near-black */
+  --clade-accent: 63 107 76; /* #3f6b4c forest green */
+  --clade-accentSoft: 205 216 203;
+  --clade-note: 241 231 196;
+}
+
+/* High contrast — for dim / low-quality panels where the creams wash out to white. White
+   cards, near-black ink and a deep, vivid green so every element pops off the background. */
+[data-theme="contrast"] {
+  color-scheme: light;
+  --clade-bg: 247 246 241; /* #f7f6f1 */
+  --clade-paper: 255 255 255; /* pure white cards */
+  --clade-ink: 17 16 12; /* #11100c near-black */
+  --clade-accent: 22 90 48; /* #165a30 deep green */
+  --clade-accentSoft: 188 216 194;
+  --clade-note: 250 233 160;
+}
+
+/* Dark — warm near-black paper, cream ink, a brighter green that reads on dark. */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --clade-bg: 26 24 20; /* #1a1814 */
+  --clade-paper: 39 36 29; /* #27241d card */
+  --clade-ink: 236 231 219; /* cream becomes the text */
+  --clade-accent: 124 173 137; /* #7cad89 lifted green */
+  --clade-accentSoft: 58 78 62;
+  --clade-note: 92 82 52;
 }
 
 body {
   margin: 0;
-  background-color: theme(colors.clade.bg);
+  background-color: rgb(var(--clade-bg));
   /* faint paper dot-grid — barely-there field-notebook texture */
-  background-image: radial-gradient(theme(colors.clade.ink / 4%) 1px, transparent 1px);
+  background-image: radial-gradient(rgb(var(--clade-ink) / 4%) 1px, transparent 1px);
   background-size: 22px 22px;
-  color: theme(colors.clade.ink);
+  color: rgb(var(--clade-ink));
   font-family: theme(fontFamily.sans);
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 @layer components {

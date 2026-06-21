@@ -72,6 +72,9 @@ export function Hub() {
   // Daily modes are surfaced as the single Daily strip, never as cards.
   const cardGames = games.filter((g) => !g.is_daily);
   const anyDifficulty = cardGames.some((g) => g.supports_difficulty);
+  const totalSelectedTips = scopes
+    .filter((s) => selectedScopes.includes(s.key))
+    .reduce((n, s) => n + s.tip_count, 0);
 
   return (
     <div className="min-h-screen">
@@ -109,20 +112,42 @@ export function Hub() {
 
           {scopes.length > 0 && (
             // Scope toggles — pick one clade or mix several (their trees merge in-game).
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              <span className="font-mono text-[11px] uppercase tracking-wider text-clade-ink/45 sm:text-xs">
-                Clades
+            // Selected = filled brand-green (on-brand + obvious vs the ghost outline of the
+            // unselected); each shows its species count, with a running mix summary below.
+            <div className="flex flex-col items-center gap-1.5">
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <span className="font-mono text-[11px] uppercase tracking-wider text-clade-ink/45 sm:text-xs">
+                  Clades
+                </span>
+                {scopes.map((s) => {
+                  const on = selectedScopes.includes(s.key);
+                  return (
+                    <button
+                      key={s.key}
+                      type="button"
+                      onClick={() => toggleScope(s.key)}
+                      aria-pressed={on}
+                      className={`flex items-center gap-2 whitespace-nowrap rounded-full border-2 px-4 py-1.5 font-mono text-sm transition ${
+                        on
+                          ? "border-clade-accent bg-clade-accent text-clade-paper shadow-sm"
+                          : "border-clade-ink/25 text-clade-ink/70 hover:border-clade-accent/70 hover:text-clade-ink"
+                      }`}
+                    >
+                      <span>{s.label}</span>
+                      <span
+                        className={`font-mono text-[10px] ${on ? "text-clade-paper/65" : "text-clade-ink/35"}`}
+                      >
+                        {s.tip_count.toLocaleString()}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="font-mono text-[10px] text-clade-ink/40">
+                {selectedScopes.length > 1
+                  ? `mixing ${selectedScopes.length} clades · ${totalSelectedTips.toLocaleString()} species`
+                  : "pick one, or tap several to mix"}
               </span>
-              {scopes.map((s) => (
-                <button
-                  key={s.key}
-                  type="button"
-                  onClick={() => toggleScope(s.key)}
-                  className={`pill whitespace-nowrap ${selectedScopes.includes(s.key) ? "pill-active" : ""}`}
-                >
-                  {s.label}
-                </button>
-              ))}
             </div>
           )}
 

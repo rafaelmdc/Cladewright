@@ -3,16 +3,18 @@ export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
-      // Field-notebook aesthetic — see docs/examples for the intended look:
-      // warm cream paper, near-black ink, forest-green accent, sticky-note yellow.
+      // Field-notebook aesthetic. The actual values live as CSS variables in index.css
+      // (space-separated RGB channels) so they can be re-themed at runtime via
+      // <html data-theme>; `<alpha-value>` keeps Tailwind's /opacity modifiers working.
+      // See src/lib/theme.ts for the available themes.
       colors: {
         clade: {
-          bg: "#ece7db", // paper
-          paper: "#f5f1e8", // lighter card surface
-          ink: "#262219", // warm near-black
-          accent: "#3f6b4c", // forest green
-          accentSoft: "#cdd8cb",
-          note: "#f1e7c4", // sticky-note yellow
+          bg: "rgb(var(--clade-bg) / <alpha-value>)",
+          paper: "rgb(var(--clade-paper) / <alpha-value>)",
+          ink: "rgb(var(--clade-ink) / <alpha-value>)",
+          accent: "rgb(var(--clade-accent) / <alpha-value>)",
+          accentSoft: "rgb(var(--clade-accentSoft) / <alpha-value>)",
+          note: "rgb(var(--clade-note) / <alpha-value>)",
         },
       },
       fontFamily: {

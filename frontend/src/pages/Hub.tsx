@@ -81,24 +81,18 @@ export function Hub() {
   );
 }
 
-/** The single site-wide Daily — present and clean, a teaser until the daily mode ships.
- * One puzzle a day for everyone; keeping the streak is what brings players back. */
+/** The single site-wide Daily. The number is the player's day streak — 0 until the daily
+ * mode ships and starts incrementing it. */
 function DailyCard() {
+  const streak = 0;
   return (
-    <div className="ink-card flex items-center gap-4 border-clade-accent/40 bg-clade-accent/[0.06] px-5 py-4">
-      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-clade-accent/15 text-2xl">
-        🔥
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <h2 className="font-hand text-3xl font-bold leading-none text-clade-ink">Daily</h2>
-          <span className="rounded-full border border-clade-accent/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-clade-accent">
-            soon
-          </span>
-        </div>
-        <p className="mt-1 font-mono text-xs text-clade-ink/55">
-          One shared puzzle every day — build a streak.
-        </p>
+    <div className="ink-card flex items-center justify-between border-clade-accent/30 px-5 py-4">
+      <h2 className="font-hand text-3xl font-bold leading-none text-clade-ink">Daily</h2>
+      <div className="text-right leading-none">
+        <div className="font-hand text-4xl font-bold text-clade-ink">{streak}</div>
+        <span className="font-mono text-[10px] uppercase tracking-widest text-clade-ink/40">
+          day streak
+        </span>
       </div>
     </div>
   );

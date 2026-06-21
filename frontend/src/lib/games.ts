@@ -9,6 +9,7 @@ export interface Game {
   blurb: string;
   route: string;
   supports_difficulty: boolean;
+  is_daily: boolean; // daily modes are the Hub's single Daily strip, NOT a card
 }
 
 // Shown when the API can't be reached. Mirrors the seeded marathon_free row, with the
@@ -21,6 +22,7 @@ export const FALLBACK_GAMES: Game[] = [
       "Name as many organisms as you can against the clock — each one lands on a living tree you build. Empty branches show how many sisters stay hidden. Zoom in to hunt them.",
     route: "/marathon",
     supports_difficulty: true,
+    is_daily: false,
   },
 ];
 

@@ -26,7 +26,9 @@ export function Hub() {
     };
   }, []);
 
-  const anyDifficulty = games.some((g) => g.supports_difficulty);
+  // Daily modes are surfaced as the single Daily strip, never as cards.
+  const cardGames = games.filter((g) => !g.is_daily);
+  const anyDifficulty = cardGames.some((g) => g.supports_difficulty);
 
   return (
     <div className="min-h-screen">
@@ -60,7 +62,7 @@ export function Hub() {
           )}
 
           <div className="flex flex-wrap justify-center gap-4">
-            {games.map((g) => (
+            {cardGames.map((g) => (
               <ModeCard
                 key={g.mode}
                 to={g.supports_difficulty ? `${g.route}?difficulty=${difficulty}` : g.route}

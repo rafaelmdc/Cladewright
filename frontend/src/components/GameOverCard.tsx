@@ -8,9 +8,8 @@ import { Link } from "react-router-dom";
 import { fetchMe, type Me } from "../lib/auth";
 import { fetchLeaderboard, submitRun, type Difficulty, type LeaderEntry, type SubmitOutcome } from "../lib/scores";
 
-const MODE = "marathon_free";
-
 export function GameOverCard({
+  mode = "marathon_free",
   count,
   score,
   scope,
@@ -21,6 +20,7 @@ export function GameOverCard({
   transcript,
   onPlayAgain,
 }: {
+  mode?: string;
   count: number;
   score: number;
   scope: string;
@@ -45,12 +45,12 @@ export function GameOverCard({
       // `ranked` flag tells the server whether it's also eligible for the leaderboard.
       if (who.authenticated && transcript.length > 0) {
         const outcome = await submitRun({
-          mode: MODE, scope, difficulty, asset_version: assetVersion, transcript, ranked,
+          mode, scope, difficulty, asset_version: assetVersion, transcript, ranked,
         });
         if (!live) return;
         setSubmit(outcome);
       }
-      const entries = await fetchLeaderboard(MODE, scope, difficulty);
+      const entries = await fetchLeaderboard(mode, scope, difficulty);
       if (live) setBoard(entries);
     })();
     return () => {

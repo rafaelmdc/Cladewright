@@ -53,7 +53,9 @@ export function buildDisplayTree(
   if (rootIdx < 0) return null;
 
   const build = (idx: number): RenderNode => {
-    const node = asset.raw.nodes[idx];
+    // Look up by id, not asset.raw.nodes[idx]: remote mode has no raw.nodes array (the
+    // tree is grown into nodeById/nodeIds), and this works identically in blob mode.
+    const node = asset.nodeById.get(asset.nodeIds[idx])!;
     const kids: RenderNode[] = [];
     for (const c of childNodes.get(idx) ?? []) kids.push(build(c));
     for (const tipId of tipsByParent.get(idx) ?? []) {

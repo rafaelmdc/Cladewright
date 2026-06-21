@@ -12,13 +12,27 @@ export class RemainingTracker {
   readonly activeLabels = new Set<number>();
 
   constructor(private readonly asset: InternedAsset) {
-    this.foundCount = new Int32Array(asset.nodeIds.length);
+    // Capacity for whatever nodes exist now. In remote mode the asset grows as organisms
+    // are resolved, so ensureCapacity() reallocates when it outgrows this.
+    this.foundCount = new Int32Array(Math.max(asset.nodeIds.length, 1));
+  }
+
+  /** Grow foundCount to cover newly added nodes (remote mode), preserving counts. */
+  private ensureCapacity(): void {
+    const n = this.asset.nodeIds.length;
+    if (n <= this.foundCount.length) return;
+    let cap = this.foundCount.length;
+    while (cap < n) cap *= 2; // amortized O(1) growth
+    const grown = new Int32Array(cap);
+    grown.set(this.foundCount);
+    this.foundCount = grown;
   }
 
   /** Record a named tip: O(L) increment along its lineage. */
   name(tipId: string): void {
     const lineage = this.asset.tipLineage.get(tipId);
     if (!lineage) return;
+    this.ensureCapacity();
     for (let k = 0; k < lineage.length; k++) {
       const idx = lineage[k];
       if (idx < 0) continue;
@@ -28,7 +42,8 @@ export class RemainingTracker {
   }
 
   remaining(nodeIdx: number): number {
-    return this.asset.poolCount[nodeIdx] - this.foundCount[nodeIdx];
+    const found = nodeIdx < this.foundCount.length ? this.foundCount[nodeIdx] : 0;
+    return this.asset.poolCount[nodeIdx] - found;
   }
 
   /** Clear all progress (new game) without reallocating the asset-derived arrays. */

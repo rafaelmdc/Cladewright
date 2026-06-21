@@ -44,18 +44,34 @@ export type Target =
 
 // ---- Runtime form (after interning; see performance.md) ----
 // The loader interns string ids to contiguous integer indices and packs the hot
-// fields into typed arrays so the play loop is integer-only.
+// fields into integer arrays so the play loop is integer-only.
+//
+// Two ways an InternedAsset is built:
+//   * blob mode  — intern() builds it whole from a downloaded GameAsset; arrays are
+//     fixed-size Int32Array (the original, fastest path).
+//   * remote mode — for a huge scope the blob is never downloaded; the asset starts
+//     EMPTY and grows one organism at a time from /resolve (see asset/growable.ts).
+//     The hot arrays are plain number[] so they can be appended to. Read access is
+//     identical (`arr[i]`, `.length`), so the play loop is unchanged either way.
+export type NumArray = Int32Array | number[];
+
 export interface InternedAsset {
+  /** blob mode carries the full source asset; remote mode has only metadata + a
+   *  growing `aliases` map (server is the source of truth for names). */
   raw: GameAsset;
+  /** "blob" = complete, downloaded whole; "remote" = grown incrementally via /resolve */
+  mode: "blob" | "remote";
+  /** scope key, threaded onto /search + /resolve requests in remote mode */
+  scope?: string;
   /** node id -> integer index */
   nodeIndex: Map<string, number>;
   /** index -> node id */
   nodeIds: string[];
   /** by node index */
-  poolCount: Int32Array;
+  poolCount: NumArray;
   /** node index -> parent node index (-1 for root) */
-  parent: Int32Array;
-  /** tip id -> Int32Array of ancestor node indices (root→parent) */
+  parent: NumArray;
+  /** tip id -> ancestor node indices (root→parent). Fixed once a tip is known. */
   tipLineage: Map<string, Int32Array>;
   /** tip id -> tip record */
   tipById: Map<string, AssetTip>;

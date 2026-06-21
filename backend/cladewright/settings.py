@@ -209,6 +209,21 @@ CSRF_TRUSTED_ORIGINS = os.environ.get(
     "CSRF_TRUSTED_ORIGINS", "http://localhost:5173,http://localhost:8000"
 ).split(",")
 
+# ── Production security hardening ─────────────────────────────────────────────────────
+# Only in prod (DEBUG off). TLS terminates at the Cloudflare tunnel / gateway, so the app
+# sees plain HTTP with X-Forwarded-Proto — trust that header so Django treats requests as
+# secure (drives secure-cookie + redirect logic). No SECURE_SSL_REDIRECT: the proxy already
+# serves HTTPS, and redirecting here would loop.
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = "same-origin"
+    SESSION_COOKIE_HTTPONLY = True
+    X_FRAME_OPTIONS = "DENY"
+    # HSTS: tell browsers to stick to HTTPS. Modest window to start; raise once verified.
+    SECURE_HSTS_SECONDS = int(os.environ.get("SECURE_HSTS_SECONDS", str(60 * 60 * 24 * 7)))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+
 # ── Celery / pipeline job queue ──────────────────────────────────────────────────────
 # The web process enqueues PipelineJobs onto Redis; a separate pipeline worker consumes
 # them (see cladewright/celery.py, apps/gamedata/tasks.py). Default points at the compose

@@ -19,4 +19,4 @@ EXPOSE 8000
 
 # Default (prod-ish) command; the dev compose overrides this to add --reload + a code
 # mount. Migrations run on start so a fresh DB is ready.
-CMD ["sh", "-lc", "python manage.py migrate && python manage.py collectstatic --noinput && exec gunicorn cladewright.wsgi:application --bind 0.0.0.0:${APP_PORT:-8000}"]
+CMD ["sh", "-lc", "python manage.py migrate && python manage.py collectstatic --noinput && python manage.py ensure_admin && exec gunicorn cladewright.wsgi:application --bind 0.0.0.0:${APP_PORT:-8000}"]

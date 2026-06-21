@@ -103,11 +103,26 @@ running `manage.py fetch_col_dump`. The dump stays out of the image.
 2. ExternalSecrets sync from Bitwarden; CNPG cluster comes up.
 3. Web pod runs `migrate` (+ seeds GameModeConfig/daily via data migrations) and
    `collectstatic`.
-4. `make_admin <you@gmail>` (exec into the web pod) to get an admin login.
+4. Log into `/admin` as **`admin` / `cladewright`** (the one-time bootstrap superuser, created
+   only on the fresh DB) and **change the password immediately** — or `make_admin <you@gmail>`
+   to promote your Google account, then remove the `DJANGO_BOOTSTRAP_ADMIN_PASSWORD` env.
 5. Queue a **Download CoL dump** job, then **Build asset** jobs for the starter scopes
    (see [`pipeline-jobs.md`](pipeline-jobs.md)); **Set current** each.
 6. Configure the **daily rotation** (admin → Daily rotation entries).
 7. Register the prod OAuth redirect URI + publish the consent screen.
+
+## Security
+
+- **TLS everywhere** (Cloudflare tunnel + gateway certs). `DJANGO_SECURE_COOKIES` defaults on
+  in prod (secure session + CSRF cookies); `SECURE_PROXY_SSL_HEADER` trusts the proxy's
+  `X-Forwarded-Proto` so Django knows it's HTTPS. HSTS + `nosniff` + `Referrer-Policy` +
+  `X-Frame-Options: DENY` are set when `DEBUG=0` (`settings.py`).
+- **Secrets** never in git — Bitwarden → ExternalSecrets. The Django `SECRET_KEY`, DB creds,
+  and OAuth creds all come from secrets.
+- **Admin** is staff-gated and on its own host. The **bootstrap admin** (`admin`/`cladewright`)
+  exists only until you change it / make your own — see step 4. After that, drop the bootstrap
+  env. Consider login throttling (e.g. django-axes) as a follow-up.
+- The heavy pipeline build runs only on the worker; the web tier has no Braidworks/dump.
 
 ## Still to build before deploy
 

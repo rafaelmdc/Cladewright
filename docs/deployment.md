@@ -39,6 +39,11 @@ The admin is **public** but staff-gated by Django auth. The frontend proxies wit
 $host`, so Django sees the real public domain (first-party OAuth/CSRF). `ADMIN_SITE_URL` =
 `https://cladewright.duarte-correia.pt/` (the admin's "View site" link).
 
+**DNS + TLS are automatic** — no manual Cloudflare step. Applying the `TunnelBinding` makes
+the cloudflare-operator create the DNS record (CNAME → tunnel) for each `fqdn`, and the
+`Certificate`s are issued by cert-manager via DNS-01 (`letsencrypt-cloudflare-prod`). Just
+apply the manifests.
+
 ## Secrets (Bitwarden → ExternalSecrets)
 
 ClusterSecretStore `bitwarden-secretstore`, namespace `rafael-homelab`. Create Bitwarden items

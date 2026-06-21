@@ -113,6 +113,11 @@ class PlayerStat(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mode_stats"
     )
     mode = models.CharField(max_length=32, choices=GameMode.choices)
+    # The scoring unit is (mode, difficulty): "Marathon · Common" and "Marathon · Scientific"
+    # are separate games with separate stat rows. See docs/games-model.md.
+    difficulty = models.CharField(
+        max_length=16, choices=Difficulty.choices, default=Difficulty.COMMON
+    )
     games_played = models.IntegerField(default=0)
     # Cumulative species placements across sessions (a species named in two runs counts
     # twice) — "total animals named".
@@ -123,7 +128,7 @@ class PlayerStat(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ("user", "mode")
+        unique_together = ("user", "mode", "difficulty")
 
 
 class NamedSpecies(models.Model):
@@ -135,13 +140,19 @@ class NamedSpecies(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="named_species"
     )
     mode = models.CharField(max_length=32, choices=GameMode.choices)
+    # Per (mode, difficulty), matching PlayerStat — a species named in Common and in
+    # Scientific is a distinct entry in each game's collection.
+    difficulty = models.CharField(
+        max_length=16, choices=Difficulty.choices, default=Difficulty.COMMON
+    )
     species_key = models.CharField(max_length=128)  # tip id, e.g. "tip:Panthera_leo"
     first_named_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["user", "mode", "species_key"], name="uniq_user_mode_species"
+                fields=["user", "mode", "difficulty", "species_key"],
+                name="uniq_user_mode_difficulty_species",
             ),
         ]
-        indexes = [models.Index(fields=["user", "mode"])]
+        indexes = [models.Index(fields=["user", "mode", "difficulty"])]

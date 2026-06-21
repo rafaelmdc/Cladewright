@@ -92,7 +92,7 @@ class SubmitAndLeaderboardTests(TestCase):
         post(["tip:1", "tip:2", "tip:3"])  # 3 species
         post(["tip:1", "tip:2"])           # 2 species, both already known
 
-        stat = PlayerStat.objects.get(user=user, mode="marathon_free")
+        stat = PlayerStat.objects.get(user=user, mode="marathon_free", difficulty="common")
         self.assertEqual(stat.games_played, 2)
         self.assertEqual(stat.total_named, 5)   # 3 + 2 (repeats across sessions count)
         self.assertEqual(stat.unique_named, 3)  # tip:1/2/3 distinct
@@ -110,8 +110,27 @@ class SubmitAndLeaderboardTests(TestCase):
         res = self.client.get("/api/auth/stats/")
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.data["totals"], {"games_played": 1, "total_named": 2, "unique_named": 2})
-        self.assertEqual(res.data["modes"][0]["mode"], "marathon_free")
+        m0 = res.data["modes"][0]
+        self.assertEqual(m0["mode"], "marathon_free")
+        self.assertEqual(m0["difficulty"], "common")
+        self.assertEqual(m0["game"], "marathon_free|common")
+        self.assertIn("·", m0["label"])  # composed "Marathon · Common"
         self.assertEqual(len(res.data["recent_runs"]), 1)
+
+    def test_stats_split_by_difficulty(self):
+        user = User.objects.create_user("alice", password="x")
+        self.client.force_authenticate(user)
+        for diff, tr in (("common", ["tip:1", "tip:2"]), ("scientific", ["tip:1"])):
+            self.client.post(
+                "/api/scores/runs/",
+                {"mode": "marathon_free", "scope": "test", "difficulty": diff,
+                 "asset_version": 1, "transcript": tr},
+                format="json",
+            )
+        # Two separate game rows, each with its own counts.
+        games = {m["game"]: m for m in self.client.get("/api/auth/stats/").data["modes"]}
+        self.assertEqual(games["marathon_free|common"]["total_named"], 2)
+        self.assertEqual(games["marathon_free|scientific"]["total_named"], 1)
 
     def test_delete_account_cascades(self):
         user = User.objects.create_user("alice", password="x")
@@ -181,7 +200,10 @@ class SubmitAndLeaderboardTests(TestCase):
         self.assertFalse(res.data["ranked"])
         # ...but the run + stats are recorded.
         self.assertFalse(Run.objects.get(user=user).ranked)
-        self.assertEqual(PlayerStat.objects.get(user=user, mode="marathon_free").total_named, 2)
+        self.assertEqual(
+            PlayerStat.objects.get(user=user, mode="marathon_free", difficulty="common").total_named,
+            2,
+        )
         # ...and it does NOT show on the leaderboard.
         board = self.client.get("/api/scores/leaderboard/?mode=marathon_free&scope=test")
         self.assertEqual(board.data["entries"], [])

@@ -123,7 +123,7 @@ class SubmitRunView(APIView):
             if is_daily:
                 _bump_streak(request.user, mode, puzzle_date)
             # Stats fold in EVERY finished run, ranked or not.
-            _update_player_stats(request.user, mode, result.score, result.placed_tips)
+            _update_player_stats(request.user, mode, difficulty, result.score, result.placed_tips)
 
         # Rank only for ranked runs (the leaderboard ignores custom-settings runs). Among
         # distinct users with a strictly better RANKED run for this board.
@@ -197,16 +197,18 @@ def _parse_date(s: str | None) -> dt.date | None:
         return None
 
 
-def _update_player_stats(user, mode: str, score: int, placed_tips) -> None:
-    """Fold one run into the per-(user, mode) aggregate + the unique-species set. Called
-    inside the submit transaction so stats never drift from the runs."""
+def _update_player_stats(user, mode: str, difficulty: str, score: int, placed_tips) -> None:
+    """Fold one run into the per-(user, mode, difficulty) aggregate + that game's unique-
+    species set. Called inside the submit transaction so stats never drift from the runs.
+    The scoring unit is (mode, difficulty) — see docs/games-model.md."""
     if placed_tips:
         NamedSpecies.objects.bulk_create(
-            [NamedSpecies(user=user, mode=mode, species_key=k) for k in placed_tips],
-            ignore_conflicts=True,  # only species new to this user actually insert
+            [NamedSpecies(user=user, mode=mode, difficulty=difficulty, species_key=k)
+             for k in placed_tips],
+            ignore_conflicts=True,  # only species new to this (game) actually insert
         )
-    unique = NamedSpecies.objects.filter(user=user, mode=mode).count()
-    stat, created = PlayerStat.objects.get_or_create(user=user, mode=mode)
+    unique = NamedSpecies.objects.filter(user=user, mode=mode, difficulty=difficulty).count()
+    stat, _ = PlayerStat.objects.get_or_create(user=user, mode=mode, difficulty=difficulty)
     stat.games_played += 1
     stat.total_named += len(placed_tips)
     stat.unique_named = unique

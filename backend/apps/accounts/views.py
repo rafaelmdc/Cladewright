@@ -18,10 +18,24 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.scores.models import GameMode, PlayerStat, Run
+from apps.scores.models import Difficulty, GameMode, GameModeConfig, PlayerStat, Run
 
 RECENT_RUNS = 30
 HEATMAP_DAYS = 7 * 13  # ~13 weeks, GitHub-style
+
+
+def _game_labeler():
+    """A function (mode, difficulty) -> 'Marathon · Common'. Base name comes from the admin
+    GameModeConfig (falling back to the GameMode label); difficulty is the lens. The scoring
+    unit is (mode, difficulty) — see docs/games-model.md."""
+    cfg = dict(GameModeConfig.objects.values_list("mode", "label"))
+    base = dict(GameMode.choices)
+    diff = dict(Difficulty.choices)
+
+    def label(mode: str, difficulty: str) -> str:
+        return f"{cfg.get(mode) or base.get(mode, mode)} · {diff.get(difficulty, difficulty)}"
+
+    return label
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -57,18 +71,21 @@ class AccountStatsView(APIView):
 
     def get(self, request: Request) -> Response:
         u = request.user
-        labels = dict(GameMode.choices)
+        label = _game_labeler()
+        # One stat row per game = (mode, difficulty). `game` is the stable chip/card id.
         modes = [
-            {**s, "label": labels.get(s["mode"], s["mode"])}
+            {
+                **s,
+                "game": f"{s['mode']}|{s['difficulty']}",
+                "label": label(s["mode"], s["difficulty"]),
+            }
             for s in PlayerStat.objects.filter(user=u).values(
-                "mode", "games_played", "total_named", "unique_named", "best_score"
+                "mode", "difficulty", "games_played", "total_named", "unique_named", "best_score"
             )
         ]
         totals = {
             "games_played": sum(m["games_played"] for m in modes),
             "total_named": sum(m["total_named"] for m in modes),
-            # Cross-mode sum; a species named in two modes counts once per mode. Fine while
-            # Marathon is the only mode — revisit if a true cross-game unique is wanted.
             "unique_named": sum(m["unique_named"] for m in modes),
         }
         recent_runs = [
@@ -77,15 +94,20 @@ class AccountStatsView(APIView):
             .order_by("-created_at")
             .values("mode", "scope", "score", "created_at")[:RECENT_RUNS]
         ]
-        # Day-bucketed activity for the GitHub-style heatmap: best score + game count per
-        # day over the last ~13 weeks. Only days with runs are sent; the client lays out
-        # the full grid and looks days up.
+        # Day-bucketed activity for the heatmap, split per game = (mode, difficulty), so the
+        # client's game-toggle chips filter and the shading adapts (plays across all games;
+        # best score when one game is selected). Only (day, game) cells with runs are sent.
         since = timezone.now() - dt.timedelta(days=HEATMAP_DAYS - 1)
         activity = [
-            {"date": d["day"].isoformat(), "best": d["best"], "games": d["games"]}
+            {
+                "date": d["day"].isoformat(),
+                "game": f"{d['mode']}|{d['difficulty']}",
+                "best": d["best"],
+                "games": d["games"],
+            }
             for d in Run.objects.filter(user=u, created_at__gte=since)
             .annotate(day=TruncDate("created_at"))
-            .values("day")
+            .values("day", "mode", "difficulty")
             .annotate(best=Max("score"), games=Count("id"))
             .order_by("day")
         ]

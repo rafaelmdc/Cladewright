@@ -16,31 +16,28 @@ the contract (env, secrets, hosts); the manifests live in the homelab repo, not 
 | Pipeline worker | Deployment `cladewright-worker` | `hydrodog11/cladewright-pipeline` (`backend/Dockerfile.pipeline`) | `celery -A cladewright worker`; mounts the CoL-dump PVC; the ONLY thing with Braidworks + the dump |
 | Broker | Deployment/StatefulSet `cladewright-redis` | `redis:7-alpine` | Celery broker; cluster-internal only |
 | Database | CNPG `Cluster` `cladewright-postgres` | — | service `cladewright-postgres-rw` |
-| Frontend SPA | Deployment `cladewright-frontend` | `hydrodog11/cladewright-frontend` (new `frontend/Dockerfile`, nginx serving `npm run build`) | **static only**; API/auth/admin are routed at the Gateway, not proxied by nginx |
+| Frontend SPA | Deployment `cladewright-frontend` | `hydrodog11/cladewright-frontend` (`frontend/Dockerfile`, nginx + the Vite build) | serves the SPA and reverse-proxies `/api` + `/accounts` to the web Service (`BACKEND_UPSTREAM` env). The public component; the tunnel points here |
 | Dump storage | PVC (RWO/RWX) | — | mounted at `/app/data` on the worker; seeded once (see below) |
 
 **Image delivery:** argocd-image-updater watches the Docker Hub images (latest tag, digest
 strategy, git write-back) exactly like portfolio. CI builds + pushes `hydrodog11/cladewright`,
 `-pipeline`, `-frontend`.
 
-## Hosts + routing (Gateway API)
+## Hosts + routing
 
-**One public host** — `cladewright.duarte-correia.pt` (HTTPS via cert-manager `Certificate`,
-exposed through the Cloudflare `TunnelBinding`). A single `HTTPRoute` does path-based routing
-to two Services; the frontend nginx is static-only (no upstream-DNS dependency at pod start):
+**Two public hosts**, both reached over the Cloudflare `TunnelBinding` (the homelab has DNS
+issues, so the admin is public over the tunnel too — exactly portfolio's two-subject pattern).
+Each has a cert-manager `Certificate` + a Gateway listener for the LAN/TLS path; WAN traffic
+goes through the tunnel, which points **straight at the Services**:
 
-| path prefix | → Service | why |
+| host | tunnel → Service | serves |
 |---|---|---|
-| `/api/`, `/accounts/` | `cladewright-web` | REST + allauth (same origin → first-party cookies) |
-| `/admin/`, `/static/` | `cladewright-web` | the Django admin + its WhiteNoise-served static |
-| `/` (everything else) | `cladewright-frontend` | the SPA |
+| `cladewright.duarte-correia.pt` | `cladewright-frontend` | SPA; nginx proxies `/api` + `/accounts` to the web Service |
+| `cladewright-admin.duarte-correia.pt` | `cladewright-web` | the Django admin (`/admin`) + its WhiteNoise `/static` |
 
-The **admin is public** at `cladewright.duarte-correia.pt/admin` (the homelab has DNS issues,
-so no internal-only host). It stays staff-gated by Django auth; `ADMIN_SITE_URL` =
-`https://cladewright.duarte-correia.pt/`. Because everything is one origin,
-`DJANGO_ALLOWED_HOSTS`/`CSRF_TRUSTED_ORIGINS` only need that one host (+ in-cluster Service
-names for health checks). The Gateway preserves the public `Host`, so Django builds
-first-party OAuth callbacks.
+The admin is **public** but staff-gated by Django auth. The frontend proxies with `Host =
+$host`, so Django sees the real public domain (first-party OAuth/CSRF). `ADMIN_SITE_URL` =
+`https://cladewright.duarte-correia.pt/` (the admin's "View site" link).
 
 ## Secrets (Bitwarden → ExternalSecrets)
 
@@ -62,8 +59,8 @@ Web + worker share most of these (worker doesn't need the OAuth/host vars):
 DJANGO_SETTINGS_MODULE=cladewright.settings
 DJANGO_DEBUG=0
 DJANGO_SECRET_KEY=<secret>
-DJANGO_ALLOWED_HOSTS=cladewright.duarte-correia.pt,cladewright-web,cladewright-web.rafael-homelab.svc.cluster.local
-CSRF_TRUSTED_ORIGINS=https://cladewright.duarte-correia.pt
+DJANGO_ALLOWED_HOSTS=cladewright.duarte-correia.pt,cladewright-admin.duarte-correia.pt
+CSRF_TRUSTED_ORIGINS=https://cladewright.duarte-correia.pt,https://cladewright-admin.duarte-correia.pt
 CORS_ALLOWED_ORIGINS=https://cladewright.duarte-correia.pt
 SITE_DOMAIN=cladewright.duarte-correia.pt
 SITE_NAME=Cladewright
@@ -76,6 +73,13 @@ POSTGRES_USER / POSTGRES_PASSWORD  # from db secret
 GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_SECRET   # web only
 CELERY_BROKER_URL=redis://cladewright-redis:6379/0   # web + worker
 ```
+
+The **frontend** Deployment needs only `BACKEND_UPSTREAM=cladewright-web:8000` (the web
+Service the SPA's nginx proxies `/api`+`/accounts` to).
+
+> Health probes hit the web pod by IP, which Django's `ALLOWED_HOSTS` would reject — set the
+> probe's `httpHeaders` `Host: cladewright.duarte-correia.pt` (or use a TCP probe) rather than
+> adding the pod IP to `ALLOWED_HOSTS`.
 
 `SITE_DOMAIN`/`SITE_NAME` feed the allauth Site (migration `accounts/0001`).
 

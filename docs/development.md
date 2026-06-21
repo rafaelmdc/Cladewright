@@ -77,6 +77,38 @@ make build-asset SCOPE=family=Felidae COLDP=data/coldp_mammalia OUT=data/out/fel
 make seed ASSET=/data/out/felidae.json   # load into Postgres, mark current for its scope
 ```
 
+### Starter scopes (reproduce the full playable set)
+
+The shippable game scopes are defined once in
+[`backend/scripts/build_starter_scopes.sh`](../backend/scripts/build_starter_scopes.sh)
+(the manifest is the single source of truth) so any machine can rebuild them from one CoL
+dump:
+
+```bash
+make col-dump          # one ~1 GB download -> data/coldp_col  (skip if you have it)
+make pipeline-venv     # build venv with Braidworks (skip if you have it)
+make starter-scopes    # build them all -> data/out/*.json  (FORCE=1 to rebuild existing)
+# or a subset:  backend/scripts/build_starter_scopes.sh aves reptilia
+```
+
+| key | CoL scope | game label |
+|---|---|---|
+| `mammalia`  | `class=Mammalia`  | Mammals |
+| `aves`      | `class=Aves`      | Birds |
+| `reptilia`  | `class=Reptilia`  | Reptiles *(paraphyletic in CoL — excludes birds, by design)* |
+| `amphibia`  | `class=Amphibia`  | Amphibians |
+| `teleostei` | `class=Teleostei` | Bony fish *(≈99% of fish species; sharks are a separate class)* |
+| `carnivora` | `order=Carnivora` | Carnivorans |
+
+Each is built with `--enrich braidworks --include-extinct` (the `extinct` flag is baked so
+the client can toggle extant-only; counts carry both `pool_count` and `pool_count_extant`).
+Load one with `make seed ASSET=/data/out/<key>.json`.
+
+> **Dinosaurs:** not buildable from CoL — `Dinosauria` and the famous non-avian genera
+> (*Tyrannosaurus*, *Triceratops*, …) aren't in the checklist at all. A dinosaur scope
+> needs a separate source (Paleobiology Database, or Wikidata); deferred until the rest is
+> done. (The only dinosaurs CoL knows are the birds in Aves.)
+
 > **TODO (deployment):** the vendored wheels are a *local-build* convenience — they're
 > built from the developer's checkout of `../../braidworks`. Before deploying, publish
 > Braidworks properly as a **GitHub release wheel** (or a tag the build can `pip install`

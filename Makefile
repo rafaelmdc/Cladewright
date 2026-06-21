@@ -25,7 +25,7 @@ OUT     ?= data/out/mammalia.json    # asset JSON to write (host path)
 
 .PHONY: help gui gui-up gui-down gui-restart gui-logs gui-status install build \
         dev dev-down be-up be-up-build be-down be-logs be-shell migrate seed dbshell \
-        wheels pipeline-venv build-asset col-dump
+        wheels pipeline-venv build-asset col-dump starter-scopes
 
 help: ## List available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -120,6 +120,12 @@ build-asset: ## Build an asset with Braidworks (SCOPE=, COLDP=, OUT=); then `mak
 	cd backend && $(CURDIR)/$(PPY) manage.py build_gamedata \
 	  --coldp-dir $(CURDIR)/$(COLDP) --scope "$(SCOPE)" \
 	  --out $(CURDIR)/$(OUT) --enrich braidworks --include-extinct
+
+# Target-specific default: starter scopes need the FULL dump, not the per-scope COLDP
+# above. A command-line `COLDP=…` still overrides this (CLI assignments win).
+starter-scopes: COLDP := data/coldp_col
+starter-scopes: ## Build ALL shippable starter scopes from the full dump (FORCE=1 to rebuild)
+	COLDP=$(COLDP) backend/scripts/build_starter_scopes.sh
 
 dbshell: ## Open a psql shell on the dev database
 	$(MANAGE) dbshell

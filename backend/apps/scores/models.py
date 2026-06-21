@@ -25,18 +25,23 @@ class Run(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="runs"
     )
     mode = models.CharField(max_length=32, choices=GameMode.choices)
+    # Which scope this run was played on (e.g. "mammalia", "fish") — leaderboards are
+    # per-scope since the pools differ. Blank for scope-agnostic modes.
+    scope = models.CharField(max_length=128, blank=True, default="")
+    # Canonical, server-re-scored result (never the client's posted number).
     score = models.IntegerField(default=0)
     asset_version = models.IntegerField()
     # Daily modes: the puzzle date this run belongs to (null for free play).
     puzzle_date = models.DateField(null=True, blank=True)
-    # TODO(phase-3/4): store the validated run transcript (named tip ids in order)
-    # so the server can re-score and so daily results are reproducible/anti-cheat.
+    # The validated run transcript (ordered placed target ids) the server re-scored from,
+    # kept so a run is reproducible/auditable.
     transcript = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         indexes = [
-            models.Index(fields=["mode", "puzzle_date", "-score"]),
+            # Leaderboard reads: a mode+scope(+day) ordered by score.
+            models.Index(fields=["mode", "scope", "puzzle_date", "-score"]),
             models.Index(fields=["user", "mode"]),
         ]
 

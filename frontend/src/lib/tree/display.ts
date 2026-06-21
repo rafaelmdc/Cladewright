@@ -19,6 +19,7 @@ export interface RenderNode {
   remaining: number; // hidden-sister count (nodes only; 0 for tips)
   showHidden: boolean; // this node displays its "N hidden" label
   children: RenderNode[];
+  ghost?: boolean; // a not-yet-named species/clade revealed at game-over (#24)
   // --- set by the collapse pass (see collapse.ts) ---
   collapsed?: boolean; // rendered as a single wedge; its subtree is hidden
   collapsedCount?: number; // # of placed species folded under the wedge
@@ -28,8 +29,14 @@ export function buildDisplayTree(
   asset: InternedAsset,
   tree: InducedTree,
   tracker: RemainingTracker,
+  // Game-over reveal: beneath each reached clade that still hides species, attach the
+  // un-named pool members as "ghost" nodes so the player sees what they missed. Blob mode
+  // only (remote mode has no full raw.nodes/raw.tips to enumerate the unreached pool).
+  reveal = false,
 ): RenderNode | null {
   if (tree.present.size === 0) return null;
+
+  const ghostsUnder = reveal && asset.mode === "blob" ? makeGhostBuilder(asset, tree) : null;
 
   // present children of each present node, and placed tips grouped by parent node.
   const childNodes = new Map<number, number[]>();
@@ -72,21 +79,69 @@ export function buildDisplayTree(
     const remaining = tracker.remaining(idx);
     const eligible = tracker.activeLabels.has(idx);
     const descendantShows = kids.some((k) => k.showHidden || subtreeShows(k));
+    // deepest-branch placement; "0 hidden" is meaningless clutter (you've found
+    // everything under this node), so a fully-found node shows no label.
+    const showHidden = eligible && !descendantShows && remaining > 0;
+    // Game-over reveal: ONLY the nodes that carry a "N hidden" label sprout their missed
+    // members as ghosts — exactly the branches you partially explored, never the whole tree.
+    if (ghostsUnder && showHidden) kids.push(...ghostsUnder(node.id));
     return {
       key: node.id,
       kind: "node",
       label: node.common ?? node.sci,
       rank: node.rank,
       remaining,
-      // deepest-branch placement; "0 hidden" is meaningless clutter (you've found
-      // everything under this node), so a fully-found node shows no label.
-      showHidden: eligible && !descendantShows && remaining > 0,
+      showHidden,
       children: kids,
     };
   };
 
   const root = build(rootIdx);
   return collapse(root);
+}
+
+/** Build the un-named descendants of a backbone node as ghost RenderNodes — the missed
+ *  species/clades beneath a "N hidden" label, revealed at game-over. Indexes the full
+ *  backbone (raw.nodes/raw.tips) once; skips anything already named/present. */
+function makeGhostBuilder(
+  asset: InternedAsset,
+  tree: InducedTree,
+): (nodeId: string) => RenderNode[] {
+  const nodeKidsByParent = new Map<string, string[]>();
+  for (const n of asset.raw.nodes) {
+    if (n.parent) (nodeKidsByParent.get(n.parent) ?? nodeKidsByParent.set(n.parent, []).get(n.parent)!).push(n.id);
+  }
+  const tipsByParentId = new Map<string, string[]>();
+  for (const t of asset.raw.tips) {
+    (tipsByParentId.get(t.parent) ?? tipsByParentId.set(t.parent, []).get(t.parent)!).push(t.id);
+  }
+  const presentIds = new Set<string>();
+  for (const idx of tree.present) presentIds.add(asset.nodeIds[idx]);
+
+  const ghostsUnder = (nodeId: string): RenderNode[] => {
+    const out: RenderNode[] = [];
+    for (const childId of nodeKidsByParent.get(nodeId) ?? []) {
+      if (presentIds.has(childId)) continue; // already solid in the induced tree
+      const n = asset.nodeById.get(childId);
+      if (!n) continue;
+      out.push({
+        key: childId, kind: "node", label: n.common ?? n.sci, rank: n.rank,
+        remaining: 0, showHidden: false, ghost: true, children: ghostsUnder(childId),
+      });
+    }
+    for (const tipId of tipsByParentId.get(nodeId) ?? []) {
+      if (tree.namedTips.has(tipId)) continue; // already named (solid)
+      const t = asset.tipById.get(tipId);
+      if (!t) continue;
+      out.push({
+        key: tipId, kind: "tip", label: t.common, sci: t.sci,
+        remaining: 0, showHidden: false, ghost: true, children: [],
+      });
+    }
+    out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    return out;
+  };
+  return ghostsUnder;
 }
 
 function subtreeShows(n: RenderNode): boolean {

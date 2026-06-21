@@ -4,6 +4,7 @@
 // foundation everything else builds on.
 
 import type { AssetNode, AssetTip, GameAsset, InternedAsset } from "./types";
+import { mergeAssets } from "./merge";
 
 // Primary source is the DB-backed API (served by Django, blob from Postgres) — same
 // path as prod. Vite proxies /api -> :8000 in dev (see vite.config.ts). Fallbacks keep
@@ -12,26 +13,53 @@ import type { AssetNode, AssetTip, GameAsset, InternedAsset } from "./types";
 const PRIMARY = import.meta.env.VITE_GAMEDATA_URL ?? "/api/gamedata/current/";
 const FALLBACKS = ["/mammalia.json", "/sample_asset.json"];
 
-/** Load + intern a blob-mode asset. `scope` selects which current build to fetch
- *  (?scope=key); omitted = the server's default current. Dev fallbacks keep the app
- *  booting when the backend is down. */
-export async function loadAsset(scope?: string): Promise<InternedAsset> {
+/** Fetch one scope's raw asset, with dev fallbacks (used for the single-scope path). */
+async function fetchRawAsset(scope?: string): Promise<GameAsset> {
   const primary = scope ? `${PRIMARY}?scope=${encodeURIComponent(scope)}` : PRIMARY;
   const sources = [primary, ...FALLBACKS];
   let lastStatus = 0;
   for (const src of sources) {
     try {
       const res = await fetch(src);
-      if (res.ok) {
-        const raw: GameAsset = await res.json();
-        return intern(raw);
-      }
+      if (res.ok) return (await res.json()) as GameAsset;
       lastStatus = res.status;
     } catch {
       // network error (e.g. backend down) — try the next source
     }
   }
   throw new Error(`Failed to load game asset (last status ${lastStatus})`);
+}
+
+/** Fetch one specific scope from the API only (no generic dev fallback — a fallback would
+ *  pollute a multi-scope merge). Returns null on failure so the merge can skip it. */
+async function fetchScopeAsset(scope: string): Promise<GameAsset | null> {
+  try {
+    const res = await fetch(`${PRIMARY}?scope=${encodeURIComponent(scope)}`);
+    if (res.ok) return (await res.json()) as GameAsset;
+  } catch {
+    /* skip a scope that fails to load */
+  }
+  return null;
+}
+
+/** Load + intern a blob-mode asset. `scope` selects which current build to fetch
+ *  (?scope=key); omitted = the server's default current. Dev fallbacks keep the app
+ *  booting when the backend is down. */
+export async function loadAsset(scope?: string): Promise<InternedAsset> {
+  return intern(await fetchRawAsset(scope));
+}
+
+/** Load + merge several blob scopes into one playable asset (scope mixing). One scope
+ *  delegates to loadAsset (keeps the dev fallback); many are fetched in parallel, the
+ *  ones that load are merged. */
+export async function loadAssets(scopes: string[]): Promise<InternedAsset> {
+  const uniq = [...new Set(scopes.filter(Boolean))];
+  if (uniq.length <= 1) return loadAsset(uniq[0]);
+  const raws = (await Promise.all(uniq.map(fetchScopeAsset))).filter(
+    (a): a is GameAsset => a !== null,
+  );
+  if (raws.length === 0) throw new Error("Failed to load any selected scope");
+  return intern(mergeAssets(raws));
 }
 
 export function intern(raw: GameAsset): InternedAsset {

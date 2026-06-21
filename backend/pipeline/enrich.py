@@ -95,7 +95,9 @@ class EnrichProvider(Protocol):
     """
 
     def prepare(self, taxa: list[Taxon]) -> None: ...
-    def harvest(self, scientific_names: list[str]) -> None: ...
+    def harvest(
+        self, scientific_names: list[str], ranks: dict[str, str] | None = None
+    ) -> None: ...
     def names_for(self, scientific_name: str) -> list[str]: ...
     def common_name(self, taxon: Taxon) -> str | None: ...
     def names(self, taxon: Taxon) -> list[str]: ...
@@ -108,7 +110,9 @@ class OfflineProvider:
     def prepare(self, taxa: list[Taxon]) -> None:
         return None
 
-    def harvest(self, scientific_names: list[str]) -> None:
+    def harvest(
+        self, scientific_names: list[str], ranks: dict[str, str] | None = None
+    ) -> None:
         return None  # offline has no name source beyond CoL vernacular
 
     def names_for(self, scientific_name: str) -> list[str]:
@@ -136,12 +140,25 @@ class BraidworksProvider:
         self._title: dict[str, str] = {}  # scientific_name -> enwiki article title
 
     def prepare(self, taxa: list[Taxon]) -> None:
-        self.harvest([t.scientific_name for t in taxa])
+        # Pool taxa are accepted species, so the homonym disambiguator is "species".
+        self.harvest(
+            [t.scientific_name for t in taxa],
+            ranks={t.scientific_name: "species" for t in taxa},
+        )
 
-    def harvest(self, scientific_names: list[str]) -> None:
+    def harvest(
+        self, scientific_names: list[str], ranks: dict[str, str] | None = None
+    ) -> None:
         """Pull Wikidata names for any names not yet cached. Reusable for species AND
         clade nodes — the reference resolves group names ("bear", "seal") because it
-        harvests higher taxa too."""
+        harvests higher taxa too.
+
+        ``ranks`` (scientific_name -> taxon rank, e.g. "order") disambiguates cross-code
+        homonyms: a name on several Wikidata items (the orchid genus *Pholidota* vs the
+        pangolin order) would otherwise come back ambiguous and contribute no name —
+        worse, an earlier resolution could pick the wrong-kingdom item. We pass each
+        name's expected rank to the weaver, which keeps only the item whose P105 rank
+        matches. Names share one batch per rank (the param is per-batch)."""
         import asyncio
 
         from braidworks.core import Braider, LocalExecutor, Strand, StrandSet
@@ -158,28 +175,46 @@ class BraidworksProvider:
             available_types=frozenset({"organism.scientific_name"}),
             target_types=frozenset({"organism.vernacular_names", "wikipedia.title"}),
         )
-        # The input strand rides through to the output so we map results back by name.
-        inputs = [
-            StrandSet.from_strands(name, [Strand("organism.scientific_name", name)])
-            for name in todo
-        ]
-        result = asyncio.run(LocalExecutor(registry).execute(braid, inputs))
+        executor = LocalExecutor(registry)
 
-        for ss in result.resolved:
-            name_strand = ss.get("organism.scientific_name")
-            if name_strand is None:
-                continue
-            vn_strand = ss.get("organism.vernacular_names")
-            title_strand = ss.get("wikipedia.title")
-            # Title first — it's the cleanest common name (and the canonical display,
-            # following the reference). Kept separately too so display never falls back
-            # to non-deterministic SPARQL ordering of the altLabels.
-            names = [title_strand.value] if title_strand else []
-            names += list(vn_strand.value) if vn_strand else []
-            # dedup while preserving order (the title often repeats a vernacular).
-            self._cache[name_strand.value] = list(dict.fromkeys(names))
-            if title_strand:
-                self._title[name_strand.value] = title_strand.value
+        # Group by expected rank so each batch passes the rank that disambiguates its
+        # homonyms. Names with no known rank go in one unparameterised batch (the
+        # historical behaviour — exactly reproduced when ``ranks`` is omitted).
+        ranks = ranks or {}
+        by_rank: dict[str | None, list[str]] = {}
+        for name in todo:
+            by_rank.setdefault(ranks.get(name), []).append(name)
+
+        async def run_all() -> None:
+            # One event loop for every rank batch: the backend's async HTTP client is
+            # cached on the registry's backend, so a fresh asyncio.run() per batch would
+            # bind it to a loop that's then closed and fail on the next batch.
+            for rank, names in by_rank.items():
+                # The input strand rides through to the output so we map results by name.
+                inputs = [
+                    StrandSet.from_strands(name, [Strand("organism.scientific_name", name)])
+                    for name in names
+                ]
+                params = {"resolve_taxon": {"expected_rank": rank}} if rank else None
+                result = await executor.execute(braid, inputs, params=params)
+
+                for ss in result.resolved:
+                    name_strand = ss.get("organism.scientific_name")
+                    if name_strand is None:
+                        continue
+                    vn_strand = ss.get("organism.vernacular_names")
+                    title_strand = ss.get("wikipedia.title")
+                    # Title first — it's the cleanest common name (and the canonical
+                    # display, following the reference). Kept separately too so display
+                    # never falls back to non-deterministic SPARQL ordering of altLabels.
+                    harvested = [title_strand.value] if title_strand else []
+                    harvested += list(vn_strand.value) if vn_strand else []
+                    # dedup preserving order (the title often repeats a vernacular).
+                    self._cache[name_strand.value] = list(dict.fromkeys(harvested))
+                    if title_strand:
+                        self._title[name_strand.value] = title_strand.value
+
+        asyncio.run(run_all())
 
     def names_for(self, scientific_name: str) -> list[str]:
         """Harvested names for any scientific name (species or clade), despaced."""
@@ -250,10 +285,12 @@ def enrich_clade_nodes(tree: Tree, provider: EnrichProvider | None = None) -> di
     """
     provider = provider or OfflineProvider()
     sci_to_nodes: dict[str, list[str]] = {}
+    node_rank: dict[str, str] = {}
     for node in tree.nodes.values():
         sci_to_nodes.setdefault(node.sci, []).append(node.id)
+        node_rank.setdefault(node.sci, node.rank)  # rank disambiguates homonym clades
 
-    provider.harvest(list(sci_to_nodes))
+    provider.harvest(list(sci_to_nodes), ranks=node_rank)
 
     node_names: dict[str, list[str]] = {}
     for sci, node_ids in sci_to_nodes.items():

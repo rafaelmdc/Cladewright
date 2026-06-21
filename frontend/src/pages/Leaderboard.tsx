@@ -108,7 +108,12 @@ export function Leaderboard() {
               atToday={atToday}
             />
           ) : (
-            <ScopePicker scopes={scopes} value={scopeKey} onChange={setScopeKey} />
+            <ScopePicker
+              scopes={scopes}
+              multiple={false}
+              value={scopeKey ? [scopeKey] : []}
+              onChange={(keys) => setScopeKey(keys[0] ?? null)}
+            />
           )}
 
           {activeGame?.supports_difficulty && (

@@ -7,11 +7,33 @@
 # Deployment env. A plain proxy_pass to the Service name resolves the stable Service
 # ClusterIP at startup — the Service exists as soon as Argo applies the manifests, so no
 # request-time resolver is needed.
+
+# Original client scheme. The Cloudflare tunnel reaches this nginx over plain HTTP (port 80)
+# but forwards the real client scheme in X-Forwarded-Proto. Honor that header when present
+# (the tunnel is the only ingress, so it's trustworthy); fall back to $scheme otherwise.
+# Without this we'd overwrite Cloudflare's "https" with the local connection's "http", and
+# Django would build http:// OAuth redirect_uris that Google rejects.
+map $http_x_forwarded_proto $client_proto {
+  default $http_x_forwarded_proto;
+  ""      $scheme;
+}
+
 server {
   listen 80;
   server_name _;
   root /usr/share/nginx/html;
   index index.html;
+
+  # Compress on the wire — the browser decompresses transparently via Content-Encoding, so
+  # no client code is needed. The big win is the game-data blob (/api/gamedata/current/):
+  # JSON compresses ~10x, so a 10-20MB Animalia asset ships as ~1-2MB. gzip_proxied any so
+  # the reverse-proxied /api responses are compressed too (Django sends them uncompressed).
+  gzip on;
+  gzip_comp_level 6;
+  gzip_min_length 1024;
+  gzip_proxied any;
+  gzip_vary on;
+  gzip_types application/json application/javascript text/css image/svg+xml text/plain;
 
   # Content-hashed Vite assets → cache hard.
   location /assets/ {
@@ -25,14 +47,14 @@ server {
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Proto $client_proto;
   }
   location /accounts/ {
     proxy_pass http://${BACKEND_UPSTREAM};
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Proto $client_proto;
   }
 
   # SPA client-side routing: everything else falls back to index.html.

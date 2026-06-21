@@ -12,28 +12,30 @@ export function Hub() {
   return (
     <div className="min-h-screen">
       <LeafBackground density={30} />
-      <div className="mx-auto max-w-5xl px-6 py-8">
+      <div className="mx-auto flex min-h-screen max-w-5xl flex-col px-6 py-8">
         <TopBar />
 
-        <p className="mt-8 font-mono text-xs uppercase tracking-wider text-clade-ink/45">
-          data: Catalogue of Life · every taxon shown common + scientific
-        </p>
+        <div className="flex flex-1 flex-col items-center justify-center gap-6 pb-16">
+          <p className="text-center font-mono text-xs uppercase tracking-wider text-clade-ink/45">
+            data: Catalogue of Life · every taxon shown common + scientific
+          </p>
 
-        <div className="mt-10 max-w-2xl">
-          <ModeCard
-            to="/marathon"
-            title="Marathon"
-            blurb="Name as many organisms as you can against the clock — each one lands on a living tree you build. Empty branches show how many sisters stay hidden. Zoom in to hunt them."
-            meta="grow the tree"
-          />
-        </div>
+          <div className="w-full max-w-2xl">
+            <ModeCard
+              to="/marathon"
+              title="Marathon"
+              blurb="Name as many organisms as you can against the clock — each one lands on a living tree you build. Empty branches show how many sisters stay hidden. Zoom in to hunt them."
+              meta="grow the tree"
+            />
+          </div>
 
-        <div className="mt-8 flex flex-wrap items-center gap-3">
-          <span className="font-mono text-xs uppercase tracking-wider text-clade-ink/45">
-            Difficulty
-          </span>
-          <span className="pill pill-active cursor-default">Common names</span>
-          <span className="pill cursor-default border-dashed">Scientific only</span>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <span className="font-mono text-xs uppercase tracking-wider text-clade-ink/45">
+              Difficulty
+            </span>
+            <span className="pill pill-active cursor-default">Common names</span>
+            <span className="pill cursor-default border-dashed">Scientific only</span>
+          </div>
         </div>
       </div>
     </div>

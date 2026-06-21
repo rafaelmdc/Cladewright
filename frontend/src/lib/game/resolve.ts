@@ -30,13 +30,24 @@ function toTarget(asset: InternedAsset, id: string): Target | null {
 /** Does this target's OWN canonical name (common/sci) equal the query? A "primary"
  *  match outranks an incidental alias — this is what makes "bear" pick Ursidae (whose
  *  name *is* "Bear") over the brown bear (which merely carries "bear" as an alias). */
-function isPrimary(t: Target, q: string): boolean {
-  const common = t.kind === "tip" ? t.tip.common : t.node.common;
-  const sci = t.kind === "tip" ? t.tip.sci : t.node.sci;
-  return normalize(sci) === q || (common != null && normalize(common) === q);
+function sciOf(t: Target): string {
+  return t.kind === "tip" ? t.tip.sci : t.node.sci;
 }
 
-export function resolve(asset: InternedAsset, query: string): Target | null {
+function isPrimary(t: Target, q: string): boolean {
+  const common = t.kind === "tip" ? t.tip.common : t.node.common;
+  return normalize(sciOf(t)) === q || (common != null && normalize(common) === q);
+}
+
+/**
+ * resolve a typed name to a target.
+ *
+ * `scientificOnly` (the Scientific difficulty) accepts ONLY the actual scientific name —
+ * common-name aliases like "lion" must NOT resolve, even though they're in the alias
+ * index. We still look candidates up via the alias index (it maps every name, sci
+ * included), then keep only those whose canonical scientific name *is* the query.
+ */
+export function resolve(asset: InternedAsset, query: string, scientificOnly = false): Target | null {
   const q = normalize(query);
   if (!q) return null;
 
@@ -44,6 +55,7 @@ export function resolve(asset: InternedAsset, query: string): Target | null {
   if (!ids || ids.length === 0) return null;
 
   let cands = ids.map((id) => toTarget(asset, id)).filter((t): t is Target => t !== null);
+  if (scientificOnly) cands = cands.filter((t) => normalize(sciOf(t)) === q);
   if (cands.length === 0) return null;
   if (cands.length === 1) return cands[0];
 

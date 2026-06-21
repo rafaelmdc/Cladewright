@@ -184,8 +184,9 @@ function Game({
     if (!running || !query) return;
 
     // Async to cover remote mode (/search + /resolve); blob mode resolves synchronously
-    // inside and just awaits an already-settled value.
-    const target = await resolveTarget(asset, query);
+    // inside and just awaits an already-settled value. Scientific difficulty only accepts
+    // the actual scientific name (no common-name aliases).
+    const target = await resolveTarget(asset, query, difficulty === "scientific");
     if (!target) {
       setFlash({ text: `"${query}" — no match`, tone: "none" });
       return;

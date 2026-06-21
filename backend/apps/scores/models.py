@@ -35,7 +35,7 @@ class GameModeConfig(models.Model):
 
     mode = models.CharField(max_length=32, choices=GameMode.choices, unique=True)
     label = models.CharField(max_length=64, help_text="Card title, e.g. 'Marathon'.")
-    blurb = models.CharField(max_length=160, blank=True, help_text="Card subtitle.")
+    blurb = models.CharField(max_length=240, blank=True, help_text="Card subtitle.")
     # SPA route the card links to (difficulty is appended as ?difficulty=). Kept in config
     # so a new mode is data, not a frontend special-case.
     route = models.CharField(max_length=64, default="/marathon")

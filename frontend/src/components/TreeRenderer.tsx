@@ -40,6 +40,8 @@ export interface TreeRendererProps {
   layout?: TreeLayout;
   /** show a species' scientific name (smaller) beneath its common name */
   showScientific?: boolean;
+  /** "Scientific only" difficulty: show species by their Latin name (no common name) */
+  scientificPrimary?: boolean;
   /** transient "ping" on a freshly-named node; nonce re-fires the same node */
   pulse?: { key: string; nonce: number } | null;
 }
@@ -161,6 +163,7 @@ export function TreeRenderer({
   rev,
   layout: mode = "radial",
   showScientific = true,
+  scientificPrimary = false,
   pulse = null,
 }: TreeRendererProps) {
   // Manual fold/unfold overrides on top of the automatic budget: `expanded` = wedges the
@@ -341,8 +344,8 @@ export function TreeRenderer({
   // already kept (higher-priority wins). Depends on zoom (which sets label size) but not
   // on pan — overlaps are translation-invariant.
   const shownLabels = useMemo(
-    () => cullLabels(nodes, view.scale, showScientific, detail, pulse?.key ?? null),
-    [nodes, view.scale, showScientific, detail, pulse?.key],
+    () => cullLabels(nodes, view.scale, showScientific, detail, pulse?.key ?? null, scientificPrimary),
+    [nodes, view.scale, showScientific, detail, pulse?.key, scientificPrimary],
   );
 
   if (nodes.length === 0) {
@@ -406,6 +409,7 @@ export function TreeRenderer({
                 <NodeGlyph
                   node={p.node}
                   showSci={showScientific}
+                  scientificPrimary={scientificPrimary}
                   scale={view.scale}
                   angle={mode === "radial" ? p.a : null}
                   detail={detail}
@@ -466,6 +470,7 @@ function cullLabels(
   showSci: boolean,
   detail: boolean,
   pulseKey: string | null,
+  scientificPrimary: boolean,
 ): Set<string> {
   const k = Math.min(1.6, 1 / scale);
   const FS = 9; // nominal font size in user units
@@ -490,11 +495,16 @@ function cullLabels(
       lines = 1;
       prio = 4; // wedges summarize many species — keep them
     } else if (n.kind === "tip") {
-      chars = n.label.length;
-      lines = 1;
-      if (detail && showSci && n.sci && n.sci !== n.label) {
-        chars = Math.max(chars, n.sci.length);
-        lines = 2;
+      if (scientificPrimary) {
+        chars = (n.sci || n.label).length; // Latin only
+        lines = 1;
+      } else {
+        chars = n.label.length;
+        lines = 1;
+        if (detail && showSci && n.sci && n.sci !== n.label) {
+          chars = Math.max(chars, n.sci.length);
+          lines = 2;
+        }
       }
       prio = 2;
     } else {
@@ -540,6 +550,7 @@ function cullLabels(
 function NodeGlyph({
   node,
   showSci,
+  scientificPrimary,
   scale,
   angle,
   detail,
@@ -547,6 +558,8 @@ function NodeGlyph({
 }: {
   node: RenderNode;
   showSci: boolean;
+  /** "Scientific only" difficulty: tips show their Latin name, no common name */
+  scientificPrimary: boolean;
   scale: number;
   /** the node's screen angle (radians) for radial label orientation; null = rectangular */
   angle: number | null;
@@ -595,6 +608,22 @@ function NodeGlyph({
   }
 
   if (node.kind === "tip") {
+    // Scientific-only difficulty: the Latin binomial IS the label (italic), no common name.
+    if (scientificPrimary) {
+      return (
+        <>
+          {hit}
+          <circle r={3.5} className="fill-clade-accent" />
+          {showLabel && (
+            <g transform={labelTransform}>
+              <text x={6 * dir} y={3} textAnchor={anchor} className="fill-clade-ink text-[9px] font-semibold italic">
+                {node.sci || node.label}
+              </text>
+            </g>
+          )}
+        </>
+      );
+    }
     const withSci = detail && showSci && node.sci && node.sci !== node.label;
     return (
       <>

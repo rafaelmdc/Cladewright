@@ -1,14 +1,17 @@
 // Landing hub — pick a mode. Mirrors docs/examples/homepage.png: leaf wordmark + nav,
 // a big handwritten headline, two mode cards with play buttons, difficulty pills, all
 // over the drifting-leaf background.
+import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import { LeafMark, TopBar } from "../components/Brand";
 import { LeafBackground } from "../components/LeafBackground";
+import type { Difficulty } from "../lib/scores";
 import { useTitle } from "../lib/useTitle";
 
 export function Hub() {
   useTitle();
+  const [difficulty, setDifficulty] = useState<Difficulty>("common");
   return (
     <div className="min-h-screen">
       <LeafBackground density={30} />
@@ -22,7 +25,7 @@ export function Hub() {
 
           <div className="w-full max-w-2xl">
             <ModeCard
-              to="/marathon"
+              to={`/marathon?difficulty=${difficulty}`}
               title="Marathon"
               blurb="Name as many organisms as you can against the clock — each one lands on a living tree you build. Empty branches show how many sisters stay hidden. Zoom in to hunt them."
               meta="grow the tree"
@@ -33,9 +36,28 @@ export function Hub() {
             <span className="font-mono text-xs uppercase tracking-wider text-clade-ink/45">
               Difficulty
             </span>
-            <span className="pill pill-active cursor-default">Common names</span>
-            <span className="pill cursor-default border-dashed">Scientific only</span>
+            <button
+              type="button"
+              onClick={() => setDifficulty("common")}
+              className={`pill ${difficulty === "common" ? "pill-active" : ""}`}
+            >
+              Common names
+            </button>
+            <button
+              type="button"
+              onClick={() => setDifficulty("scientific")}
+              className={`pill ${difficulty === "scientific" ? "pill-active" : "border-dashed"}`}
+            >
+              Scientific only
+            </button>
           </div>
+
+          <Link
+            to="/leaderboard"
+            className="font-mono text-xs uppercase tracking-widest text-clade-ink/45 underline-offset-4 hover:text-clade-ink hover:underline"
+          >
+            Leaderboards →
+          </Link>
         </div>
       </div>
     </div>

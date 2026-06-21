@@ -138,3 +138,23 @@ class SubmitAndLeaderboardTests(TestCase):
         entries = res.data["entries"]
         self.assertEqual([(e["user"], e["score"], e["rank"]) for e in entries],
                          [("alice", 8, 1), ("bob", 6, 2)])  # alice's best (8) only, once
+
+    def test_leaderboards_split_by_difficulty(self):
+        a = User.objects.create_user("alice", password="x")
+        Run.objects.create(user=a, mode=GameMode.MARATHON_FREE, scope="test", difficulty="common", score=5, asset_version=1)
+        Run.objects.create(user=a, mode=GameMode.MARATHON_FREE, scope="test", difficulty="scientific", score=9, asset_version=1)
+        common = self.client.get("/api/scores/leaderboard/?mode=marathon_free&scope=test&difficulty=common")
+        sci = self.client.get("/api/scores/leaderboard/?mode=marathon_free&scope=test&difficulty=scientific")
+        self.assertEqual([e["score"] for e in common.data["entries"]], [5])
+        self.assertEqual([e["score"] for e in sci.data["entries"]], [9])
+
+    def test_submit_records_difficulty(self):
+        user = User.objects.create_user("alice", password="x")
+        self.client.force_authenticate(user)
+        self.client.post(
+            "/api/scores/runs/",
+            {"mode": "marathon_free", "scope": "test", "difficulty": "scientific",
+             "asset_version": 1, "transcript": ["tip:1"]},
+            format="json",
+        )
+        self.assertEqual(Run.objects.get(user=user).difficulty, "scientific")

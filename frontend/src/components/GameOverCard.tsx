@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { fetchMe, type Me } from "../lib/auth";
-import { fetchLeaderboard, submitRun, type LeaderEntry, type SubmitOutcome } from "../lib/scores";
+import { fetchLeaderboard, submitRun, type Difficulty, type LeaderEntry, type SubmitOutcome } from "../lib/scores";
 
 const MODE = "marathon_free";
 
@@ -15,6 +15,7 @@ export function GameOverCard({
   score,
   scope,
   scopeLabel,
+  difficulty,
   assetVersion,
   ranked,
   transcript,
@@ -24,6 +25,7 @@ export function GameOverCard({
   score: number;
   scope: string;
   scopeLabel: string;
+  difficulty: Difficulty;
   assetVersion: number;
   ranked: boolean;
   transcript: string[];
@@ -42,11 +44,11 @@ export function GameOverCard({
       // Only ranked runs (default modifiers) count — submit first so the board includes
       // this run, then load the board.
       if (ranked && who.authenticated && transcript.length > 0) {
-        const outcome = await submitRun({ mode: MODE, scope, asset_version: assetVersion, transcript });
+        const outcome = await submitRun({ mode: MODE, scope, difficulty, asset_version: assetVersion, transcript });
         if (!live) return;
         setSubmit(outcome);
       }
-      const entries = await fetchLeaderboard(MODE, scope);
+      const entries = await fetchLeaderboard(MODE, scope, difficulty);
       if (live) setBoard(entries);
     })();
     return () => {
@@ -73,7 +75,7 @@ export function GameOverCard({
         )}
       </div>
 
-      <Leaderboard board={board} label={scopeLabel} me={me} />
+      <Leaderboard board={board} label={`${scopeLabel} · ${difficulty}`} me={me} />
 
       <button onClick={onPlayAgain} className="btn-play mt-6">
         ▶ Play again

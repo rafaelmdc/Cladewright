@@ -15,6 +15,7 @@ import { loadAsset } from "../lib/asset/load";
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import type { InternedAsset, Target } from "../lib/asset/types";
 import { RemainingTracker } from "../lib/game/remaining";
+import type { Difficulty } from "../lib/scores";
 import { resolveTarget } from "../lib/game/resolveTarget";
 import { isRankedSettings, loadSettings, saveSettings, type GameSettings } from "../lib/game/settings";
 import { useTitle } from "../lib/useTitle";
@@ -83,15 +84,22 @@ export function Marathon() {
     };
   }, [scopeKey, scopes]);
 
+  // Difficulty is chosen on the Hub and carried in the URL (?difficulty=). Fixed per game.
+  const difficulty: Difficulty =
+    new URLSearchParams(window.location.search).get("difficulty") === "scientific"
+      ? "scientific"
+      : "common";
+
   if (!asset) return <p className="p-6 text-clade-ink/60">Loading the tree…</p>;
-  // Key by scope so switching scopes fully resets the game (tree, tracker, score).
+  // Key by scope+difficulty so switching either fully resets the game.
   return (
     <Game
-      key={asset.scope ?? scopeKey ?? "default"}
+      key={`${asset.scope ?? scopeKey ?? "default"}:${difficulty}`}
       asset={asset}
       scopes={scopes}
       scopeKey={scopeKey}
       onScope={setScopeKey}
+      difficulty={difficulty}
     />
   );
 }
@@ -99,6 +107,7 @@ export function Marathon() {
 function Game({
   asset,
   scopes,
+  difficulty,
   scopeKey,
   onScope,
 }: {
@@ -106,6 +115,7 @@ function Game({
   scopes: ScopeInfo[];
   scopeKey: string | null;
   onScope: (key: string) => void;
+  difficulty: Difficulty;
 }) {
   // The induced tree + tracker are mutated in place (O(L)); `rev` triggers re-render.
   const treeRef = useRef<InducedTree>(createInducedTree());
@@ -304,6 +314,7 @@ function Game({
         rev={rev}
         layout={settings.treeLayout}
         showScientific={settings.showScientific}
+        scientificPrimary={difficulty === "scientific"}
         pulse={pulse}
       />
 
@@ -314,6 +325,7 @@ function Game({
             score={score}
             scope={asset.scope ?? scopeKey ?? ""}
             scopeLabel={scopes.find((s) => s.key === (asset.scope ?? scopeKey))?.label ?? "this scope"}
+            difficulty={difficulty}
             assetVersion={asset.raw.version}
             ranked={isRankedSettings(settings)}
             transcript={transcriptRef.current}

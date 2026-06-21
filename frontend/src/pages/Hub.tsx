@@ -6,6 +6,7 @@ import { Link } from "react-router-dom";
 
 import { LeafMark, TopBar } from "../components/Brand";
 import { LeafBackground } from "../components/LeafBackground";
+import { fetchDaily, type DailyInfo } from "../lib/daily";
 import { fetchGames, FALLBACK_GAMES, type Game } from "../lib/games";
 import type { Difficulty } from "../lib/scores";
 import { useTitle } from "../lib/useTitle";
@@ -90,13 +91,31 @@ export function Hub() {
   );
 }
 
-/** The single site-wide Daily. The counter is the player's day streak — 0 until the daily
- * mode ships and starts incrementing it. Play sits next to the counter. */
+/** The single site-wide Daily. The counter is the player's day streak; once today's daily
+ * is played, Play is replaced by the score (one shot a day). Reads /api/scores/daily/. */
 function DailyCard({ difficulty }: { difficulty: Difficulty }) {
-  const streak = 0;
+  const [daily, setDaily] = useState<DailyInfo | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetchDaily().then((d) => {
+      if (alive) setDaily(d);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const streak = daily?.streak?.current ?? 0;
+  const played = daily?.played_today ?? false;
+
   return (
     <div className="ink-card flex items-center justify-between border-clade-accent/30 px-5 py-4">
-      <h2 className="font-hand text-3xl font-bold leading-none text-clade-ink">Daily</h2>
+      <div className="leading-none">
+        <h2 className="font-hand text-3xl font-bold text-clade-ink">Daily</h2>
+        <span className="font-mono text-[10px] uppercase tracking-widest text-clade-ink/40">
+          {daily?.scope_label ? `today · ${daily.scope_label}` : "day streak"}
+        </span>
+      </div>
       <div className="flex items-center gap-4">
         <div className="text-right leading-none">
           <div className="font-hand text-4xl font-bold text-clade-ink">{streak}</div>
@@ -104,9 +123,23 @@ function DailyCard({ difficulty }: { difficulty: Difficulty }) {
             day streak
           </span>
         </div>
-        <Link to={`/marathon?difficulty=${difficulty}`} className="btn-play">
-          ▶ Play
-        </Link>
+        {played ? (
+          <div className="text-center leading-none">
+            <div className="font-hand text-3xl font-bold text-clade-accent">
+              {daily?.today_score ?? "✓"}
+            </div>
+            <Link
+              to="/leaderboard"
+              className="font-mono text-[10px] uppercase tracking-widest text-clade-ink/45 underline-offset-2 hover:text-clade-ink hover:underline"
+            >
+              board →
+            </Link>
+          </div>
+        ) : (
+          <Link to={`/marathon?daily=1&difficulty=${difficulty}`} className="btn-play">
+            ▶ Play
+          </Link>
+        )}
       </div>
     </div>
   );

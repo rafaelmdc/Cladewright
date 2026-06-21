@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { Wordmark } from "../components/Brand";
+import { LeafBackground } from "../components/LeafBackground";
 import { fetchAccountStats, deleteAccount, type AccountStats, type ModeStat } from "../lib/account";
 import { logout } from "../lib/auth";
 import { useTitle } from "../lib/useTitle";
@@ -34,7 +35,8 @@ export function Account() {
   }
 
   return (
-    <div className="min-h-screen w-screen bg-clade-bg px-4 py-8">
+    <div className="min-h-screen w-screen px-4 py-8">
+      <LeafBackground density={20} />
       <div className="mx-auto flex max-w-3xl flex-col gap-6">
         <header className="flex items-center justify-between">
           <Link to="/">

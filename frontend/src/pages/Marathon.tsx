@@ -17,6 +17,7 @@ import type { InternedAsset, Target } from "../lib/asset/types";
 import { RemainingTracker } from "../lib/game/remaining";
 import { resolveTarget } from "../lib/game/resolveTarget";
 import { isRankedSettings, loadSettings, saveSettings, type GameSettings } from "../lib/game/settings";
+import { useTitle } from "../lib/useTitle";
 import { createInducedTree, place, type InducedTree, type Placement } from "../lib/tree/induced";
 
 interface Flash {
@@ -27,6 +28,7 @@ interface Flash {
 const SCOPE_KEY = "cladewright.scope";
 
 export function Marathon() {
+  useTitle("Marathon");
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
   const [scopeKey, setScopeKey] = useState<string | null>(null);
   const [asset, setAsset] = useState<InternedAsset | null>(null);

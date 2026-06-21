@@ -7,8 +7,10 @@ import { Link } from "react-router-dom";
 import { LeafMark } from "../components/Brand";
 import { LeafBackground } from "../components/LeafBackground";
 import { GOOGLE_LOGIN_URL } from "../lib/auth";
+import { useTitle } from "../lib/useTitle";
 
 export function Login() {
+  useTitle("Sign in");
   return (
     <div className="relative grid min-h-screen place-items-center px-4">
       <LeafBackground density={24} />

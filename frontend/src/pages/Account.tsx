@@ -8,12 +8,14 @@ import { Link, useNavigate } from "react-router-dom";
 import { Wordmark } from "../components/Brand";
 import { fetchAccountStats, deleteAccount, type AccountStats, type ModeStat } from "../lib/account";
 import { logout } from "../lib/auth";
+import { useTitle } from "../lib/useTitle";
 
 export function Account() {
   const [stats, setStats] = useState<AccountStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState(false);
   const navigate = useNavigate();
+  useTitle("Account");
 
   useEffect(() => {
     fetchAccountStats().then((s) => {

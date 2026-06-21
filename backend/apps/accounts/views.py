@@ -18,7 +18,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.scores.models import Difficulty, GameMode, GameModeConfig, PlayerStat, Run
+from apps.scores.models import GameMode, GameModeConfig, PlayerStat, Run
 
 RECENT_RUNS = 30
 HEATMAP_DAYS = 7 * 13  # ~13 weeks, GitHub-style
@@ -26,14 +26,15 @@ HEATMAP_DAYS = 7 * 13  # ~13 weeks, GitHub-style
 
 def _game_labeler():
     """A function (mode, difficulty) -> 'Marathon · Common'. Base name comes from the admin
-    GameModeConfig (falling back to the GameMode label); difficulty is the lens. The scoring
-    unit is (mode, difficulty) — see docs/games-model.md."""
+    GameModeConfig (falling back to the GameMode label); difficulty is the lens, shortened
+    (Common / Sci) so composed labels don't truncate on cards. The scoring unit is
+    (mode, difficulty) — see docs/games-model.md."""
     cfg = dict(GameModeConfig.objects.values_list("mode", "label"))
     base = dict(GameMode.choices)
-    diff = dict(Difficulty.choices)
+    short_diff = {"common": "Common", "scientific": "Sci"}
 
     def label(mode: str, difficulty: str) -> str:
-        return f"{cfg.get(mode) or base.get(mode, mode)} · {diff.get(difficulty, difficulty)}"
+        return f"{cfg.get(mode) or base.get(mode, mode)} · {short_diff.get(difficulty, difficulty)}"
 
     return label
 

@@ -4,7 +4,35 @@ from __future__ import annotations
 
 from django.contrib import admin
 
-from .models import GameModeConfig, NamedSpecies, PlayerStat, Run, Streak
+from .models import (
+    DailyPin,
+    DailyRotationEntry,
+    GameModeConfig,
+    NamedSpecies,
+    PlayerStat,
+    Run,
+    Streak,
+)
+
+
+@admin.register(DailyRotationEntry)
+class DailyRotationEntryAdmin(admin.ModelAdmin):
+    """The daily rotation pool — which (game, clade) entries the daily cycles through. Tune
+    game + clade rotation here; the daily for a date with no pin = pool[ordinal % len]."""
+
+    list_display = ("order", "scope", "mode", "active")
+    list_editable = ("order", "scope", "mode", "active")
+    list_display_links = None
+    ordering = ("order", "scope")
+
+
+@admin.register(DailyPin)
+class DailyPinAdmin(admin.ModelAdmin):
+    """Manually set the daily for a specific date — overrides the rotation that day."""
+
+    list_display = ("date", "scope", "mode", "note")
+    list_editable = ("scope", "mode", "note")
+    ordering = ("-date",)
 
 
 @admin.register(GameModeConfig)

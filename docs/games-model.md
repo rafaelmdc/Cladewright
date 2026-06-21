@@ -40,12 +40,21 @@ pool and discourages trying other games. The single daily:
 The hub gets a small, clean **"Today" daily card** (present, never noisy) above the free-play
 cards.
 
+**Admin-tunable, one-shot.** The daily is resolved server-side by `_daily_plan(date)`:
+a manual **`DailyPin`** for that date wins; else the active **`DailyRotationEntry`** pool
+cycles by date (both *game* and *clade* rotation are admin-managed); else it falls back to
+rotating the served scopes. The daily **locks after one play** per day (no grinding a better
+number) — `GET /api/scores/daily/` then reports `played_today` + `today_score`, and the card
+shows the result instead of Play. **Per-game dailies are expressible** (pins/rotation/runs
+all carry `mode`, pins are unique per `(date, mode)`); the frontend surfaces one headline
+daily for now.
+
 ## Streak → one flame
 
-**One site-wide daily streak per player** (not per game). Earned only by doing the daily —
-free-play replays never build it (a grindable streak is worthless). The 🔥 lives in the
-Today card and at the top of the profile. Modelled as a single `Streak` per user (today it's
-keyed by `mode`; collapses to one row when the daily ships).
+**One GLOBAL day streak per player** — advanced by playing *any* game's daily that day, so
+it survives game rotation. Earned only by doing the daily; free-play replays never build it
+(a grindable streak is worthless). Stored on a single `Streak` row under the sentinel key
+`"daily"` (`DAILY_STREAK_KEY`), surfaced on the daily card and the profile.
 
 ## Profile
 

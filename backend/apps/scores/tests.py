@@ -182,9 +182,12 @@ class SubmitAndLeaderboardTests(TestCase):
         # Seed migration enables marathon_free and disables the rest.
         res = self.client.get("/api/scores/games/")
         self.assertEqual(res.status_code, 200)
-        modes = [g["mode"] for g in res.data["games"]]
-        self.assertEqual(modes, ["marathon_free"])
-        self.assertNotIn("classic", modes)
+        games = {g["mode"]: g for g in res.data["games"]}
+        self.assertIn("marathon_free", games)         # free play, a Hub card
+        self.assertIn("marathon_daily", games)        # daily, flagged for the Hub strip
+        self.assertTrue(games["marathon_daily"]["is_daily"])
+        self.assertFalse(games["marathon_free"]["is_daily"])
+        self.assertNotIn("classic", games)            # still disabled
 
     def test_unranked_run_counts_to_stats_but_not_leaderboard(self):
         user = User.objects.create_user("alice", password="x")
@@ -207,6 +210,32 @@ class SubmitAndLeaderboardTests(TestCase):
         # ...and it does NOT show on the leaderboard.
         board = self.client.get("/api/scores/leaderboard/?mode=marathon_free&scope=test")
         self.assertEqual(board.data["entries"], [])
+
+    def test_daily_one_shot_and_scope_pinned(self):
+        user = User.objects.create_user("alice", password="x")
+        self.client.force_authenticate(user)
+        info = self.client.get("/api/scores/daily/").data
+        self.assertTrue(info["available"])
+        self.assertEqual(info["mode"], "marathon_daily")
+        self.assertEqual(info["scope"], "test")  # rotation falls back to the served scope
+
+        body = {"mode": "marathon_daily", "scope": "whatever", "asset_version": 1,
+                "transcript": ["tip:1", "tip:2"]}
+        first = self.client.post("/api/scores/runs/", body, format="json")
+        self.assertEqual(first.status_code, 201)
+        run = Run.objects.get(user=user, mode="marathon_daily")
+        self.assertEqual(run.scope, "test")          # scope pinned server-side
+        self.assertIsNotNone(run.puzzle_date)        # daily carries the puzzle date
+
+        # Locked for the day — a second daily submit is rejected.
+        second = self.client.post("/api/scores/runs/", body, format="json")
+        self.assertEqual(second.status_code, 409)
+
+        # The daily endpoint now reports the played result + the global streak.
+        after = self.client.get("/api/scores/daily/").data
+        self.assertTrue(after["played_today"])
+        self.assertEqual(after["today_score"], 2)
+        self.assertEqual(after["streak"]["current"], 1)
 
     def test_submit_to_disabled_mode_rejected(self):
         user = User.objects.create_user("alice", password="x")

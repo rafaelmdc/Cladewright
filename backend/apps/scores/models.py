@@ -52,6 +52,48 @@ class GameModeConfig(models.Model):
         return f"{self.label} ({self.mode}){'' if self.enabled else ' — disabled'}"
 
 
+class DailyRotationEntry(models.Model):
+    """One (game, clade) entry in the daily rotation pool. The daily for a date with no
+    manual pin cycles deterministically through the ACTIVE entries by date — so the admin
+    tunes both the GAME rotation (mode) and the CLADE rotation (scope) here, no deploy. If
+    the pool is empty, the daily falls back to rotating the currently-served scopes. See
+    docs/games-model.md."""
+
+    mode = models.CharField(
+        max_length=32, choices=GameMode.choices, default=GameMode.MARATHON_DAILY,
+        help_text="The daily game for this entry (e.g. Marathon daily).",
+    )
+    scope = models.CharField(max_length=128, help_text="AssetVersion scope key, e.g. 'mammalia'.")
+    order = models.IntegerField(default=0, help_text="Rotation position (lower cycles first).")
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["order", "scope"]
+        unique_together = ("mode", "scope")
+        verbose_name_plural = "Daily rotation entries"
+
+    def __str__(self) -> str:
+        return f"{self.scope} [{self.mode}]{'' if self.active else ' — off'}"
+
+
+class DailyPin(models.Model):
+    """A manual daily for a specific date — overrides the rotation that day. Admin-set, so a
+    specific date can feature a hand-picked game + clade."""
+
+    date = models.DateField(help_text="The day this daily applies to.")
+    mode = models.CharField(max_length=32, choices=GameMode.choices, default=GameMode.MARATHON_DAILY)
+    scope = models.CharField(max_length=128, help_text="AssetVersion scope key, e.g. 'aves'.")
+    note = models.CharField(max_length=200, blank=True, help_text="Optional admin note.")
+
+    class Meta:
+        ordering = ["-date"]
+        # Per (date, mode): each game can have its own pinned daily on a given day.
+        unique_together = ("date", "mode")
+
+    def __str__(self) -> str:
+        return f"{self.date}: {self.scope} [{self.mode}]"
+
+
 class Run(models.Model):
     """One completed game. For Marathon, ``score`` = tips placed."""
 

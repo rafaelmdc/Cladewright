@@ -129,3 +129,64 @@ LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
+
+# ── Auth: DRF + allauth Google OAuth ─────────────────────────────────────────────
+# The SPA authenticates by session cookie (allauth logs the user in, DRF reads the
+# session). In dev the Vite server proxies BOTH /api and /accounts to :8000, so the
+# browser sees one origin (localhost:5173) and the session/CSRF cookies just work.
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.AllowAny",
+    ],
+}
+
+# Google is configured entirely from env — no admin SocialApp row needed. Until the
+# credentials are set the provider is simply unusable (login returns an error), but the
+# rest of the app runs fine.
+SOCIALACCOUNT_PROVIDERS = {
+    "google": {
+        "APP": {
+            "client_id": os.environ.get("GOOGLE_OAUTH_CLIENT_ID", ""),
+            "secret": os.environ.get("GOOGLE_OAUTH_SECRET", ""),
+            "key": "",
+        },
+        "SCOPE": ["profile", "email"],
+        "AUTH_PARAMS": {"access_type": "online"},
+    }
+}
+# Skip allauth's intermediate "continue with Google?" page — go straight to the provider,
+# which is what an SPA "Sign in" button expects.
+SOCIALACCOUNT_LOGIN_ON_GET = True
+ACCOUNT_EMAIL_VERIFICATION = "none"
+ACCOUNT_LOGIN_METHODS = {"email"}
+ACCOUNT_SIGNUP_FIELDS = ["email*"]
+# Google-first login: if a Google account's (provider-verified) email matches an existing
+# user, log in as — and auto-link to — that user instead of dead-ending on allauth's
+# "an account already exists, connect it first" page. Safe because Google verifies emails.
+SOCIALACCOUNT_EMAIL_AUTHENTICATION = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
+
+# After login/logout, bounce back to the SPA hub (same-origin in dev via the proxy).
+LOGIN_REDIRECT_URL = os.environ.get("LOGIN_REDIRECT_URL", "/")
+ACCOUNT_LOGOUT_REDIRECT_URL = "/"
+
+# Session cookie must survive the OAuth redirect round-trip; Lax is correct for a
+# top-level redirect flow.
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+# Keep sessions short: 30 minutes, as a SLIDING window (each request refreshes the clock),
+# so a logged-in cookie expires after 30 min of inactivity.
+SESSION_COOKIE_AGE = 30 * 60
+SESSION_SAVE_EVERY_REQUEST = True
+# Secure cookies over HTTPS — on by default in prod (DEBUG off), overridable by env.
+_secure_cookies = os.environ.get("DJANGO_SECURE_COOKIES", "0" if DEBUG else "1") == "1"
+SESSION_COOKIE_SECURE = _secure_cookies
+CSRF_COOKIE_SECURE = _secure_cookies
+# Origins allowed to send the CSRF cookie back (the SPA's origin). Prod sets this to the
+# real domain; dev uses the Vite/Django localhost pair.
+CSRF_TRUSTED_ORIGINS = os.environ.get(
+    "CSRF_TRUSTED_ORIGINS", "http://localhost:5173,http://localhost:8000"
+).split(",")

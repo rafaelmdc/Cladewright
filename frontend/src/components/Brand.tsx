@@ -1,7 +1,9 @@
 // Brand chrome shared across pages: the leaf wordmark and the mode nav. Matches
 // docs/examples/ — Caveat wordmark + mono nav pills, active mode filled ink.
 
-import { Link, useLocation } from "react-router-dom";
+import { Link } from "react-router-dom";
+
+import { AuthChip } from "./AuthChip";
 
 export function LeafMark({ className = "h-7 w-7" }: { className?: string }) {
   // A small two-frond sprig, echoing the falling leaves.
@@ -30,30 +32,11 @@ export function Wordmark({ size = "text-3xl" }: { size?: string }) {
   );
 }
 
-const NAV = [
-  { to: "/", label: "Hub" },
-  { to: "/classic", label: "1 · Classic" },
-  { to: "/marathon", label: "2 · Marathon" },
-];
-
-export function TopNav() {
-  const { pathname } = useLocation();
-  return (
-    <nav className="flex items-center gap-2">
-      {NAV.map((n) => (
-        <Link key={n.to} to={n.to} className={`pill ${pathname === n.to ? "pill-active" : ""}`}>
-          {n.label}
-        </Link>
-      ))}
-    </nav>
-  );
-}
-
 export function TopBar({ className = "" }: { className?: string }) {
   return (
     <header className={`flex items-center justify-between gap-4 ${className}`}>
       <Wordmark />
-      <TopNav />
+      <AuthChip />
     </header>
   );
 }

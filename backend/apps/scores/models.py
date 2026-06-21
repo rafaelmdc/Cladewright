@@ -75,6 +75,10 @@ class Run(models.Model):
     # The validated run transcript (ordered placed target ids) the server re-scored from,
     # kept so a run is reproducible/auditable.
     transcript = models.JSONField(default=list, blank=True)
+    # Whether this run used the default ("ranked") settings. EVERY finished run counts
+    # toward the player's stats, but only ranked runs appear on the leaderboard — a custom
+    # run (more time, infinite clock, …) isn't comparable to others.
+    ranked = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

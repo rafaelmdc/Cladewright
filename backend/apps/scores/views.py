@@ -84,6 +84,9 @@ class SubmitRunView(APIView):
         transcript = data.get("transcript") or []
         if not isinstance(transcript, list):
             return Response({"error": "transcript must be a list of ids"}, status=400)
+        # Default ("ranked") settings → eligible for the leaderboard. A custom run still
+        # records + counts toward stats, but never appears on the board.
+        ranked = bool(data.get("ranked", True))
 
         version = data.get("asset_version")
         av = _asset_for(scope, int(version) if version else None)
@@ -115,24 +118,31 @@ class SubmitRunView(APIView):
                 asset_version=av.version,
                 puzzle_date=puzzle_date,
                 transcript=ids,
+                ranked=ranked,
             )
             if is_daily:
                 _bump_streak(request.user, mode, puzzle_date)
+            # Stats fold in EVERY finished run, ranked or not.
             _update_player_stats(request.user, mode, result.score, result.placed_tips)
 
-        # Rank among distinct users with a strictly better run for this board
-        # (mode/scope/difficulty/day).
-        rank = (
-            Run.objects.filter(
-                mode=mode, scope=scope, difficulty=difficulty,
-                puzzle_date=puzzle_date, score__gt=result.score,
+        # Rank only for ranked runs (the leaderboard ignores custom-settings runs). Among
+        # distinct users with a strictly better RANKED run for this board.
+        rank = None
+        if ranked:
+            rank = (
+                Run.objects.filter(
+                    mode=mode, scope=scope, difficulty=difficulty, ranked=True,
+                    puzzle_date=puzzle_date, score__gt=result.score,
+                )
+                .values("user")
+                .distinct()
+                .count()
+                + 1
             )
-            .values("user")
-            .distinct()
-            .count()
-            + 1
+        return Response(
+            {**result.as_dict(), "run_id": run.id, "rank": rank, "ranked": ranked},
+            status=201,
         )
-        return Response({**result.as_dict(), "run_id": run.id, "rank": rank}, status=201)
 
 
 class LeaderboardView(APIView):
@@ -149,7 +159,8 @@ class LeaderboardView(APIView):
         if difficulty not in Difficulty.values:
             return Response({"error": "invalid difficulty"}, status=400)
 
-        qs = Run.objects.filter(mode=mode, scope=scope, difficulty=difficulty)
+        # Only ranked (default-settings) runs are comparable on a board.
+        qs = Run.objects.filter(mode=mode, scope=scope, difficulty=difficulty, ranked=True)
         if mode in (GameMode.MARATHON_DAILY, GameMode.CLASSIC):
             day = _parse_date(request.query_params.get("date")) or dt.date.today()
             qs = qs.filter(puzzle_date=day)

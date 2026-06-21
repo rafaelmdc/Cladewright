@@ -167,6 +167,25 @@ class SubmitAndLeaderboardTests(TestCase):
         self.assertEqual(modes, ["marathon_free"])
         self.assertNotIn("classic", modes)
 
+    def test_unranked_run_counts_to_stats_but_not_leaderboard(self):
+        user = User.objects.create_user("alice", password="x")
+        self.client.force_authenticate(user)
+        res = self.client.post(
+            "/api/scores/runs/",
+            {"mode": "marathon_free", "scope": "test", "asset_version": 1,
+             "ranked": False, "transcript": ["tip:1", "tip:2"]},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201)
+        self.assertIsNone(res.data["rank"])          # no board placement
+        self.assertFalse(res.data["ranked"])
+        # ...but the run + stats are recorded.
+        self.assertFalse(Run.objects.get(user=user).ranked)
+        self.assertEqual(PlayerStat.objects.get(user=user, mode="marathon_free").total_named, 2)
+        # ...and it does NOT show on the leaderboard.
+        board = self.client.get("/api/scores/leaderboard/?mode=marathon_free&scope=test")
+        self.assertEqual(board.data["entries"], [])
+
     def test_submit_to_disabled_mode_rejected(self):
         user = User.objects.create_user("alice", password="x")
         self.client.force_authenticate(user)

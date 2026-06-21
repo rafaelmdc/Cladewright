@@ -41,10 +41,12 @@ export function GameOverCard({
       const who = await fetchMe();
       if (!live) return;
       setMe(who);
-      // Only ranked runs (default modifiers) count — submit first so the board includes
-      // this run, then load the board.
-      if (ranked && who.authenticated && transcript.length > 0) {
-        const outcome = await submitRun({ mode: MODE, scope, difficulty, asset_version: assetVersion, transcript });
+      // EVERY finished run is submitted so it counts toward the player's stats; the
+      // `ranked` flag tells the server whether it's also eligible for the leaderboard.
+      if (who.authenticated && transcript.length > 0) {
+        const outcome = await submitRun({
+          mode: MODE, scope, difficulty, asset_version: assetVersion, transcript, ranked,
+        });
         if (!live) return;
         setSubmit(outcome);
       }
@@ -65,15 +67,7 @@ export function GameOverCard({
         {count} placed · {score} points · {scopeLabel}
       </p>
 
-      <div className="mt-4 w-full">
-        {ranked ? (
-          renderSubmitStatus(me, submit)
-        ) : (
-          <p className="font-mono text-xs text-clade-ink/50">
-            Custom settings — this run isn't ranked.
-          </p>
-        )}
-      </div>
+      <div className="mt-4 w-full">{renderSubmitStatus(me, submit, ranked)}</div>
 
       <Leaderboard board={board} label={`${scopeLabel} · ${difficulty}`} me={me} />
 
@@ -84,7 +78,7 @@ export function GameOverCard({
   );
 }
 
-function renderSubmitStatus(me: Me | null, submit: SubmitOutcome | null) {
+function renderSubmitStatus(me: Me | null, submit: SubmitOutcome | null, ranked: boolean) {
   if (me === null) return <p className="font-mono text-xs text-clade-ink/40">Checking…</p>;
 
   if (!me.authenticated) {
@@ -98,9 +92,20 @@ function renderSubmitStatus(me: Me | null, submit: SubmitOutcome | null) {
     );
   }
   if (submit?.ok) {
+    // Ranked → a board place; unranked → counted toward stats but off the board.
+    if (ranked && submit.result.rank != null) {
+      return (
+        <p className="font-hand text-2xl text-clade-accent">
+          Saved — rank #{submit.result.rank}
+        </p>
+      );
+    }
     return (
-      <p className="font-hand text-2xl text-clade-accent">
-        Saved — rank #{submit.result.rank}
+      <p className="font-hand text-xl text-clade-ink/70">
+        Saved to your stats
+        <span className="mt-0.5 block font-mono text-[11px] text-clade-ink/45">
+          Custom settings — not ranked on the leaderboard.
+        </span>
       </p>
     );
   }

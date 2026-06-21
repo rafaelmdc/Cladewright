@@ -5,7 +5,12 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
 
-import { DEFAULT_SETTINGS, type GameSettings, type TreeLayout } from "../lib/game/settings";
+import {
+  DEFAULT_SETTINGS,
+  isRankedSettings,
+  type GameSettings,
+  type TreeLayout,
+} from "../lib/game/settings";
 
 interface Props {
   settings: GameSettings;
@@ -53,6 +58,28 @@ export function SettingsPanel({ settings, onChange, onAutofill }: Props) {
                   className="text-clade-ink/50 hover:text-clade-ink"
                 >
                   ✕
+                </button>
+              </div>
+
+              {/* Ranked status + one-tap reset. Default settings are leaderboard-ranked;
+                  any change drops to "custom" (still counts toward your stats). */}
+              <div className="-mt-2 flex items-center justify-between">
+                {isRankedSettings(settings) ? (
+                  <span className="font-mono text-[11px] uppercase tracking-wide text-clade-accent">
+                    ● Ranked
+                  </span>
+                ) : (
+                  <span className="font-mono text-[11px] uppercase tracking-wide text-clade-ink/45">
+                    ○ Custom · not ranked
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onChange({ ...DEFAULT_SETTINGS })}
+                  disabled={isRankedSettings(settings)}
+                  className="rounded-lg border border-clade-ink/15 px-2.5 py-1 font-mono text-[11px] text-clade-ink/70 transition hover:border-clade-ink/40 hover:text-clade-ink disabled:cursor-default disabled:opacity-40 disabled:hover:border-clade-ink/15"
+                >
+                  Reset to defaults
                 </button>
               </div>
 

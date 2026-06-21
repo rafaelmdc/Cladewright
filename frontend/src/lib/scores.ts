@@ -12,7 +12,9 @@ export interface SubmitResult {
   refinements: number;
   duplicates: number;
   unknown: number;
-  rank: number;
+  // null for an unranked run (recorded to stats, but not placed on the leaderboard).
+  rank: number | null;
+  ranked: boolean;
   run_id: number;
 }
 
@@ -26,6 +28,7 @@ export async function submitRun(payload: {
   difficulty: Difficulty;
   asset_version: number;
   transcript: string[];
+  ranked: boolean;
 }): Promise<SubmitOutcome> {
   try {
     const res = await fetch("/api/scores/runs/", {

@@ -68,6 +68,7 @@ export function intern(raw: GameAsset): InternedAsset {
 
   return {
     raw,
+    mode: "blob",
     nodeIndex,
     nodeIds,
     poolCount,

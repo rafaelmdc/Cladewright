@@ -3,6 +3,8 @@
 
 import { Link, useLocation } from "react-router-dom";
 
+import { AuthChip } from "./AuthChip";
+
 export function LeafMark({ className = "h-7 w-7" }: { className?: string }) {
   // A small two-frond sprig, echoing the falling leaves.
   return (
@@ -53,7 +55,10 @@ export function TopBar({ className = "" }: { className?: string }) {
   return (
     <header className={`flex items-center justify-between gap-4 ${className}`}>
       <Wordmark />
-      <TopNav />
+      <div className="flex items-center gap-2">
+        <TopNav />
+        <AuthChip />
+      </div>
     </header>
   );
 }

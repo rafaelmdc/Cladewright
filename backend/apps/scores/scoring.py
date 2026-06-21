@@ -27,6 +27,7 @@ class RescoreResult:
     refinements: int
     duplicates: int
     unknown: int  # transcript ids not present in the asset (ignored)
+    placed_tips: tuple[str, ...]  # distinct SPECIES (tips) placed this run, for stats
 
     def as_dict(self) -> dict:
         return {
@@ -35,6 +36,7 @@ class RescoreResult:
             "refinements": self.refinements,
             "duplicates": self.duplicates,
             "unknown": self.unknown,
+            "animals_named": len(self.placed_tips),
         }
 
 
@@ -88,4 +90,5 @@ def rescore(
         refinements=refinements,
         duplicates=duplicates,
         unknown=unknown,
+        placed_tips=tuple(named_tips),  # distinct species placed this run
     )

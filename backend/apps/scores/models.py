@@ -59,3 +59,46 @@ class Streak(models.Model):
 
     class Meta:
         unique_together = ("user", "mode")
+
+
+class PlayerStat(models.Model):
+    """Per-(user, mode) aggregate, updated on each run submit — the account page reads
+    these directly (no scanning of Runs). One row per game a player has touched, so
+    adding a game mode is data, not schema. Marathon-only at launch, by design extensible."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mode_stats"
+    )
+    mode = models.CharField(max_length=32, choices=GameMode.choices)
+    games_played = models.IntegerField(default=0)
+    # Cumulative species placements across sessions (a species named in two runs counts
+    # twice) — "total animals named".
+    total_named = models.IntegerField(default=0)
+    # Distinct species ever named (mirrors NamedSpecies count) — "unique animals named".
+    unique_named = models.IntegerField(default=0)
+    best_score = models.IntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("user", "mode")
+
+
+class NamedSpecies(models.Model):
+    """Every distinct species a user has ever named, per mode — the unique-animals set and
+    the foundation for future 'collection' features. Small indexed rows; the account page
+    never scans this (it reads PlayerStat.unique_named), so it stays cheap."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="named_species"
+    )
+    mode = models.CharField(max_length=32, choices=GameMode.choices)
+    species_key = models.CharField(max_length=128)  # tip id, e.g. "tip:Panthera_leo"
+    first_named_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "mode", "species_key"], name="uniq_user_mode_species"
+            ),
+        ]
+        indexes = [models.Index(fields=["user", "mode"])]

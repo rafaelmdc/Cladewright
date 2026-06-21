@@ -7,7 +7,7 @@ from rest_framework.test import APIClient
 
 from apps.gamedata.models import AssetVersion, TaxonNode, TaxonTip
 
-from .models import GameMode, Run
+from .models import GameMode, NamedSpecies, PlayerStat, Run
 from .scoring import rescore
 
 User = get_user_model()
@@ -80,6 +80,52 @@ class SubmitAndLeaderboardTests(TestCase):
         run = Run.objects.get(user=user)
         self.assertEqual(run.score, 3)  # canonical, not 9999
         self.assertEqual(run.scope, "test")
+
+    def test_player_stats_and_unique_species(self):
+        user = User.objects.create_user("alice", password="x")
+        self.client.force_authenticate(user)
+        post = lambda tr: self.client.post(  # noqa: E731
+            "/api/scores/runs/",
+            {"mode": "marathon_free", "scope": "test", "asset_version": 1, "transcript": tr},
+            format="json",
+        )
+        post(["tip:1", "tip:2", "tip:3"])  # 3 species
+        post(["tip:1", "tip:2"])           # 2 species, both already known
+
+        stat = PlayerStat.objects.get(user=user, mode="marathon_free")
+        self.assertEqual(stat.games_played, 2)
+        self.assertEqual(stat.total_named, 5)   # 3 + 2 (repeats across sessions count)
+        self.assertEqual(stat.unique_named, 3)  # tip:1/2/3 distinct
+        self.assertEqual(NamedSpecies.objects.filter(user=user).count(), 3)
+
+    def test_account_stats_endpoint(self):
+        user = User.objects.create_user("alice", password="x")
+        self.client.force_authenticate(user)
+        self.client.post(
+            "/api/scores/runs/",
+            {"mode": "marathon_free", "scope": "test", "asset_version": 1,
+             "transcript": ["tip:1", "tip:2"]},
+            format="json",
+        )
+        res = self.client.get("/api/auth/stats/")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["totals"], {"games_played": 1, "total_named": 2, "unique_named": 2})
+        self.assertEqual(res.data["modes"][0]["mode"], "marathon_free")
+        self.assertEqual(len(res.data["recent_runs"]), 1)
+
+    def test_delete_account_cascades(self):
+        user = User.objects.create_user("alice", password="x")
+        self.client.force_authenticate(user)
+        self.client.post(
+            "/api/scores/runs/",
+            {"mode": "marathon_free", "scope": "test", "asset_version": 1, "transcript": ["tip:1"]},
+            format="json",
+        )
+        res = self.client.delete("/api/auth/account/")
+        self.assertEqual(res.status_code, 204)
+        self.assertFalse(User.objects.filter(username="alice").exists())
+        self.assertEqual(Run.objects.count(), 0)          # cascaded
+        self.assertEqual(NamedSpecies.objects.count(), 0)  # cascaded
 
     def test_leaderboard_best_per_user_ordered(self):
         a = User.objects.create_user("alice", password="x")

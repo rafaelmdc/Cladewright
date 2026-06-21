@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+from django.db import transaction
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -17,7 +18,7 @@ from rest_framework.views import APIView
 
 from apps.gamedata.models import AssetVersion, TaxonNode, TaxonTip
 
-from .models import GameMode, Run, Streak
+from .models import GameMode, NamedSpecies, PlayerStat, Run, Streak
 from .scoring import rescore
 
 LEADERBOARD_LIMIT = 50
@@ -67,17 +68,19 @@ class SubmitRunView(APIView):
         is_daily = mode in (GameMode.MARATHON_DAILY, GameMode.CLASSIC)
         puzzle_date = dt.date.today() if is_daily else None
 
-        run = Run.objects.create(
-            user=request.user,
-            mode=mode,
-            scope=scope,
-            score=result.score,
-            asset_version=av.version,
-            puzzle_date=puzzle_date,
-            transcript=ids,
-        )
-        if is_daily:
-            _bump_streak(request.user, mode, puzzle_date)
+        with transaction.atomic():
+            run = Run.objects.create(
+                user=request.user,
+                mode=mode,
+                scope=scope,
+                score=result.score,
+                asset_version=av.version,
+                puzzle_date=puzzle_date,
+                transcript=ids,
+            )
+            if is_daily:
+                _bump_streak(request.user, mode, puzzle_date)
+            _update_player_stats(request.user, mode, result.score, result.placed_tips)
 
         # Rank among distinct users with a strictly better run for this mode/scope/day.
         rank = (
@@ -138,6 +141,23 @@ def _parse_date(s: str | None) -> dt.date | None:
         return dt.date.fromisoformat(s)
     except ValueError:
         return None
+
+
+def _update_player_stats(user, mode: str, score: int, placed_tips) -> None:
+    """Fold one run into the per-(user, mode) aggregate + the unique-species set. Called
+    inside the submit transaction so stats never drift from the runs."""
+    if placed_tips:
+        NamedSpecies.objects.bulk_create(
+            [NamedSpecies(user=user, mode=mode, species_key=k) for k in placed_tips],
+            ignore_conflicts=True,  # only species new to this user actually insert
+        )
+    unique = NamedSpecies.objects.filter(user=user, mode=mode).count()
+    stat, created = PlayerStat.objects.get_or_create(user=user, mode=mode)
+    stat.games_played += 1
+    stat.total_named += len(placed_tips)
+    stat.unique_named = unique
+    stat.best_score = max(stat.best_score, score)
+    stat.save()
 
 
 def _bump_streak(user, mode: str, day: dt.date) -> None:

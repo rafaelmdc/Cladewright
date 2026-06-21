@@ -42,7 +42,6 @@ SCOPES=(
   "reptilia|Reptiles|class=Reptilia"        # paraphyletic in CoL — excludes birds, by design
   "amphibia|Amphibians|class=Amphibia"
   "fish|Fish|class=Teleostei,Elasmobranchii,Myxini,Holocephali,Petromyzonti,Chondrostei,Cladistii,Holostei,Dipneusti,Coelacanthi"
-  "carnivora|Carnivorans|order=Carnivora"
 )
 
 if [ ! -x "$PPY" ]; then

@@ -41,6 +41,8 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # WhiteNoise must sit right after SecurityMiddleware to serve /static/ itself.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -125,6 +127,20 @@ GAMEDATA_ASSET_PATH = Path(
 )
 
 STATIC_URL = "static/"
+# WhiteNoise serves static (the admin's own CSS/JS) straight from the app/gunicorn — no
+# nginx, no runserver. In DEBUG we serve from the static *finders* so the admin is styled
+# without a collectstatic step; in prod the image runs collectstatic into STATIC_ROOT and
+# WhiteNoise serves the compressed, hashed files from there.
+STATIC_ROOT = BASE_DIR / "staticfiles"
+WHITENOISE_USE_FINDERS = DEBUG
+WHITENOISE_AUTOREFRESH = DEBUG
+if not DEBUG:
+    STORAGES = {
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"
+        },
+    }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 LANGUAGE_CODE = "en-us"

@@ -12,6 +12,7 @@ dependencies = [
     "dj-database-url>=2.2",   # DATABASE_URL parsing
     "gunicorn>=22.0",         # WSGI server (docker)
     "celery[redis]>=5.4",     # pipeline job queue (web enqueues, worker consumes)
+    "whitenoise>=6.6",        # static (admin CSS) behind gunicorn, no nginx
 ]
 
 # The data pipeline (backend/pipeline/) additionally imports BICHO and Braidworks

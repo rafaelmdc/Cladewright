@@ -11,9 +11,9 @@ from django.db import migrations
 
 # mode, label, blurb, route, enabled, supports_difficulty, sort_order
 SEED = [
-    ("marathon_free", "Marathon",
-     "Name as many organisms as you can against the clock — each one lands on a living tree "
-     "you build. Empty branches show how many sisters stay hidden. Zoom in to hunt them.",
+    # Short enough for the original 160-char column (this migration predates the widen in
+    # 0007); 0008 upgrades it to the full Hub copy once the column can hold it.
+    ("marathon_free", "Marathon", "Name every branch of the tree of life, against the clock.",
      "/marathon", True, True, 0),
     ("marathon_daily", "Marathon (daily)", "One shared puzzle a day — compete on today's board.",
      "/marathon", False, True, 1),

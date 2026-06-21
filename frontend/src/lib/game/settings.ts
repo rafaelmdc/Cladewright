@@ -31,10 +31,28 @@ export const DEFAULT_SETTINGS: GameSettings = {
   extantOnly: true,
   infiniteTime: false,
   startSeconds: 60,
-  timePerNew: 4,
-  noveltyBonus: 6,
-  timePerRefinement: 2,
+  timePerNew: 10,
+  noveltyBonus: 8,
+  // Generous for now: deep into a run nearly every placement is a refinement, so this
+  // keeps the clock alive. Tune once we have playtest data.
+  timePerRefinement: 5,
 };
+
+// A run only counts for the leaderboard when its score-affecting modifiers are at their
+// defaults — otherwise infinite time / boosted time-per-organism / an extinct-inclusive
+// pool would inflate scores. Visual-only settings (layout, scientific names) are ignored.
+const RANKED_FIELDS: (keyof GameSettings)[] = [
+  "infiniteTime",
+  "startSeconds",
+  "timePerNew",
+  "noveltyBonus",
+  "timePerRefinement",
+  "extantOnly",
+];
+
+export function isRankedSettings(s: GameSettings): boolean {
+  return RANKED_FIELDS.every((k) => s[k] === DEFAULT_SETTINGS[k]);
+}
 
 const KEY = "cladewright.settings.v1";
 

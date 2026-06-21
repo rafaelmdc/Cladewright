@@ -16,7 +16,7 @@ import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import type { InternedAsset, Target } from "../lib/asset/types";
 import { RemainingTracker } from "../lib/game/remaining";
 import { resolveTarget } from "../lib/game/resolveTarget";
-import { loadSettings, saveSettings, type GameSettings } from "../lib/game/settings";
+import { isRankedSettings, loadSettings, saveSettings, type GameSettings } from "../lib/game/settings";
 import { createInducedTree, place, type InducedTree, type Placement } from "../lib/tree/induced";
 
 interface Flash {
@@ -313,6 +313,7 @@ function Game({
             scope={asset.scope ?? scopeKey ?? ""}
             scopeLabel={scopes.find((s) => s.key === (asset.scope ?? scopeKey))?.label ?? "this scope"}
             assetVersion={asset.raw.version}
+            ranked={isRankedSettings(settings)}
             transcript={transcriptRef.current}
             onPlayAgain={() => {
               treeRef.current = createInducedTree();

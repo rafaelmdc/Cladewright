@@ -7,7 +7,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { Wordmark } from "../components/Brand";
 import { fetchAccountStats, deleteAccount, type AccountStats, type ModeStat } from "../lib/account";
-import { GOOGLE_LOGIN_URL } from "../lib/auth";
+import { GOOGLE_LOGIN_URL, logout } from "../lib/auth";
 
 export function Account() {
   const [stats, setStats] = useState<AccountStats | null>(null);
@@ -26,6 +26,11 @@ export function Account() {
     if (await deleteAccount()) navigate("/");
   }
 
+  async function onLogout() {
+    await logout();
+    navigate("/");
+  }
+
   return (
     <div className="min-h-screen w-screen bg-clade-bg px-4 py-8">
       <div className="mx-auto flex max-w-3xl flex-col gap-6">
@@ -33,9 +38,19 @@ export function Account() {
           <Link to="/">
             <Wordmark size="text-2xl" />
           </Link>
-          <Link to="/" className="font-mono text-xs uppercase tracking-widest text-clade-ink/50 hover:text-clade-ink">
-            ← back
-          </Link>
+          <div className="flex items-center gap-4">
+            {stats && (
+              <button
+                onClick={onLogout}
+                className="font-mono text-xs uppercase tracking-widest text-clade-ink/50 hover:text-clade-ink"
+              >
+                Sign out
+              </button>
+            )}
+            <Link to="/" className="font-mono text-xs uppercase tracking-widest text-clade-ink/50 hover:text-clade-ink">
+              ← back
+            </Link>
+          </div>
         </header>
 
         {loading ? (

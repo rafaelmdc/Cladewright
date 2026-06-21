@@ -177,6 +177,10 @@ ACCOUNT_LOGOUT_REDIRECT_URL = "/"
 # top-level redirect flow.
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SAMESITE = "Lax"
+# Keep sessions short: 30 minutes, as a SLIDING window (each request refreshes the clock),
+# so a logged-in cookie expires after 30 min of inactivity.
+SESSION_COOKIE_AGE = 30 * 60
+SESSION_SAVE_EVERY_REQUEST = True
 # Secure cookies over HTTPS — on by default in prod (DEBUG off), overridable by env.
 _secure_cookies = os.environ.get("DJANGO_SECURE_COOKIES", "0" if DEBUG else "1") == "1"
 SESSION_COOKIE_SECURE = _secure_cookies

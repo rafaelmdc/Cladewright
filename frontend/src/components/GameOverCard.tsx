@@ -15,6 +15,7 @@ export function GameOverCard({
   scope,
   scopeLabel,
   assetVersion,
+  ranked,
   transcript,
   onPlayAgain,
 }: {
@@ -23,6 +24,7 @@ export function GameOverCard({
   scope: string;
   scopeLabel: string;
   assetVersion: number;
+  ranked: boolean;
   transcript: string[];
   onPlayAgain: () => void;
 }) {
@@ -36,8 +38,9 @@ export function GameOverCard({
       const who = await fetchMe();
       if (!live) return;
       setMe(who);
-      // Submit first (so the board includes this run), then load the board.
-      if (who.authenticated && transcript.length > 0) {
+      // Only ranked runs (default modifiers) count — submit first so the board includes
+      // this run, then load the board.
+      if (ranked && who.authenticated && transcript.length > 0) {
         const outcome = await submitRun({ mode: MODE, scope, asset_version: assetVersion, transcript });
         if (!live) return;
         setSubmit(outcome);
@@ -59,7 +62,15 @@ export function GameOverCard({
         {count} placed · {score} points · {scopeLabel}
       </p>
 
-      <div className="mt-4 w-full">{renderSubmitStatus(me, submit)}</div>
+      <div className="mt-4 w-full">
+        {ranked ? (
+          renderSubmitStatus(me, submit)
+        ) : (
+          <p className="font-mono text-xs text-clade-ink/50">
+            Custom settings — this run isn't ranked.
+          </p>
+        )}
+      </div>
 
       <Leaderboard board={board} label={scopeLabel} me={me} />
 

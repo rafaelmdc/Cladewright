@@ -11,7 +11,7 @@
 
 import { cluster as d3cluster, hierarchy, type HierarchyPointNode } from "d3-hierarchy";
 import { AnimatePresence, motion } from "framer-motion";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { InternedAsset } from "../lib/asset/types";
 import { collapseTree, COLLAPSE_BUDGET } from "../lib/tree/collapse";
@@ -173,12 +173,24 @@ export function TreeRenderer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [asset, tree, tracker, rev],
   );
-  const { nodes, links, rootKey } = useMemo(() => {
-    const empty = { nodes: [] as Positioned[], links: [] as Link[], rootKey: null as string | null };
+  const { nodes, links, rootKey, ext } = useMemo(() => {
+    const empty = {
+      nodes: [] as Positioned[], links: [] as Link[], rootKey: null as string | null,
+      ext: { x: VIEW / 2, y: VIEW / 2 },
+    };
     if (!displayRoot) return empty;
     // Fold the densest subtrees into wedges so a few-hundred-tip tree stays legible.
     const { root } = collapseTree(displayRoot, COLLAPSE_BUDGET, expanded, collapsedKeys);
-    return { ...layout(root, mode), rootKey: root.key };
+    const laid = layout(root, mode);
+    // Content half-extent (from the centred origin) — the rectangular layout grows taller
+    // than the viewBox, so fit + pan clamping must follow the real content, not VIEW.
+    let ex = 0;
+    let ey = 0;
+    for (const p of laid.nodes) {
+      ex = Math.max(ex, Math.abs(p.x));
+      ey = Math.max(ey, Math.abs(p.y));
+    }
+    return { ...laid, rootKey: root.key, ext: { x: ex, y: ey } };
   }, [displayRoot, mode, expanded, collapsedKeys]);
 
   // --- node cards (hover to peek, then pin from the card; many pinned cards allowed) ---
@@ -252,6 +264,24 @@ export function TreeRenderer({
   // start position in both spaces so a drag converts correctly regardless of canvas size.
   const drag = useRef<{ cx: number; cy: number; tx: number; ty: number } | null>(null);
 
+  /** Frame the whole tree: zoom so the larger content axis fits the viewBox (only ever
+   *  zooms OUT — a small tree stays at 1×), centred. This is what keeps a tall phylogram
+   *  on-canvas instead of running off the top and bottom. */
+  const fit = useCallback(() => {
+    const halfMax = Math.max(ext.x, ext.y, 1);
+    // Only zoom OUT, and only when the content actually overflows the viewBox — so a radial
+    // tree (always within RADIUS) and the empty canvas stay at 1×, unchanged.
+    const scale = halfMax > VIEW / 2 ? Math.max(0.3, VIEW / 2 / halfMax) : 1;
+    setView({ scale, tx: 0, ty: 0 });
+  }, [ext.x, ext.y]);
+
+  // Auto-fit when the LAYOUT changes (radial⇄phylogram is an explicit reflow); not on every
+  // placement, so growth stays stable and never yanks the user's pan/zoom mid-game.
+  useEffect(() => {
+    fit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
   /** User units per CSS pixel. The square viewBox fits via preserveAspectRatio "meet",
    *  so the uniform scale is set by the smaller rendered dimension. */
   function unitsPerPixel(): number {
@@ -289,12 +319,16 @@ export function TreeRenderer({
     const f = unitsPerPixel();
     const dx = (e.clientX - cx) * f;
     const dy = (e.clientY - cy) * f;
-    // Clamp so the tree can never be flung entirely off-canvas (a hard safety net on top
-    // of the px→unit conversion). The bound grows with zoom so edges of a magnified tree
-    // stay reachable, but the centre always stays within view.
-    const limit = (VIEW / 2 + 60) * view.scale;
-    const clamp = (n: number) => Math.max(-limit, Math.min(limit, n));
-    setView((v) => ({ ...v, tx: clamp(tx0 + dx), ty: clamp(ty0 + dy) }));
+    // Clamp so the tree can never be flung entirely off-canvas. The bound follows the
+    // ACTUAL content half-extent (per axis), so every leaf of a tall phylogram stays
+    // reachable by panning — not just the slice that fits the viewBox.
+    const limX = (Math.max(VIEW / 2, ext.x) + 60) * view.scale;
+    const limY = (Math.max(VIEW / 2, ext.y) + 60) * view.scale;
+    setView((v) => ({
+      ...v,
+      tx: Math.max(-limX, Math.min(limX, tx0 + dx)),
+      ty: Math.max(-limY, Math.min(limY, ty0 + dy)),
+    }));
   }
   function onPointerUp() {
     drag.current = null;
@@ -409,9 +443,9 @@ export function TreeRenderer({
 
       <button
         onClick={() => {
-          setView({ scale: 1, tx: 0, ty: 0 });
           setExpanded(new Set());
           setCollapsedKeys(new Set());
+          fit();
         }}
         className="absolute bottom-4 right-4 rounded-lg border border-clade-ink/15 bg-white/70 px-3 py-1.5 text-xs text-clade-ink/70 backdrop-blur transition hover:border-clade-ink/40"
       >

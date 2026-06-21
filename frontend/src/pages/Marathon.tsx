@@ -48,24 +48,36 @@ export function Marathon() {
   // grow via /resolve; blob scopes download whole. `?remote=<scope>` forces remote mode
   // for dev testing even if the catalog says blob.
   useEffect(() => {
+    // Guard against out-of-order async loads: if the scope changes again before a
+    // loadAsset() resolves, the stale result must not clobber the newer one.
+    let cancelled = false;
+    const apply = (a: InternedAsset) => {
+      if (!cancelled) setAsset(a);
+    };
+
     const forcedRemote = new URLSearchParams(window.location.search).get("remote");
     if (forcedRemote) {
-      setAsset(createEmptyAsset(forcedRemote, 15));
+      apply(createEmptyAsset(forcedRemote, 15));
       return;
     }
     if (scopeKey === null) {
       // No catalog (backend down) — fall back to the default blob asset.
-      if (scopes.length === 0) loadAsset().then(setAsset).catch(console.error);
-      return;
+      if (scopes.length === 0) loadAsset().then(apply).catch(console.error);
+      return () => {
+        cancelled = true;
+      };
     }
     localStorage.setItem(SCOPE_KEY, scopeKey);
     const info = scopes.find((s) => s.key === scopeKey);
     setAsset(null);
     if (info?.mode === "remote") {
-      setAsset(createEmptyAsset(scopeKey, 15));
+      apply(createEmptyAsset(scopeKey, 15));
     } else {
-      loadAsset(scopeKey).then(setAsset).catch(console.error);
+      loadAsset(scopeKey).then(apply).catch(console.error);
     }
+    return () => {
+      cancelled = true;
+    };
   }, [scopeKey, scopes]);
 
   if (!asset) return <p className="p-6 text-clade-ink/60">Loading the tree…</p>;

@@ -81,7 +81,7 @@ export function SettingsPanel({ settings, onChange, onAutofill }: Props) {
                 <p className="mb-3 text-xs uppercase tracking-wide text-clade-ink/40">Pool</p>
                 <Toggle
                   label="Living species only"
-                  hint="Exclude extinct species — they don't count and the remaining-counts switch to living-only totals."
+                  hint="Exclude extinct species. Few are currently flagged as extinct in the source data, so this has limited effect for now."
                   checked={settings.extantOnly}
                   onChange={(v) => set("extantOnly", v)}
                 />

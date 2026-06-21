@@ -54,6 +54,12 @@ class PipelineJob(models.Model):
     load_current = models.BooleanField(
         default=True, help_text="After building, load the asset and mark it current."
     )
+    delete_old = models.BooleanField(
+        default=False,
+        help_text="After this build becomes current, delete the scope's now-superseded "
+                  "(non-current) versions to reclaim DB space. Requires 'load current'; "
+                  "the new build is always kept.",
+    )
 
     # Lifecycle.
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED)

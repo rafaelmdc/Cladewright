@@ -20,11 +20,24 @@ class AssetVersionAdmin(admin.ModelAdmin):
         "scope", "label", "version", "schema", "pool_size", "pool_size_extant",
         "hidden_label_max", "provenance", "built_at", "is_current",
     )
-    actions = ["make_current", "deactivate"]
+    actions = ["make_current", "deactivate", "delete_superseded"]
 
     @admin.display(description="delivery")
     def delivery(self, obj: AssetVersion) -> str:
         return "blob" if obj.blob is not None else "incremental"
+
+    @admin.action(description="Delete superseded — purge non-current versions of the selected scope(s)")
+    def delete_superseded(self, request, queryset):
+        # Bulk-delete every NON-current version of the touched scopes (cascades to
+        # nodes/tips/aliases). Skips the stock delete-confirmation's per-row enumeration,
+        # which can hang on a big asset; the current build is always safe (never selected).
+        scopes = sorted(set(queryset.values_list("scope", flat=True)))
+        removed, _ = AssetVersion.objects.filter(scope__in=scopes, is_current=False).delete()
+        self.message_user(
+            request,
+            f"Purged superseded versions for {len(scopes)} scope(s) "
+            f"({removed} rows incl. nodes/tips/aliases). Current builds kept.",
+        )
 
     @admin.action(description="Set current — serve this build for its scope")
     def make_current(self, request, queryset):
@@ -65,7 +78,7 @@ class PipelineJobAdmin(admin.ModelAdmin):
         }),
         ("Build asset (ignored for a Download job)", {
             "fields": ("scope_key", "label", "scope_filter", "enrich", "include_extinct",
-                       "load_current"),
+                       "load_current", "delete_old"),
         }),
         ("Source / lifecycle", {
             "fields": ("coldp_dir", "status", "log", "requested_by", "created_at",

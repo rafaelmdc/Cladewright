@@ -131,4 +131,13 @@ def _run_build(job, stream, emit) -> str:
         emit(f"== load {out.name} (current={job.load_current}) ==")
         call_command("load_gamedata", *load_args, stdout=stream, stderr=stream)
 
+    # Opt-in cleanup: once this build is the current one, drop the scope's superseded
+    # versions (and their cascaded nodes/tips/aliases) so old builds don't pile up. Gated on
+    # load_current so we never delete everything and leave the scope dark.
+    if job.load_current and job.delete_old:
+        superseded = AssetVersion.objects.filter(scope=job.scope_key, is_current=False)
+        removed, _ = superseded.delete()
+        emit(f"== pruned superseded {job.scope_key} versions "
+             f"({removed} rows incl. nodes/tips/aliases) ==")
+
     return f"{job.scope_key} v{version}"

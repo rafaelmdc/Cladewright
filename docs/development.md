@@ -93,12 +93,11 @@ make starter-scopes    # build them all -> data/out/*.json  (FORCE=1 to rebuild 
 
 | key | CoL scope | game label |
 |---|---|---|
-| `mammalia`  | `class=Mammalia`  | Mammals |
-| `aves`      | `class=Aves`      | Birds |
-| `reptilia`  | `class=Reptilia`  | Reptiles *(paraphyletic in CoL — excludes birds, by design)* |
-| `amphibia`  | `class=Amphibia`  | Amphibians |
-| `teleostei` | `class=Teleostei` | Bony fish *(≈99% of fish species; sharks are a separate class)* |
-| `carnivora` | `order=Carnivora` | Carnivorans |
+| `mammalia` | `class=Mammalia` | Mammals |
+| `aves`     | `class=Aves`     | Birds |
+| `reptilia` | `class=Reptilia` | Reptiles *(paraphyletic in CoL — excludes birds, by design)* |
+| `amphibia` | `class=Amphibia` | Amphibians |
+| `fish`     | `class=Teleostei,Elasmobranchii,Myxini,Holocephali,Petromyzonti,Chondrostei,Cladistii,Holostei,Dipneusti,Coelacanthi` | Fish *(union of all 10 living fish classes — no single CoL node)* |
 
 Each is built with `--enrich braidworks --include-extinct` (the `extinct` flag is baked so
 the client can toggle extant-only; counts carry both `pool_count` and `pool_count_extant`).

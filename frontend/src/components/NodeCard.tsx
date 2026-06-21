@@ -28,6 +28,20 @@ interface Props {
 const CARD_W = 288; // w-72
 const PAD = 8; // keep this far from the canvas edges
 
+// A Wikipedia title harvested as a "common name" can carry a disambiguation parenthetical
+// — "Pholidota (plant)" — which is a title artifact, never a real vernacular, and is often
+// the WRONG cross-code homonym (the orchid genus vs the pangolin order). Strip it; if
+// nothing but the scientific name remains, there's no reliable common name, so fall back to
+// `sci` — whose bare Wikipedia lookup resolves to the correct taxon. The durable fix is in
+// the enrichment pipeline (it shouldn't bake these); this guards the already-built asset.
+// See issue #21.
+function cleanCommon(common: string | null | undefined, sci: string): string | null {
+  if (!common) return null;
+  const stripped = common.replace(/\s*\([^)]*\)\s*$/, "").trim();
+  if (!stripped || stripped.toLowerCase() === sci.toLowerCase()) return null;
+  return stripped;
+}
+
 /** Short ancestor trail (common-or-scientific names), nearest few. */
 function lineageTrail(asset: InternedAsset, id: string, kind: "tip" | "node"): string[] {
   const ids: string[] =
@@ -64,7 +78,7 @@ export function NodeCard({
   const tip = kind === "tip" ? asset.tipById.get(id) : undefined;
   const node = kind === "node" ? asset.nodeById.get(id) : undefined;
   const sci = tip?.sci ?? node?.sci ?? id;
-  const common = tip?.common ?? node?.common ?? null;
+  const common = cleanCommon(tip?.common ?? node?.common, sci);
   const rank = kind === "tip" ? "species" : (node?.rank ?? "clade");
   const poolCount = node?.pool_count;
   const traits = tip?.traits;

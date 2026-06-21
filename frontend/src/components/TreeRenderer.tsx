@@ -44,6 +44,8 @@ export interface TreeRendererProps {
   scientificPrimary?: boolean;
   /** transient "ping" on a freshly-named node; nonce re-fires the same node */
   pulse?: { key: string; nonce: number } | null;
+  /** game-over: reveal the un-named species beneath each "N hidden" label as faded ghosts */
+  reveal?: boolean;
 }
 
 const VIEW = 900; // svg viewBox is VIEW×VIEW, centered on (0,0)
@@ -70,6 +72,7 @@ interface Link {
   key: string; // child's stable id — animation key
   d: string; // edge path
   d0: string; // collapsed-at-parent path (same command structure as `d`) for entry anim
+  ghost?: boolean; // child is a revealed (un-named) ghost — drawn faint
 }
 
 const polar = (a: number, r: number): [number, number] => [r * Math.cos(a), r * Math.sin(a)];
@@ -151,7 +154,7 @@ function layout(root: RenderNode, mode: TreeLayout): { nodes: Positioned[]; link
       mode === "rectangular"
         ? `M${parent.x},${parent.y}L${parent.x},${parent.y}L${parent.x},${parent.y}`
         : `M${parent.x},${parent.y}C${parent.x},${parent.y} ${parent.x},${parent.y} ${parent.x},${parent.y}`;
-    links.push({ key: child.node.key, d: d_, d0 });
+    links.push({ key: child.node.key, d: d_, d0, ghost: child.node.ghost });
   }
   return { nodes, links };
 }
@@ -165,6 +168,7 @@ export function TreeRenderer({
   showScientific = true,
   scientificPrimary = false,
   pulse = null,
+  reveal = false,
 }: TreeRendererProps) {
   // Manual fold/unfold overrides on top of the automatic budget: `expanded` = wedges the
   // player opened; `collapsedKeys` = clades they folded shut. The Fit button clears both.
@@ -172,9 +176,9 @@ export function TreeRenderer({
   const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(new Set());
 
   const displayRoot = useMemo(
-    () => buildDisplayTree(asset, tree, tracker),
+    () => buildDisplayTree(asset, tree, tracker, reveal),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [asset, tree, tracker, rev],
+    [asset, tree, tracker, rev, reveal],
   );
   const { nodes, links, rootKey, ext } = useMemo(() => {
     const empty = {
@@ -278,12 +282,14 @@ export function TreeRenderer({
     setView({ scale, tx: 0, ty: 0 });
   }, [ext.x, ext.y]);
 
-  // Auto-fit when the LAYOUT changes (radial⇄phylogram is an explicit reflow); not on every
-  // placement, so growth stays stable and never yanks the user's pan/zoom mid-game.
+  // Auto-fit when the LAYOUT changes (radial⇄phylogram is an explicit reflow), and when the
+  // game-over ghost reveal flips (the tree suddenly gains its missed branches — frame the
+  // whole thing so the player can then pan around it). Not on every placement, so growth
+  // stays stable and never yanks the user's pan/zoom mid-game.
   useEffect(() => {
     fit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
+  }, [mode, reveal]);
 
   /** User units per CSS pixel. The square viewBox fits via preserveAspectRatio "meet",
    *  so the uniform scale is set by the smaller rendered dimension. */
@@ -376,8 +382,9 @@ export function TreeRenderer({
                 <motion.path
                   key={`${mode}:${l.key}`}
                   initial={{ d: l.d0, opacity: 0 }}
-                  animate={{ d: l.d, opacity: 1 }}
+                  animate={{ d: l.d, opacity: l.ghost ? 0.28 : 1 }}
                   transition={{ type: "spring", stiffness: 120, damping: 20 }}
+                  strokeDasharray={l.ghost ? "3 4" : undefined}
                 />
               ))}
             </AnimatePresence>
@@ -388,7 +395,7 @@ export function TreeRenderer({
               <motion.g
                 key={`${mode}:${p.node.key}`}
                 initial={{ x: 0, y: 0, opacity: 0 }}
-                animate={{ x: p.x, y: p.y, opacity: 1 }}
+                animate={{ x: p.x, y: p.y, opacity: p.node.ghost ? 0.4 : 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ type: "spring", stiffness: 120, damping: 20 }}
                 style={{ cursor: "pointer" }}

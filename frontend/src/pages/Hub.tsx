@@ -6,14 +6,56 @@ import { Link } from "react-router-dom";
 
 import { LeafMark, TopBar } from "../components/Brand";
 import { LeafBackground } from "../components/LeafBackground";
+import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import { fetchDaily, type DailyInfo } from "../lib/daily";
 import { fetchGames, FALLBACK_GAMES, type Game } from "../lib/games";
 import type { Difficulty } from "../lib/scores";
 import { useTitle } from "../lib/useTitle";
 
+// Shared with Marathon's scope memory: the picked mix carries over either way.
+const SCOPE_KEY = "cladewright.scope";
+
 export function Hub() {
   useTitle();
   const [difficulty, setDifficulty] = useState<Difficulty>("common");
+
+  // Scope mixing: the player toggles which clades to play; the selection rides to the game
+  // as ?scopes=mammalia,aves and the assets merge there. Only blob scopes are mixable.
+  const [scopes, setScopes] = useState<ScopeInfo[]>([]);
+  const [selectedScopes, setSelectedScopes] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    fetchScopes().then((list) => {
+      if (!alive) return;
+      const blob = list.filter((s) => s.mode === "blob");
+      setScopes(blob);
+      const remembered = (localStorage.getItem(SCOPE_KEY) ?? "")
+        .split(",")
+        .filter((k) => blob.some((s) => s.key === k));
+      setSelectedScopes(remembered.length ? remembered : blob[0] ? [blob[0].key] : []);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  function toggleScope(key: string) {
+    setSelectedScopes((prev) => {
+      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
+      const result = next.length ? next : prev; // never let the selection go empty
+      localStorage.setItem(SCOPE_KEY, result.join(","));
+      return result;
+    });
+  }
+
+  // A card's link carries the current difficulty (if it supports it) + the scope mix.
+  function gameHref(g: Game): string {
+    const p = new URLSearchParams();
+    if (g.supports_difficulty) p.set("difficulty", difficulty);
+    if (selectedScopes.length) p.set("scopes", selectedScopes.join(","));
+    const qs = p.toString();
+    return qs ? `${g.route}?${qs}` : g.route;
+  }
   // Enabled games come from the admin-toggled config; start with the built-in fallback so
   // the cards paint instantly, then reconcile with the server.
   const [games, setGames] = useState<Game[]>(FALLBACK_GAMES);
@@ -41,35 +83,52 @@ export function Hub() {
           <DailyCard difficulty={difficulty} />
 
           {anyDifficulty && (
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              <span className="mr-1 font-mono text-xs uppercase tracking-wider text-clade-ink/45">
+            // One row, never wrapping: a short "Difficulty" label + a two-option segmented
+            // toggle. Shortened labels ("Common"/"Scientific") keep it on a single line down
+            // to the narrowest phones instead of spilling onto two.
+            <div className="flex flex-nowrap items-center justify-center gap-2">
+              <span className="font-mono text-[11px] uppercase tracking-wider text-clade-ink/45 sm:text-xs">
                 Difficulty
               </span>
               <button
                 type="button"
                 onClick={() => setDifficulty("common")}
-                className={`pill ${difficulty === "common" ? "pill-active" : ""}`}
+                className={`pill whitespace-nowrap ${difficulty === "common" ? "pill-active" : ""}`}
               >
-                Common names
+                Common
               </button>
               <button
                 type="button"
                 onClick={() => setDifficulty("scientific")}
-                className={`pill ${difficulty === "scientific" ? "pill-active" : "border-dashed"}`}
+                className={`pill whitespace-nowrap ${difficulty === "scientific" ? "pill-active" : "border-dashed"}`}
               >
-                Scientific only
+                Scientific
               </button>
+            </div>
+          )}
+
+          {scopes.length > 0 && (
+            // Scope toggles — pick one clade or mix several (their trees merge in-game).
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <span className="font-mono text-[11px] uppercase tracking-wider text-clade-ink/45 sm:text-xs">
+                Clades
+              </span>
+              {scopes.map((s) => (
+                <button
+                  key={s.key}
+                  type="button"
+                  onClick={() => toggleScope(s.key)}
+                  className={`pill whitespace-nowrap ${selectedScopes.includes(s.key) ? "pill-active" : ""}`}
+                >
+                  {s.label}
+                </button>
+              ))}
             </div>
           )}
 
           <div className="flex flex-wrap justify-center gap-4">
             {cardGames.map((g) => (
-              <ModeCard
-                key={g.mode}
-                to={g.supports_difficulty ? `${g.route}?difficulty=${difficulty}` : g.route}
-                title={g.label}
-                blurb={g.blurb}
-              />
+              <ModeCard key={g.mode} to={gameHref(g)} title={g.label} blurb={g.blurb} />
             ))}
           </div>
 

@@ -9,11 +9,12 @@ import { Link } from "react-router-dom";
 import { Wordmark } from "../components/Brand";
 import { EndGameButton } from "../components/EndGameButton";
 import { GameOverCard } from "../components/GameOverCard";
+import { LoadingTree } from "../components/LoadingTree";
 import { ScopePicker } from "../components/ScopePicker";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { TreeRenderer } from "../components/TreeRenderer";
 import { createEmptyAsset } from "../lib/asset/growable";
-import { loadAsset } from "../lib/asset/load";
+import { loadAsset, loadAssets } from "../lib/asset/load";
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import type { InternedAsset, Target } from "../lib/asset/types";
 import { fetchDaily, type DailyInfo } from "../lib/daily";
@@ -64,12 +65,20 @@ export function Marathon() {
     fetchScopes().then((list) => {
       setScopes(list);
       if (isDaily) return;
-      const fromUrl = new URLSearchParams(window.location.search).get("scope");
+      // A selection is one OR several scope keys (comma-joined) — the Hub's scope toggles
+      // pass ?scopes=mammalia,aves; keep only keys this backend actually serves.
+      const params = new URLSearchParams(window.location.search);
+      const fromUrl = params.get("scopes") ?? params.get("scope");
       const remembered = localStorage.getItem(SCOPE_KEY);
-      const initial =
-        [fromUrl, remembered].find((k) => k && list.some((s) => s.key === k)) ??
-        list[0]?.key ??
-        null;
+      const sanitize = (joined: string | null): string => {
+        const valid = new Set(list.map((s) => s.key));
+        return (joined ?? "")
+          .split(",")
+          .map((k) => k.trim())
+          .filter((k) => valid.has(k))
+          .join(",");
+      };
+      const initial = [fromUrl, remembered].map(sanitize).find((v) => v) || list[0]?.key || null;
       setScopeKey(initial);
     });
   }, [isDaily]);
@@ -98,12 +107,18 @@ export function Marathon() {
       };
     }
     if (!isDaily) localStorage.setItem(SCOPE_KEY, scopeKey); // don't clobber free-play memory
-    const info = scopes.find((s) => s.key === scopeKey);
+    const list = scopeKey.split(",").filter(Boolean);
     setAsset(null);
-    if (info?.mode === "remote") {
-      apply(createEmptyAsset(scopeKey, 15));
+    if (list.length > 1) {
+      // Scope mixing: fetch each blob and merge into one tree (remote scopes aren't mixable).
+      loadAssets(list).then(apply).catch(console.error);
     } else {
-      loadAsset(scopeKey).then(apply).catch(console.error);
+      const info = scopes.find((s) => s.key === list[0]);
+      if (info?.mode === "remote") {
+        apply(createEmptyAsset(list[0], 15));
+      } else {
+        loadAsset(list[0]).then(apply).catch(console.error);
+      }
     }
     return () => {
       cancelled = true;
@@ -153,7 +168,7 @@ export function Marathon() {
 }
 
 function Loading() {
-  return <p className="p-6 text-clade-ink/60">Loading the tree…</p>;
+  return <LoadingTree />;
 }
 
 /** Full-screen notice for the daily when it can't be played (none today, or already done). */
@@ -340,6 +355,11 @@ function Game({
 
   const lowTime = !settings.infiniteTime && seconds <= 10;
 
+  // A merged (mixed-scope) run can't be re-scored server-side — the server only has the
+  // individual scope assets, not the union — so it plays locally and isn't submitted/ranked.
+  const scopeId = asset.scope ?? scopeKey ?? "";
+  const mixedScopes = scopeId.includes("+") || scopeId.includes(",");
+
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-clade-bg">
       {/* decorative field-notebook frame around the canvas */}
@@ -353,7 +373,11 @@ function Game({
             Daily · {scopes.find((s) => s.key === scopeKey)?.label ?? scopeKey}
           </span>
         ) : (
-          <ScopePicker scopes={scopes} value={scopeKey} onChange={onScope} />
+          <ScopePicker
+            scopes={scopes}
+            value={scopeKey ? scopeKey.split(",") : []}
+            onChange={(keys) => onScope(keys.join(","))}
+          />
         )}
       </div>
       {/* No tuning panel on the daily — it's fixed and ranked. */}
@@ -366,7 +390,7 @@ function Game({
       {/* HUD — timer (left) and tally (right) hug the corners, BELOW the wordmark/scope
           row so the picker never overlaps the timer. The search bar + notification are
           centered on the viewport independently, so the bar reads as dead-center. */}
-      <div className="pointer-events-none absolute inset-x-0 top-20 z-10 flex items-start justify-between px-6">
+      <div className="pointer-events-none absolute inset-x-0 top-32 z-10 flex items-start justify-between px-6 sm:top-20">
         <div className="leading-none">
           <span className="font-mono text-[10px] uppercase tracking-widest text-clade-ink/45">
             Time
@@ -383,7 +407,10 @@ function Game({
         </div>
       </div>
 
-      <div className="pointer-events-none absolute left-1/2 top-10 z-20 flex w-full max-w-md -translate-x-1/2 flex-col items-center gap-2 px-4">
+      {/* Search bar: dead-center on desktop (top-10). On mobile it spans the width and
+          would collide with the wordmark/scope row above and the timer below, so it drops
+          a row down (top-16) — the HUD timer/tally drops further (top-32) to match. */}
+      <div className="pointer-events-none absolute left-1/2 top-16 z-20 flex w-full max-w-md -translate-x-1/2 flex-col items-center gap-2 px-4 sm:top-10">
         <form onSubmit={submit} className="pointer-events-auto w-full">
           <input
             autoFocus
@@ -412,19 +439,28 @@ function Game({
         showScientific={settings.showScientific}
         scientificPrimary={difficulty === "scientific"}
         pulse={pulse}
+        reveal={!running}
       />
 
       {!running && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-clade-bg/60 backdrop-blur-sm">
+        // Game over: DON'T blanket the canvas — dock the card (right on desktop, top on
+        // mobile) and leave the tree behind it pan/zoomable, so the player can wander what
+        // they built. pointer-events-none on the frame lets drags fall through to the SVG;
+        // the card itself re-enables them. (#24: explore-on-loss.)
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-start justify-center p-3 sm:items-center sm:justify-end sm:p-6">
+          <div className="pointer-events-auto">
           <GameOverCard
             mode={mode}
             count={count}
             score={score}
-            scope={asset.scope ?? scopeKey ?? ""}
-            scopeLabel={scopes.find((s) => s.key === (asset.scope ?? scopeKey))?.label ?? "this scope"}
+            scope={scopeId}
+            scopeLabel={
+              scopes.find((s) => s.key === scopeId)?.label ?? asset.raw.label ?? "this scope"
+            }
             difficulty={difficulty}
             assetVersion={asset.raw.version}
-            ranked={isRankedSettings(settings)}
+            ranked={isRankedSettings(settings) && !mixedScopes}
+            submittable={!mixedScopes}
             allowReplay={!isDaily}
             transcript={transcriptRef.current}
             onPlayAgain={() => {
@@ -440,6 +476,7 @@ function Game({
               setRunning(true);
             }}
           />
+          </div>
         </div>
       )}
     </div>

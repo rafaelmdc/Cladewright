@@ -130,8 +130,13 @@ def ingest_coldp(coldp_dir: Path, *, scope: str = "kingdom=Animalia") -> list[Ta
     if not name_usage.exists():
         raise FileNotFoundError(f"NameUsage.tsv not found in {coldp_dir}")
 
+    # A scope is `rank=value`, where value may be a comma-separated UNION of clades
+    # (e.g. `class=Teleostei,Elasmobranchii,Myxini` for "all living fish" — a paraphyletic
+    # group with no single CoL node). A row is in scope if its lineage cell at `rank` is any
+    # of the values.
     scope_rank, _, scope_value = scope.partition("=")
-    scope_rank, scope_value = scope_rank.strip(), scope_value.strip().lower()
+    scope_rank = scope_rank.strip()
+    scope_values = {v.strip().lower() for v in scope_value.split(",") if v.strip()}
 
     vernacular = _load_vernacular(coldp_dir)
     distribution = _load_distribution(coldp_dir)
@@ -156,7 +161,8 @@ def ingest_coldp(coldp_dir: Path, *, scope: str = "kingdom=Animalia") -> list[Ta
         lineage = lineage_of(row, get)
         if not lineage:
             continue
-        if scope_rank and dict(lineage).get(scope_rank, "").lower() != scope_value:
+        if scope_rank and scope_values and \
+                dict(lineage).get(scope_rank, "").lower() not in scope_values:
             continue
 
         # Prefer a clean binomial from the atomic fields; fall back to scientificName.

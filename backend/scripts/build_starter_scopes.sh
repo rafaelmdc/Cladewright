@@ -28,15 +28,18 @@ COLDP="${COLDP:-data/coldp_col}"
 OUT="${OUT:-data/out}"
 PPY="${PPY:-backend/.venv-pipeline/bin/python}"
 
-# Manifest: key -> CoL scope (rank=value). One line per shippable starter scope. Note CoL has
-# no Dinosauria/Actinopterygii nodes — non-avian dinosaurs aren't in CoL at all, and the
-# bony-fish bulk is class=Teleostei. Keep keys filename-safe.
+# Manifest: key -> CoL scope (`rank=value`; value may be a comma-separated UNION of clades).
+# One line per shippable starter scope. Note CoL has no Dinosauria node — non-avian dinosaurs
+# aren't in CoL at all (deferred to a separate source). "Fish" is paraphyletic with no single
+# CoL node, so it's the union of every LIVING fish class (CoL spells lungfish "Dipneusti" and
+# bichirs "Cladistii"; tunicates/lancelets are excluded as they aren't fish). Keep keys
+# filename-safe.
 SCOPES=(
   "mammalia=class=Mammalia"     # Mammals
   "aves=class=Aves"             # Birds
   "reptilia=class=Reptilia"     # Reptiles (paraphyletic in CoL — excludes birds, by design)
   "amphibia=class=Amphibia"     # Amphibians
-  "teleostei=class=Teleostei"   # Bony fish (~99% of fish species; sharks are a separate class)
+  "fish=class=Teleostei,Elasmobranchii,Myxini,Holocephali,Petromyzonti,Chondrostei,Cladistii,Holostei,Dipneusti,Coelacanthi"  # all living fish classes
   "carnivora=order=Carnivora"   # Carnivorans
 )
 

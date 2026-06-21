@@ -203,8 +203,9 @@ interface DayValue {
   value: number; // plays (All) or best score (single game)
   plays: number;
   best: number;
-  title: string;
   has: boolean;
+  dateLabel: string; // "Mon, Jun 16"
+  breakdown: { label: string; games: number }[]; // per-game plays (for the All tooltip)
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -247,16 +248,14 @@ function ActivityHeatmap({
     d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 
   function dayValue(key: string, date: Date): DayValue {
+    const dateLabel = fmtDay(date);
     const rows = (byDate.get(key) ?? []).filter((e) => filter === "all" || e.game === filter);
-    if (rows.length === 0) return { value: 0, plays: 0, best: 0, has: false, title: `${fmtDay(date)} · no games` };
+    if (rows.length === 0)
+      return { value: 0, plays: 0, best: 0, has: false, dateLabel, breakdown: [] };
     const plays = rows.reduce((s, e) => s + e.games, 0);
     const best = Math.max(...rows.map((e) => e.best));
-    const title = single
-      ? `${fmtDay(date)} · best ${best} · ${plays} play${plays > 1 ? "s" : ""}`
-      : `${fmtDay(date)} · ${plays} play${plays > 1 ? "s" : ""} (${rows
-          .map((e) => `${e.games} ${labelOf.get(e.game) ?? e.game}`)
-          .join(", ")})`;
-    return { value: single ? best : plays, plays, best, has: true, title };
+    const breakdown = rows.map((e) => ({ label: labelOf.get(e.game) ?? e.game, games: e.games }));
+    return { value: single ? best : plays, plays, best, has: true, dateLabel, breakdown };
   }
 
   const fmtKey = (d: Date) =>
@@ -324,6 +323,9 @@ function ActivityHeatmap({
     .slice(lo, hi + 1)
     .map((c) => ({ key: c.key, date: c.date, v: dayValue(c.key, c.date) }));
 
+  // Hover tooltip card (cursor-following), replacing the plain title text.
+  const [hover, setHover] = useState<{ dv: DayValue; x: number; y: number } | null>(null);
+
   return (
     <div className="select-none">
       {games.length > 1 && (
@@ -373,7 +375,8 @@ function ActivityHeatmap({
                       onMouseEnter={() => {
                         if (dragging.current) setSel((s) => ({ a: s.a, b: cell.idx }));
                       }}
-                      title={dv.title}
+                      onMouseMove={(e) => setHover({ dv, x: e.clientX, y: e.clientY })}
+                      onMouseLeave={() => setHover(null)}
                       className={`h-3 w-3 cursor-pointer rounded-[3px] ${HEAT_FILL[level(dv.value)]} ${
                         cell.idx >= lo && cell.idx <= hi ? "ring-1 ring-clade-ink/55" : ""
                       }`}
@@ -396,7 +399,59 @@ function ActivityHeatmap({
         </div>
       </div>
 
-      <SelectionBars items={selected} vmax={vmax} unit={single ? "best" : "plays"} />
+      <SelectionSummary items={selected} vmax={vmax} single={single} />
+      {hover && <HeatTooltip dv={hover.dv} x={hover.x} y={hover.y} single={single} />}
+    </div>
+  );
+}
+
+/** Cursor-following hover card for a heatmap day — clean field-notebook panel, not a plain
+ * browser tooltip. Shows the date and, by filter, the day's score/plays (with a per-game
+ * breakdown in All mode). */
+function HeatTooltip({ dv, x, y, single }: { dv: DayValue; x: number; y: number; single: boolean }) {
+  return (
+    <div
+      className="pointer-events-none fixed z-50 w-44 rounded-lg border border-clade-ink/15 bg-clade-paper/95 px-3 py-2 shadow-lg backdrop-blur"
+      style={{ left: Math.min(x + 14, window.innerWidth - 190), top: y + 14 }}
+    >
+      <p className="font-hand text-lg leading-none text-clade-ink">{dv.dateLabel}</p>
+      {!dv.has ? (
+        <p className="mt-1 font-mono text-[11px] text-clade-ink/45">No games</p>
+      ) : single ? (
+        <div className="mt-1.5 flex items-baseline gap-2">
+          <span className="font-hand text-3xl font-bold leading-none text-clade-accent">
+            {dv.best}
+          </span>
+          <span className="font-mono text-[10px] uppercase tracking-wider text-clade-ink/45">
+            best · {dv.plays} play{dv.plays > 1 ? "s" : ""}
+          </span>
+        </div>
+      ) : (
+        <div className="mt-1.5">
+          <p className="font-mono text-[11px] text-clade-ink/60">
+            {dv.plays} play{dv.plays > 1 ? "s" : ""}
+          </p>
+          <ul className="mt-1 space-y-0.5">
+            {dv.breakdown.map((b) => (
+              <li key={b.label} className="flex justify-between font-mono text-[10px] text-clade-ink/50">
+                <span className="truncate">{b.label}</span>
+                <span className="ml-2 text-clade-ink/70">{b.games}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rounded-lg bg-clade-paper/70 px-3 py-2 text-center">
+      <div className="font-hand text-2xl font-bold leading-none text-clade-ink">{value}</div>
+      <div className="mt-1 font-mono text-[9px] uppercase tracking-wider text-clade-ink/45">
+        {label}
+      </div>
     </div>
   );
 }
@@ -425,30 +480,58 @@ function HeatChip({
   );
 }
 
-/** Comparison bar plot of the days selected on the heatmap. Bars are the day's value under
- * the active filter — plays (All) or best score (single game). No-activity days show as a
- * faint nub so gaps read. Date + value labels appear when few days are selected. */
-function SelectionBars({
+/** Summary card for the days selected on the heatmap: a header (range + count), a few
+ * adaptive stat cells, and a comparison bar plot. The metric follows the active filter —
+ * best score (single game) or plays (All). Styled as a panel, matching the rest of the UI. */
+function SelectionSummary({
   items,
   vmax,
-  unit,
+  single,
 }: {
   items: { key: string; date: Date; v: DayValue }[];
   vmax: number;
-  unit: "best" | "plays";
+  single: boolean;
 }) {
   if (items.length === 0) return null;
-  const showLabels = items.length <= 16;
   const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const showLabels = items.length <= 16;
   const first = items[0].date;
   const last = items[items.length - 1].date;
+  const range = items.length === 1 ? fmt(first) : `${fmt(first)} – ${fmt(last)}`;
+
+  const active = items.filter((it) => it.v.has);
+  const totalPlays = items.reduce((s, it) => s + it.v.plays, 0);
+  const bestMax = active.length ? Math.max(...active.map((it) => it.v.best)) : 0;
+  const avgBest = active.length
+    ? Math.round(active.reduce((s, it) => s + it.v.best, 0) / active.length)
+    : 0;
+  const busiest = items.reduce((m, it) => Math.max(m, it.v.plays), 0);
 
   return (
-    <div className="mt-4 border-t border-clade-ink/10 pt-3">
-      <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-clade-ink/40">
-        {items.length === 1 ? fmt(first) : `${fmt(first)} – ${fmt(last)}`} · {items.length} day
-        {items.length > 1 ? "s" : ""} · {unit === "best" ? "best score" : "plays"}
-      </p>
+    <div className="mt-4 rounded-xl border border-clade-ink/10 bg-clade-bg/40 p-4">
+      <div className="mb-3 flex items-baseline justify-between">
+        <p className="font-hand text-xl text-clade-ink">{range}</p>
+        <p className="font-mono text-[10px] uppercase tracking-widest text-clade-ink/40">
+          {items.length} day{items.length > 1 ? "s" : ""} · {single ? "best score" : "plays"}
+        </p>
+      </div>
+
+      <div className="mb-4 grid grid-cols-3 gap-2">
+        {single ? (
+          <>
+            <MiniStat label="Best" value={bestMax} />
+            <MiniStat label="Avg best" value={avgBest} />
+            <MiniStat label="Days played" value={`${active.length}/${items.length}`} />
+          </>
+        ) : (
+          <>
+            <MiniStat label="Plays" value={totalPlays} />
+            <MiniStat label="Busiest day" value={busiest} />
+            <MiniStat label="Active days" value={`${active.length}/${items.length}`} />
+          </>
+        )}
+      </div>
+
       <div className="flex h-24 items-end gap-1">
         {items.map((it) => {
           const v = it.v.value;
@@ -456,7 +539,6 @@ function SelectionBars({
           return (
             <div
               key={it.key}
-              title={it.v.title}
               className="flex h-full min-w-[6px] max-w-[2rem] flex-1 flex-col justify-end"
             >
               {showLabels && (

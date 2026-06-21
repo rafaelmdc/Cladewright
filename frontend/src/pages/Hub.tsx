@@ -35,10 +35,10 @@ export function Hub() {
         <TopBar />
 
         <div className="flex flex-1 flex-col justify-center gap-5 pb-16">
-          <DailyCard />
+          <DailyCard difficulty={difficulty} />
 
           {anyDifficulty && (
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center justify-center gap-2">
               <span className="mr-1 font-mono text-xs uppercase tracking-wider text-clade-ink/45">
                 Difficulty
               </span>
@@ -59,7 +59,7 @@ export function Hub() {
             </div>
           )}
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="flex flex-wrap justify-center gap-4">
             {games.map((g) => (
               <ModeCard
                 key={g.mode}
@@ -70,33 +70,41 @@ export function Hub() {
             ))}
           </div>
 
-          <div className="flex items-center justify-between font-mono text-xs uppercase tracking-wider text-clade-ink/45">
-            <span>data: Catalogue of Life · common + scientific</span>
+          <div className="flex justify-center">
             <Link
               to="/leaderboard"
-              className="tracking-widest underline-offset-4 hover:text-clade-ink hover:underline"
+              className="rounded-full border-2 border-clade-ink/25 px-5 py-2 font-mono text-xs uppercase tracking-widest text-clade-ink/60 transition hover:border-clade-ink/50 hover:text-clade-ink"
             >
               Leaderboards →
             </Link>
           </div>
         </div>
+
+        <p className="text-center font-mono text-[11px] uppercase tracking-wider text-clade-ink/35">
+          data: Catalogue of Life · common + scientific
+        </p>
       </div>
     </div>
   );
 }
 
-/** The single site-wide Daily. The number is the player's day streak — 0 until the daily
- * mode ships and starts incrementing it. */
-function DailyCard() {
+/** The single site-wide Daily. The counter is the player's day streak — 0 until the daily
+ * mode ships and starts incrementing it. Play sits next to the counter. */
+function DailyCard({ difficulty }: { difficulty: Difficulty }) {
   const streak = 0;
   return (
     <div className="ink-card flex items-center justify-between border-clade-accent/30 px-5 py-4">
       <h2 className="font-hand text-3xl font-bold leading-none text-clade-ink">Daily</h2>
-      <div className="text-right leading-none">
-        <div className="font-hand text-4xl font-bold text-clade-ink">{streak}</div>
-        <span className="font-mono text-[10px] uppercase tracking-widest text-clade-ink/40">
-          day streak
-        </span>
+      <div className="flex items-center gap-4">
+        <div className="text-right leading-none">
+          <div className="font-hand text-4xl font-bold text-clade-ink">{streak}</div>
+          <span className="font-mono text-[10px] uppercase tracking-widest text-clade-ink/40">
+            day streak
+          </span>
+        </div>
+        <Link to={`/marathon?difficulty=${difficulty}`} className="btn-play">
+          ▶ Play
+        </Link>
       </div>
     </div>
   );
@@ -104,7 +112,8 @@ function DailyCard() {
 
 function ModeCard({ to, title, blurb }: { to: string; title: string; blurb: string }) {
   return (
-    <div className="ink-card flex flex-col p-5">
+    // Same width as the old 2-col grid cell (~half the container) — centered, not widened.
+    <div className="ink-card flex w-full flex-col p-5 sm:w-[26rem]">
       <LeafMark className="h-7 w-7 text-clade-accent" />
       <h2 className="mt-2 font-hand text-4xl font-bold leading-none text-clade-ink">{title}</h2>
       <p className="mt-2 font-hand text-xl leading-snug text-clade-ink/70">{blurb}</p>

@@ -8,6 +8,7 @@ export interface AssetNode {
   common: string | null;
   parent: string | null;
   pool_count: number; // # of pool tips beneath this node (denominator of "N remaining")
+  pool_count_extant: number; // …excluding extinct tips (denominator when toggle is "living only")
 }
 
 export interface AssetTip {
@@ -29,7 +30,9 @@ export interface GameAsset {
   version: number;
   schema: string;
   scope: string;
+  label?: string;
   pool_size: number;
+  pool_size_extant?: number;
   thresholds: { hidden_label_max: number };
   provenance: Record<string, unknown>;
   nodes: AssetNode[];
@@ -67,8 +70,10 @@ export interface InternedAsset {
   nodeIndex: Map<string, number>;
   /** index -> node id */
   nodeIds: string[];
-  /** by node index */
+  /** by node index: pool tips beneath (the "N remaining" denominator) */
   poolCount: NumArray;
+  /** by node index: pool tips beneath excluding extinct (denominator when "living only") */
+  poolCountExtant: NumArray;
   /** node index -> parent node index (-1 for root) */
   parent: NumArray;
   /** tip id -> ancestor node indices (root→parent). Fixed once a tip is known. */

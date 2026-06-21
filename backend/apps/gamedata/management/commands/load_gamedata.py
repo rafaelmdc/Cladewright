@@ -75,11 +75,14 @@ class Command(BaseCommand):
             # Replace any prior load of this exact (scope, version) so re-runs are idempotent.
             AssetVersion.objects.filter(scope=scope, version=version).delete()
 
+            pool_size = int(doc.get("pool_size", len(tips)))
             asset = AssetVersion.objects.create(
                 scope=scope,
+                label=doc.get("label", ""),
                 version=version,
                 schema=doc.get("schema", "1.0"),
-                pool_size=int(doc.get("pool_size", len(tips))),
+                pool_size=pool_size,
+                pool_size_extant=int(doc.get("pool_size_extant", pool_size)),
                 hidden_label_max=int(doc.get("thresholds", {}).get("hidden_label_max", 15)),
                 provenance=doc.get("provenance", {}),
                 blob=None if opts["no_blob"] else doc,

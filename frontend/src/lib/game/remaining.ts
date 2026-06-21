@@ -10,6 +10,9 @@ export class RemainingTracker {
   private foundCount: Int32Array;
   /** node indices currently eligible to show a count (remaining<=max && found>=1) */
   readonly activeLabels = new Set<number>();
+  /** "living only" mode: count toward pool_count_extant instead of pool_count. Settable
+   *  mid-game (the extinct toggle); only changes the denominator, not what's been found. */
+  extantOnly = false;
 
   constructor(private readonly asset: InternedAsset) {
     // Capacity for whatever nodes exist now. In remote mode the asset grows as organisms
@@ -43,7 +46,8 @@ export class RemainingTracker {
 
   remaining(nodeIdx: number): number {
     const found = nodeIdx < this.foundCount.length ? this.foundCount[nodeIdx] : 0;
-    return this.asset.poolCount[nodeIdx] - found;
+    const denom = this.extantOnly ? this.asset.poolCountExtant : this.asset.poolCount;
+    return denom[nodeIdx] - found;
   }
 
   /** Clear all progress (new game) without reallocating the asset-derived arrays. */

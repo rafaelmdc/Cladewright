@@ -6,10 +6,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Wordmark } from "../components/Brand";
+import { ScopePicker } from "../components/ScopePicker";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { TreeRenderer } from "../components/TreeRenderer";
 import { createEmptyAsset } from "../lib/asset/growable";
 import { loadAsset } from "../lib/asset/load";
+import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import type { InternedAsset, Target } from "../lib/asset/types";
 import { RemainingTracker } from "../lib/game/remaining";
 import { resolveTarget } from "../lib/game/resolveTarget";
@@ -21,25 +23,87 @@ interface Flash {
   tone: "good" | "small" | "none";
 }
 
+const SCOPE_KEY = "cladewright.scope";
+
 export function Marathon() {
+  const [scopes, setScopes] = useState<ScopeInfo[]>([]);
+  const [scopeKey, setScopeKey] = useState<string | null>(null);
   const [asset, setAsset] = useState<InternedAsset | null>(null);
+
+  // Discover available scopes once; pick an initial one (URL ?scope=, last used, or first).
   useEffect(() => {
-    // TEMP entry hook (until the scope picker, task #5): `?remote=<scope>` starts a huge-
-    // scope game served incrementally — empty asset grown via /resolve. Otherwise the
-    // normal blob asset is downloaded whole.
-    const remoteScope = new URLSearchParams(window.location.search).get("remote");
-    if (remoteScope) {
-      setAsset(createEmptyAsset(remoteScope, 15));
-    } else {
-      loadAsset().then(setAsset).catch(console.error);
-    }
+    fetchScopes().then((list) => {
+      setScopes(list);
+      const fromUrl = new URLSearchParams(window.location.search).get("scope");
+      const remembered = localStorage.getItem(SCOPE_KEY);
+      const initial =
+        [fromUrl, remembered].find((k) => k && list.some((s) => s.key === k)) ??
+        list[0]?.key ??
+        null;
+      setScopeKey(initial);
+    });
   }, []);
 
+  // (Re)load the asset whenever the chosen scope changes. Remote scopes start empty and
+  // grow via /resolve; blob scopes download whole. `?remote=<scope>` forces remote mode
+  // for dev testing even if the catalog says blob.
+  useEffect(() => {
+    // Guard against out-of-order async loads: if the scope changes again before a
+    // loadAsset() resolves, the stale result must not clobber the newer one.
+    let cancelled = false;
+    const apply = (a: InternedAsset) => {
+      if (!cancelled) setAsset(a);
+    };
+
+    const forcedRemote = new URLSearchParams(window.location.search).get("remote");
+    if (forcedRemote) {
+      apply(createEmptyAsset(forcedRemote, 15));
+      return;
+    }
+    if (scopeKey === null) {
+      // No catalog (backend down) — fall back to the default blob asset.
+      if (scopes.length === 0) loadAsset().then(apply).catch(console.error);
+      return () => {
+        cancelled = true;
+      };
+    }
+    localStorage.setItem(SCOPE_KEY, scopeKey);
+    const info = scopes.find((s) => s.key === scopeKey);
+    setAsset(null);
+    if (info?.mode === "remote") {
+      apply(createEmptyAsset(scopeKey, 15));
+    } else {
+      loadAsset(scopeKey).then(apply).catch(console.error);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [scopeKey, scopes]);
+
   if (!asset) return <p className="p-6 text-clade-ink/60">Loading the tree…</p>;
-  return <Game asset={asset} />;
+  // Key by scope so switching scopes fully resets the game (tree, tracker, score).
+  return (
+    <Game
+      key={asset.scope ?? scopeKey ?? "default"}
+      asset={asset}
+      scopes={scopes}
+      scopeKey={scopeKey}
+      onScope={setScopeKey}
+    />
+  );
 }
 
-function Game({ asset }: { asset: InternedAsset }) {
+function Game({
+  asset,
+  scopes,
+  scopeKey,
+  onScope,
+}: {
+  asset: InternedAsset;
+  scopes: ScopeInfo[];
+  scopeKey: string | null;
+  onScope: (key: string) => void;
+}) {
   // The induced tree + tracker are mutated in place (O(L)); `rev` triggers re-render.
   const treeRef = useRef<InducedTree>(createInducedTree());
   const tracker = useMemo(() => new RemainingTracker(asset), [asset]);
@@ -64,6 +128,13 @@ function Game({ asset }: { asset: InternedAsset }) {
   // when the same node is named twice.
   const [pulse, setPulse] = useState<{ key: string; nonce: number } | null>(null);
   const pulseRef = useRef(0);
+
+  // The "living only" toggle just re-points the "N remaining" denominator; reflect it on
+  // the tracker and re-render the labels when it flips.
+  useEffect(() => {
+    tracker.extantOnly = settings.extantOnly;
+    setRev((n) => n + 1);
+  }, [settings.extantOnly, tracker]);
 
   useEffect(() => {
     if (!running || settings.infiniteTime) return;
@@ -103,6 +174,11 @@ function Game({ asset }: { asset: InternedAsset }) {
       setFlash({ text: `"${query}" — no match`, tone: "none" });
       return;
     }
+    // Living-only mode: an extinct species isn't in play (and isn't in the denominator).
+    if (settings.extantOnly && target.kind === "tip" && target.tip.traits.extinct) {
+      setFlash({ text: `${target.tip.common} — extinct (living-only mode)`, tone: "none" });
+      return;
+    }
     const p = place(asset, treeRef.current, target);
     if (target.kind === "tip" && p.kind !== "duplicate") tracker.name(target.id);
     // It resolved to a real organism — flash where it sits on the tree.
@@ -128,7 +204,9 @@ function Game({ asset }: { asset: InternedAsset }) {
   // tree at once so we don't have to hand-type one to test layout/rendering at scale.
   function autofill(n: number) {
     const placed = treeRef.current.namedTips;
-    const pool = asset.raw.tips.filter((t) => !placed.has(t.id));
+    const pool = asset.raw.tips.filter(
+      (t) => !placed.has(t.id) && (!settings.extantOnly || !t.traits.extinct),
+    );
     // partial Fisher–Yates: shuffle just the first `take` slots, then take them.
     const take = Math.min(n, pool.length);
     for (let i = 0; i < take; i++) {
@@ -166,8 +244,9 @@ function Game({ asset }: { asset: InternedAsset }) {
       {/* decorative field-notebook frame around the canvas */}
       <div className="pointer-events-none absolute inset-2 z-0 rounded-[26px] border-2 border-clade-ink/15" />
 
-      <div className="absolute left-4 top-4 z-30">
+      <div className="absolute left-4 top-4 z-30 flex flex-col items-start gap-2">
         <Wordmark size="text-2xl" />
+        <ScopePicker scopes={scopes} value={scopeKey} onChange={onScope} />
       </div>
       <SettingsPanel settings={settings} onChange={updateSettings} onAutofill={autofill} />
 

@@ -20,10 +20,12 @@ from django.db import models
 class AssetVersion(models.Model):
     """One built game-data asset: a scope at a monotonically increasing version."""
 
-    scope = models.CharField(max_length=128)  # e.g. "class=Mammalia"
+    scope = models.CharField(max_length=128)  # stable scope KEY, e.g. "mammalia", "fish"
+    label = models.CharField(max_length=128, blank=True, default="")  # display, e.g. "Birds"
     version = models.IntegerField()
     schema = models.CharField(max_length=16, default="1.0")
-    pool_size = models.IntegerField(default=0)
+    pool_size = models.IntegerField(default=0)  # all pool tips (incl. extinct)
+    pool_size_extant = models.IntegerField(default=0)  # excluding extinct (toggle denom)
     hidden_label_max = models.IntegerField(default=15)
     provenance = models.JSONField(default=dict, blank=True)
     # Whole-asset payload for blob-mode scopes; null for huge scopes served incrementally.

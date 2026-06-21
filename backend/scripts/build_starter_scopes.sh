@@ -28,19 +28,21 @@ COLDP="${COLDP:-data/coldp_col}"
 OUT="${OUT:-data/out}"
 PPY="${PPY:-backend/.venv-pipeline/bin/python}"
 
-# Manifest: key -> CoL scope (`rank=value`; value may be a comma-separated UNION of clades).
-# One line per shippable starter scope. Note CoL has no Dinosauria node — non-avian dinosaurs
-# aren't in CoL at all (deferred to a separate source). "Fish" is paraphyletic with no single
-# CoL node, so it's the union of every LIVING fish class (CoL spells lungfish "Dipneusti" and
-# bichirs "Cladistii"; tunicates/lancelets are excluded as they aren't fish). Keep keys
-# filename-safe.
+# Manifest: `key|label|scope` per shippable starter scope.
+#   key   — stable filename-safe id; the asset's scope identity + the API's ?scope=.
+#   label — display name shown in the picker.
+#   scope — CoL taxonomic filter `rank=value`; value may be a comma-separated UNION of
+#           clades (for paraphyletic groups with no single CoL node).
+# Note CoL has no Dinosauria node — non-avian dinosaurs aren't in CoL at all (deferred to a
+# separate source). "Fish" is the union of every LIVING fish class (CoL spells lungfish
+# "Dipneusti" and bichirs "Cladistii"; tunicates/lancelets are excluded as they aren't fish).
 SCOPES=(
-  "mammalia=class=Mammalia"     # Mammals
-  "aves=class=Aves"             # Birds
-  "reptilia=class=Reptilia"     # Reptiles (paraphyletic in CoL — excludes birds, by design)
-  "amphibia=class=Amphibia"     # Amphibians
-  "fish=class=Teleostei,Elasmobranchii,Myxini,Holocephali,Petromyzonti,Chondrostei,Cladistii,Holostei,Dipneusti,Coelacanthi"  # all living fish classes
-  "carnivora=order=Carnivora"   # Carnivorans
+  "mammalia|Mammals|class=Mammalia"
+  "aves|Birds|class=Aves"
+  "reptilia|Reptiles|class=Reptilia"        # paraphyletic in CoL — excludes birds, by design
+  "amphibia|Amphibians|class=Amphibia"
+  "fish|Fish|class=Teleostei,Elasmobranchii,Myxini,Holocephali,Petromyzonti,Chondrostei,Cladistii,Holostei,Dipneusti,Coelacanthi"
+  "carnivora|Carnivorans|order=Carnivora"
 )
 
 if [ ! -x "$PPY" ]; then
@@ -57,16 +59,18 @@ is_wanted() { [ ${#want[@]} -eq 0 ] && return 0; for w in "${want[@]}"; do [ "$w
 
 built=()
 for entry in "${SCOPES[@]}"; do
-  key="${entry%%=*}"
-  scope="${entry#*=}"
+  key="${entry%%|*}"
+  rest="${entry#*|}"
+  label="${rest%%|*}"
+  scope="${rest#*|}"
   is_wanted "$key" || continue
   out="$OUT/$key.json"
   if [ -f "$out" ] && [ "${FORCE:-0}" != "1" ]; then
     echo "skip $key  (exists; FORCE=1 to rebuild) -> $out"; built+=("$key"); continue
   fi
-  echo "=== build $key  ($scope) ==="
+  echo "=== build $key  ($label: $scope) ==="
   ( cd backend && "$repo_root/$PPY" manage.py build_gamedata \
-      --coldp-dir "$repo_root/$COLDP" --scope "$scope" \
+      --coldp-dir "$repo_root/$COLDP" --scope "$scope" --scope-key "$key" --label "$label" \
       --out "$repo_root/$out" --enrich braidworks --include-extinct )
   built+=("$key")
 done

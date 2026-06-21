@@ -78,6 +78,16 @@ export function SettingsPanel({ settings, onChange, onAutofill }: Props) {
               </div>
 
               <div className="border-t border-clade-ink/10 pt-4">
+                <p className="mb-3 text-xs uppercase tracking-wide text-clade-ink/40">Pool</p>
+                <Toggle
+                  label="Living species only"
+                  hint="Exclude extinct species. Few are currently flagged as extinct in the source data, so this has limited effect for now."
+                  checked={settings.extantOnly}
+                  onChange={(v) => set("extantOnly", v)}
+                />
+              </div>
+
+              <div className="border-t border-clade-ink/10 pt-4">
                 <p className="mb-3 text-xs uppercase tracking-wide text-clade-ink/40">Time</p>
                 <Toggle
                   label="Infinite time"

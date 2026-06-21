@@ -158,3 +158,24 @@ class SubmitAndLeaderboardTests(TestCase):
             format="json",
         )
         self.assertEqual(Run.objects.get(user=user).difficulty, "scientific")
+
+    def test_games_endpoint_lists_only_enabled(self):
+        # Seed migration enables marathon_free and disables the rest.
+        res = self.client.get("/api/scores/games/")
+        self.assertEqual(res.status_code, 200)
+        modes = [g["mode"] for g in res.data["games"]]
+        self.assertEqual(modes, ["marathon_free"])
+        self.assertNotIn("classic", modes)
+
+    def test_submit_to_disabled_mode_rejected(self):
+        user = User.objects.create_user("alice", password="x")
+        self.client.force_authenticate(user)
+        res = self.client.post(
+            "/api/scores/runs/",
+            {"mode": "classic", "scope": "test", "asset_version": 1,
+             "transcript": ["tip:1"]},  # classic is seeded disabled
+            format="json",
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.data["error"], "mode not enabled")
+        self.assertFalse(Run.objects.filter(user=user).exists())

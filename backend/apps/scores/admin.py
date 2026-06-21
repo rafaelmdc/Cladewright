@@ -4,7 +4,18 @@ from __future__ import annotations
 
 from django.contrib import admin
 
-from .models import NamedSpecies, PlayerStat, Run, Streak
+from .models import GameModeConfig, NamedSpecies, PlayerStat, Run, Streak
+
+
+@admin.register(GameModeConfig)
+class GameModeConfigAdmin(admin.ModelAdmin):
+    """Turn a game mode on/off and set how its Hub card reads. The SPA shows only enabled
+    modes — toggle one here to launch or retire a game without a deploy."""
+
+    list_display = ("label", "mode", "enabled", "supports_difficulty", "sort_order", "route")
+    list_editable = ("enabled", "sort_order")  # flip games on/off straight from the list
+    list_filter = ("enabled",)
+    fields = ("mode", "label", "blurb", "route", "enabled", "supports_difficulty", "sort_order")
 
 
 @admin.register(Run)

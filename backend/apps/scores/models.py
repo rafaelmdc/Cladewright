@@ -27,6 +27,31 @@ class Difficulty(models.TextChoices):
     SCIENTIFIC = "scientific", "Scientific only"
 
 
+class GameModeConfig(models.Model):
+    """Admin-controlled on/off (and presentation) for each game mode. The Hub and the
+    leaderboard read the ENABLED rows from /api/scores/games/, so an admin can launch or
+    retire a game without a deploy. v1 ships only Marathon (free play) enabled; the daily
+    + classic modes exist as disabled rows, ready to flip on."""
+
+    mode = models.CharField(max_length=32, choices=GameMode.choices, unique=True)
+    label = models.CharField(max_length=64, help_text="Card title, e.g. 'Marathon'.")
+    blurb = models.CharField(max_length=160, blank=True, help_text="Card subtitle.")
+    # SPA route the card links to (difficulty is appended as ?difficulty=). Kept in config
+    # so a new mode is data, not a frontend special-case.
+    route = models.CharField(max_length=64, default="/marathon")
+    enabled = models.BooleanField(default=False)
+    supports_difficulty = models.BooleanField(
+        default=True, help_text="Whether Common/Scientific (and split boards) apply."
+    )
+    sort_order = models.IntegerField(default=0, help_text="Lower sorts first on the Hub.")
+
+    class Meta:
+        ordering = ["sort_order", "label"]
+
+    def __str__(self) -> str:
+        return f"{self.label} ({self.mode}){'' if self.enabled else ' — disabled'}"
+
+
 class Run(models.Model):
     """One completed game. For Marathon, ``score`` = tips placed."""
 

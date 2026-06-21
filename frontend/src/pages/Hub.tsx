@@ -1,17 +1,33 @@
 // Landing hub — pick a mode. Mirrors docs/examples/homepage.png: leaf wordmark + nav,
 // a big handwritten headline, two mode cards with play buttons, difficulty pills, all
 // over the drifting-leaf background.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { LeafMark, TopBar } from "../components/Brand";
 import { LeafBackground } from "../components/LeafBackground";
+import { fetchGames, FALLBACK_GAMES, type Game } from "../lib/games";
 import type { Difficulty } from "../lib/scores";
 import { useTitle } from "../lib/useTitle";
 
 export function Hub() {
   useTitle();
   const [difficulty, setDifficulty] = useState<Difficulty>("common");
+  // Enabled games come from the admin-toggled config; start with the built-in fallback so
+  // the card paints instantly, then reconcile with the server.
+  const [games, setGames] = useState<Game[]>(FALLBACK_GAMES);
+  useEffect(() => {
+    let alive = true;
+    fetchGames().then((g) => {
+      if (alive) setGames(g);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const anyDifficulty = games.some((g) => g.supports_difficulty);
+
   return (
     <div className="min-h-screen">
       <LeafBackground density={30} />
@@ -23,15 +39,19 @@ export function Hub() {
             data: Catalogue of Life · every taxon shown common + scientific
           </p>
 
-          <div className="w-full max-w-2xl">
-            <ModeCard
-              to={`/marathon?difficulty=${difficulty}`}
-              title="Marathon"
-              blurb="Name as many organisms as you can against the clock — each one lands on a living tree you build. Empty branches show how many sisters stay hidden. Zoom in to hunt them."
-              meta="grow the tree"
-            />
+          <div className="grid w-full max-w-2xl gap-4">
+            {games.map((g) => (
+              <ModeCard
+                key={g.mode}
+                to={g.supports_difficulty ? `${g.route}?difficulty=${difficulty}` : g.route}
+                title={g.label}
+                blurb={g.blurb}
+                meta="grow the tree"
+              />
+            ))}
           </div>
 
+          {anyDifficulty && (
           <div className="flex flex-wrap items-center justify-center gap-3">
             <span className="font-mono text-xs uppercase tracking-wider text-clade-ink/45">
               Difficulty
@@ -51,6 +71,7 @@ export function Hub() {
               Scientific only
             </button>
           </div>
+          )}
 
           <Link
             to="/leaderboard"

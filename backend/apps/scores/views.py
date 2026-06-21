@@ -18,10 +18,40 @@ from rest_framework.views import APIView
 
 from apps.gamedata.models import AssetVersion, TaxonNode, TaxonTip
 
-from .models import Difficulty, GameMode, NamedSpecies, PlayerStat, Run, Streak
+from .models import (
+    Difficulty,
+    GameMode,
+    GameModeConfig,
+    NamedSpecies,
+    PlayerStat,
+    Run,
+    Streak,
+)
 from .scoring import rescore
 
 LEADERBOARD_LIMIT = 50
+
+
+class GamesView(APIView):
+    """GET /api/scores/games/ -> the ENABLED game modes (admin-toggled), for the Hub and
+    the leaderboard game selector. Public, tiny, and cache-friendly so the SPA can poll it
+    cheaply. If no config rows exist yet (fresh DB), the SPA falls back to its built-in
+    Marathon card — so the game is never dark just because the table is empty."""
+
+    permission_classes: list = []
+
+    def get(self, request: Request) -> Response:
+        games = [
+            {
+                "mode": g.mode,
+                "label": g.label,
+                "blurb": g.blurb,
+                "route": g.route,
+                "supports_difficulty": g.supports_difficulty,
+            }
+            for g in GameModeConfig.objects.filter(enabled=True)
+        ]
+        return Response({"games": games})
 
 
 def _asset_for(scope: str, version: int | None) -> AssetVersion | None:
@@ -42,6 +72,10 @@ class SubmitRunView(APIView):
         mode = data.get("mode")
         if mode not in GameMode.values:
             return Response({"error": "invalid mode"}, status=400)
+        # Reject runs for a mode an admin has disabled (or never enabled). A missing config
+        # row counts as disabled here — submitting is gated, even though reads fall back.
+        if not GameModeConfig.objects.filter(mode=mode, enabled=True).exists():
+            return Response({"error": "mode not enabled"}, status=400)
 
         scope = (data.get("scope") or "").strip()
         difficulty = data.get("difficulty") or Difficulty.COMMON

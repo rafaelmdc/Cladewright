@@ -14,7 +14,52 @@ Two representations of the SAME build, populated together by ``load_gamedata``:
 """
 from __future__ import annotations
 
+from django.conf import settings
 from django.db import models
+
+
+class PipelineJob(models.Model):
+    """A queued asset-build request. The admin enqueues one; a SEPARATE worker (with the
+    pipeline deps — Braidworks + the CoL dump) claims it and runs build_gamedata +
+    load_gamedata, updating status/log. The web process never runs the heavy build. See
+    docs/data-pipeline.md."""
+
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        SUCCEEDED = "succeeded", "Succeeded"
+        FAILED = "failed", "Failed"
+
+    # What to build.
+    scope_key = models.CharField(max_length=128, help_text="Asset scope id, e.g. 'fish'.")
+    label = models.CharField(max_length=128, blank=True, help_text="Display name, e.g. 'Fish'.")
+    scope_filter = models.CharField(
+        max_length=512, help_text="CoL filter rank=value[,value…], e.g. 'class=Aves'."
+    )
+    coldp_dir = models.CharField(max_length=256, default="data/coldp_col")
+    enrich = models.CharField(max_length=16, default="braidworks")
+    include_extinct = models.BooleanField(default=True)
+    load_current = models.BooleanField(
+        default=True, help_text="After building, load the asset and mark it current."
+    )
+
+    # Lifecycle.
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED)
+    log = models.TextField(blank=True, default="")
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="pipeline_jobs",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["status", "created_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.scope_key} [{self.status}] {self.created_at:%Y-%m-%d %H:%M}"
 
 
 class AssetVersion(models.Model):

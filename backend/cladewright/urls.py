@@ -3,6 +3,11 @@ from django.contrib import admin
 from django.urls import include, path
 from django.views.generic import RedirectView
 
+# Branded admin (themed via templates/admin/base_site.html + CSS variables).
+admin.site.site_header = "Cladewright"
+admin.site.site_title = "Cladewright admin"
+admin.site.index_title = "Management"
+
 urlpatterns = [
     path("admin/", admin.site.urls),
     # Google-only login: send allauth's bare HTML login page straight to the Google flow,

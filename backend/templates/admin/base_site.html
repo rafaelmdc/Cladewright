@@ -1,0 +1,53 @@
+{% extends "admin/base.html" %}
+
+{% block title %}{{ title }} | Cladewright admin{% endblock %}
+
+{% block branding %}
+<div id="site-name">
+  <a href="{% url 'admin:index' %}">
+    <svg width="22" height="22" viewBox="0 0 32 32" style="vertical-align:-4px;margin-right:6px" aria-hidden>
+      <path d="M16 28 C16 18 11 11 4 8 C7 16 9 22 16 28 Z" fill="#cdd8cb" opacity="0.85"/>
+      <path d="M16 28 C16 16 20 9 28 6 C25 15 23 22 16 28 Z" fill="#cdd8cb"/>
+    </svg>
+    Cladewright
+  </a>
+</div>
+{% endblock %}
+
+{% block extrastyle %}{{ block.super }}
+<link rel="icon" type="image/svg+xml" href="/leaf.svg" />
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Space+Mono&display=swap" rel="stylesheet" />
+<style>
+  /* Cladewright field-notebook palette mapped onto Django admin's CSS variables. */
+  :root {
+    --primary: #3f6b4c;            /* forest green */
+    --secondary: #355c41;
+    --accent: #3f6b4c;
+    --header-bg: #262219;          /* warm ink */
+    --header-color: #f5f1e8;       /* paper */
+    --header-branding-color: #f5f1e8;
+    --header-link-color: #f5f1e8;
+    --breadcrumbs-bg: #355c41;
+    --breadcrumbs-fg: #ece7db;
+    --breadcrumbs-link-fg: #f5f1e8;
+    --link-fg: #3f6b4c;
+    --link-hover-color: #355c41;
+    --button-bg: #3f6b4c;
+    --button-hover-bg: #355c41;
+    --default-button-bg: #3f6b4c;
+    --default-button-hover-bg: #355c41;
+    --body-bg: #ece7db;            /* paper */
+    --body-fg: #262219;
+    --object-tools-bg: #355c41;
+    --object-tools-hover-bg: #262219;
+    --selected-row: #cdd8cb;
+    --message-success-bg: #cdd8cb;
+  }
+  body { background: var(--body-bg); }
+  #site-name a { color: #f5f1e8; font-family: "Caveat", cursive; font-weight: 700; font-size: 26px; }
+  #header { box-shadow: 0 1px 0 rgba(0,0,0,.15); }
+  /* Danger styling for delete actions stays red despite the green theme. */
+  .deletelink, .deletelink-box a { background: #b03030 !important; }
+  .module h2, .module caption { font-family: "Space Mono", monospace; letter-spacing: .03em; }
+</style>
+{% endblock %}

@@ -57,7 +57,9 @@ ASGI_APPLICATION = "cladewright.asgi.application"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        # Project templates take precedence over app templates — lets us override the
+        # admin's base_site.html to brand the admin (see templates/admin/).
+        "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [

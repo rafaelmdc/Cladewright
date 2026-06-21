@@ -21,18 +21,12 @@ export function Hub() {
           Guess your way across the tree of life.
         </h1>
 
-        <div className="mt-10 grid gap-6 sm:grid-cols-2">
+        <div className="mt-10 max-w-2xl">
           <ModeCard
             to="/marathon"
             title="Marathon"
             blurb="Name as many organisms as you can against the clock — each one lands on a living tree you build. Empty branches show how many sisters stay hidden. Zoom in to hunt them."
-            meta="best: — · grow the tree"
-          />
-          <ModeCard
-            to="/classic"
-            title="Classic"
-            blurb="Guess the mystery animal. Each wrong guess reveals the nearest shared ancestor. Limited guesses."
-            meta="daily · guess the animal"
+            meta="grow the tree"
           />
         </div>
 

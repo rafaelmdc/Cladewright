@@ -51,6 +51,13 @@ export function Hub() {
               Scientific only
             </button>
           </div>
+
+          <Link
+            to="/leaderboard"
+            className="font-mono text-xs uppercase tracking-widest text-clade-ink/45 underline-offset-4 hover:text-clade-ink hover:underline"
+          >
+            Leaderboards →
+          </Link>
         </div>
       </div>
     </div>

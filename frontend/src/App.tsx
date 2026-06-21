@@ -2,6 +2,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 
 import { Account } from "./pages/Account";
 import { Hub } from "./pages/Hub";
+import { Leaderboard } from "./pages/Leaderboard";
 import { Login } from "./pages/Login";
 import { Marathon } from "./pages/Marathon";
 
@@ -13,6 +14,7 @@ export function App() {
         <Route path="/" element={<Hub />} />
         <Route path="/marathon" element={<Marathon />} />
         <Route path="/account" element={<Account />} />
+        <Route path="/leaderboard" element={<Leaderboard />} />
         <Route path="/login" element={<Login />} />
       </Routes>
     </BrowserRouter>

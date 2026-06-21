@@ -4,8 +4,10 @@
 // adds time + score. Full design: docs/marathon-design.md.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { Wordmark } from "../components/Brand";
+import { EndGameButton } from "../components/EndGameButton";
 import { GameOverCard } from "../components/GameOverCard";
 import { ScopePicker } from "../components/ScopePicker";
 import { SettingsPanel } from "../components/SettingsPanel";
@@ -14,10 +16,17 @@ import { createEmptyAsset } from "../lib/asset/growable";
 import { loadAsset } from "../lib/asset/load";
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import type { InternedAsset, Target } from "../lib/asset/types";
+import { fetchDaily, type DailyInfo } from "../lib/daily";
 import { RemainingTracker } from "../lib/game/remaining";
 import type { Difficulty } from "../lib/scores";
 import { resolveTarget } from "../lib/game/resolveTarget";
-import { isRankedSettings, loadSettings, saveSettings, type GameSettings } from "../lib/game/settings";
+import {
+  DEFAULT_SETTINGS,
+  isRankedSettings,
+  loadSettings,
+  saveSettings,
+  type GameSettings,
+} from "../lib/game/settings";
 import { useTitle } from "../lib/useTitle";
 import { createInducedTree, place, type InducedTree, type Placement } from "../lib/tree/induced";
 
@@ -29,15 +38,32 @@ interface Flash {
 const SCOPE_KEY = "cladewright.scope";
 
 export function Marathon() {
-  useTitle("Marathon");
+  // The daily reuses this exact game — only the "metadata" differs: a server-decided scope
+  // (locked), default/ranked settings, mode marathon_daily, and a one-shot lock.
+  const isDaily = new URLSearchParams(window.location.search).get("daily") === "1";
+  useTitle(isDaily ? "Daily" : "Marathon");
+
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
   const [scopeKey, setScopeKey] = useState<string | null>(null);
   const [asset, setAsset] = useState<InternedAsset | null>(null);
+  // undefined = still fetching, null = backend down, object = loaded (daily only).
+  const [daily, setDaily] = useState<DailyInfo | null | undefined>(isDaily ? undefined : null);
 
-  // Discover available scopes once; pick an initial one (URL ?scope=, last used, or first).
+  // Daily: today's puzzle dictates the (locked) scope.
+  useEffect(() => {
+    if (!isDaily) return;
+    fetchDaily().then((d) => {
+      setDaily(d);
+      if (d?.available && d.scope) setScopeKey(d.scope);
+    });
+  }, [isDaily]);
+
+  // Discover available scopes; for FREE play pick an initial one (URL ?scope=, last used,
+  // or first). The daily sets its own scope above.
   useEffect(() => {
     fetchScopes().then((list) => {
       setScopes(list);
+      if (isDaily) return;
       const fromUrl = new URLSearchParams(window.location.search).get("scope");
       const remembered = localStorage.getItem(SCOPE_KEY);
       const initial =
@@ -46,7 +72,7 @@ export function Marathon() {
         null;
       setScopeKey(initial);
     });
-  }, []);
+  }, [isDaily]);
 
   // (Re)load the asset whenever the chosen scope changes. Remote scopes start empty and
   // grow via /resolve; blob scopes download whole. `?remote=<scope>` forces remote mode
@@ -66,12 +92,12 @@ export function Marathon() {
     }
     if (scopeKey === null) {
       // No catalog (backend down) — fall back to the default blob asset.
-      if (scopes.length === 0) loadAsset().then(apply).catch(console.error);
+      if (scopes.length === 0 && !isDaily) loadAsset().then(apply).catch(console.error);
       return () => {
         cancelled = true;
       };
     }
-    localStorage.setItem(SCOPE_KEY, scopeKey);
+    if (!isDaily) localStorage.setItem(SCOPE_KEY, scopeKey); // don't clobber free-play memory
     const info = scopes.find((s) => s.key === scopeKey);
     setAsset(null);
     if (info?.mode === "remote") {
@@ -82,7 +108,7 @@ export function Marathon() {
     return () => {
       cancelled = true;
     };
-  }, [scopeKey, scopes]);
+  }, [scopeKey, scopes, isDaily]);
 
   // Difficulty is chosen on the Hub and carried in the URL (?difficulty=). Fixed per game.
   const difficulty: Difficulty =
@@ -90,17 +116,67 @@ export function Marathon() {
       ? "scientific"
       : "common";
 
-  if (!asset) return <p className="p-6 text-clade-ink/60">Loading the tree…</p>;
-  // Key by scope+difficulty so switching either fully resets the game.
+  // Daily gates: loading, unavailable, or already played (one shot a day).
+  if (isDaily) {
+    if (daily === undefined) return <Loading />;
+    if (!daily || !daily.available)
+      return <DailyNotice title="No daily right now" body="Check back soon for today's puzzle." />;
+    if (daily.played_today)
+      return (
+        <DailyNotice
+          title="Today's daily is done"
+          body={
+            daily.today_score != null
+              ? `You scored ${daily.today_score}. Come back tomorrow for a new one.`
+              : "Come back tomorrow for a new one."
+          }
+          showBoard
+        />
+      );
+  }
+
+  if (!asset) return <Loading />;
+  const mode = isDaily ? daily!.mode : "marathon_free";
+  // Key by mode+scope+difficulty so switching any fully resets the game.
   return (
     <Game
-      key={`${asset.scope ?? scopeKey ?? "default"}:${difficulty}`}
+      key={`${mode}:${asset.scope ?? scopeKey ?? "default"}:${difficulty}`}
       asset={asset}
       scopes={scopes}
       scopeKey={scopeKey}
       onScope={setScopeKey}
       difficulty={difficulty}
+      mode={mode}
+      isDaily={isDaily}
     />
+  );
+}
+
+function Loading() {
+  return <p className="p-6 text-clade-ink/60">Loading the tree…</p>;
+}
+
+/** Full-screen notice for the daily when it can't be played (none today, or already done). */
+function DailyNotice({ title, body, showBoard }: { title: string; body: string; showBoard?: boolean }) {
+  return (
+    <div className="flex h-screen w-screen flex-col items-center justify-center gap-4 bg-clade-bg px-6 text-center">
+      <Wordmark size="text-3xl" />
+      <h1 className="font-hand text-4xl font-bold text-clade-ink">{title}</h1>
+      <p className="max-w-sm font-mono text-sm text-clade-ink/60">{body}</p>
+      <div className="mt-2 flex items-center gap-3">
+        <Link to="/" className="btn-play">
+          ▶ Menu
+        </Link>
+        {showBoard && (
+          <Link
+            to="/leaderboard"
+            className="rounded-full border-2 border-clade-ink/30 px-4 py-1.5 font-hand text-xl text-clade-ink/70 transition hover:border-clade-ink/60 hover:text-clade-ink"
+          >
+            Leaderboard
+          </Link>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -110,12 +186,16 @@ function Game({
   difficulty,
   scopeKey,
   onScope,
+  mode,
+  isDaily,
 }: {
   asset: InternedAsset;
   scopes: ScopeInfo[];
   scopeKey: string | null;
   onScope: (key: string) => void;
   difficulty: Difficulty;
+  mode: string;
+  isDaily: boolean;
 }) {
   // The induced tree + tracker are mutated in place (O(L)); `rev` triggers re-render.
   const treeRef = useRef<InducedTree>(createInducedTree());
@@ -124,7 +204,10 @@ function Game({
   // Ordered ids of placements this run — submitted at game-over for server re-scoring.
   const transcriptRef = useRef<string[]>([]);
 
-  const [settings, setSettings] = useState<GameSettings>(loadSettings);
+  // The daily is fixed/ranked: default settings, no tuning panel.
+  const [settings, setSettings] = useState<GameSettings>(() =>
+    isDaily ? { ...DEFAULT_SETTINGS } : loadSettings(),
+  );
   function updateSettings(next: GameSettings) {
     setSettings(next);
     saveSettings(next);
@@ -183,8 +266,9 @@ function Game({
     if (!running || !query) return;
 
     // Async to cover remote mode (/search + /resolve); blob mode resolves synchronously
-    // inside and just awaits an already-settled value.
-    const target = await resolveTarget(asset, query);
+    // inside and just awaits an already-settled value. Scientific difficulty only accepts
+    // the actual scientific name (no common-name aliases).
+    const target = await resolveTarget(asset, query, difficulty === "scientific");
     if (!target) {
       setFlash({ text: `"${query}" — no match`, tone: "none" });
       return;
@@ -263,9 +347,21 @@ function Game({
 
       <div className="absolute left-4 top-4 z-30 flex items-center gap-3">
         <Wordmark size="text-2xl" />
-        <ScopePicker scopes={scopes} value={scopeKey} onChange={onScope} />
+        {isDaily ? (
+          // Daily: scope is fixed (server-decided) — a badge, not a picker.
+          <span className="rounded-full border-2 border-clade-accent/40 bg-clade-accent/[0.08] px-3 py-1 font-mono text-xs uppercase tracking-wider text-clade-accent">
+            Daily · {scopes.find((s) => s.key === scopeKey)?.label ?? scopeKey}
+          </span>
+        ) : (
+          <ScopePicker scopes={scopes} value={scopeKey} onChange={onScope} />
+        )}
       </div>
-      <SettingsPanel settings={settings} onChange={updateSettings} onAutofill={autofill} />
+      {/* No tuning panel on the daily — it's fixed and ranked. */}
+      {!isDaily && (
+        <SettingsPanel settings={settings} onChange={updateSettings} onAutofill={autofill} />
+      )}
+      {/* End-the-run control sits just left of the settings gear; only while playing. */}
+      {running && <EndGameButton onEnd={() => setRunning(false)} />}
 
       {/* HUD — timer (left) and tally (right) hug the corners, BELOW the wordmark/scope
           row so the picker never overlaps the timer. The search bar + notification are
@@ -321,6 +417,7 @@ function Game({
       {!running && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-clade-bg/60 backdrop-blur-sm">
           <GameOverCard
+            mode={mode}
             count={count}
             score={score}
             scope={asset.scope ?? scopeKey ?? ""}
@@ -328,6 +425,7 @@ function Game({
             difficulty={difficulty}
             assetVersion={asset.raw.version}
             ranked={isRankedSettings(settings)}
+            allowReplay={!isDaily}
             transcript={transcriptRef.current}
             onPlayAgain={() => {
               treeRef.current = createInducedTree();

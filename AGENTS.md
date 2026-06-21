@@ -97,7 +97,8 @@ branch.
   milestone, push it and open a PR (`gh pr create`) with a short summary + test notes —
   even if work continues after. Small, frequent PRs over one giant one.
 - **Never commit data artifacts or secrets** (see Boundaries): `/data/`, dumps,
-  `.env`, pasted screenshots. `backend/vendor/*.whl` are the one intended binary.
+  `.env`, pasted screenshots. (Braidworks is installed from a pinned GitHub tag in
+  `requirements-pipeline.txt` — no vendored wheels to commit.)
 - **Keep builds green before a PR**: `tsc`/lint on the frontend, the pipeline's
   `validate_asset`, and any touched tests.
 

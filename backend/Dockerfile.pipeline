@@ -1,0 +1,30 @@
+# Pipeline WORKER image. Same code as the web image, plus the heavy build deps
+# (Braidworks + the vendored wheels) so a Celery worker can run build_gamedata. The web
+# image deliberately does NOT install these — only this worker ever runs the heavy build.
+#
+# This is a single long-running process (celery worker), so it maps 1:1 onto a Kubernetes
+# Deployment: same image, command below, env from a ConfigMap/Secret, the CoL dump on a
+# mounted volume (PVC). No web/serving concern leaks in here.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# git: pip installs Braidworks from its GitHub repo (requirements-pipeline.txt), so the
+# image needs a git client. --no-install-recommends keeps it lean; clean the apt lists.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements-pipeline.txt /app/
+RUN pip install --no-cache-dir -r requirements-pipeline.txt
+
+COPY . /app/
+
+ENV DJANGO_SETTINGS_MODULE=cladewright.settings
+
+# Concurrency 1: a build is heavy (CoL dump + Braidworks); run one at a time per worker.
+# Scale out by running more worker replicas (compose --scale / k8s replicas), not threads.
+CMD ["celery", "-A", "cladewright", "worker", "--loglevel=info", "--concurrency=1"]

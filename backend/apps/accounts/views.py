@@ -5,7 +5,12 @@ am I?", read per-game stats for the account page, log out, and delete the accoun
 """
 from __future__ import annotations
 
+import datetime as dt
+
 from django.contrib.auth import logout
+from django.db.models import Count, Max
+from django.db.models.functions import TruncDate
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework.permissions import IsAuthenticated
@@ -13,9 +18,25 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.scores.models import GameMode, PlayerStat, Run
+from apps.scores.models import GameMode, GameModeConfig, PlayerStat, Run
 
 RECENT_RUNS = 30
+HEATMAP_DAYS = 7 * 13  # ~13 weeks, GitHub-style
+
+
+def _game_labeler():
+    """A function (mode, difficulty) -> 'Marathon · Common'. Base name comes from the admin
+    GameModeConfig (falling back to the GameMode label); difficulty is the lens, shortened
+    (Common / Sci) so composed labels don't truncate on cards. The scoring unit is
+    (mode, difficulty) — see docs/games-model.md."""
+    cfg = dict(GameModeConfig.objects.values_list("mode", "label"))
+    base = dict(GameMode.choices)
+    short_diff = {"common": "Common", "scientific": "Sci"}
+
+    def label(mode: str, difficulty: str) -> str:
+        return f"{cfg.get(mode) or base.get(mode, mode)} · {short_diff.get(difficulty, difficulty)}"
+
+    return label
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -51,18 +72,21 @@ class AccountStatsView(APIView):
 
     def get(self, request: Request) -> Response:
         u = request.user
-        labels = dict(GameMode.choices)
+        label = _game_labeler()
+        # One stat row per game = (mode, difficulty). `game` is the stable chip/card id.
         modes = [
-            {**s, "label": labels.get(s["mode"], s["mode"])}
+            {
+                **s,
+                "game": f"{s['mode']}|{s['difficulty']}",
+                "label": label(s["mode"], s["difficulty"]),
+            }
             for s in PlayerStat.objects.filter(user=u).values(
-                "mode", "games_played", "total_named", "unique_named", "best_score"
+                "mode", "difficulty", "games_played", "total_named", "unique_named", "best_score"
             )
         ]
         totals = {
             "games_played": sum(m["games_played"] for m in modes),
             "total_named": sum(m["total_named"] for m in modes),
-            # Cross-mode sum; a species named in two modes counts once per mode. Fine while
-            # Marathon is the only mode — revisit if a true cross-game unique is wanted.
             "unique_named": sum(m["unique_named"] for m in modes),
         }
         recent_runs = [
@@ -70,6 +94,23 @@ class AccountStatsView(APIView):
             for r in Run.objects.filter(user=u)
             .order_by("-created_at")
             .values("mode", "scope", "score", "created_at")[:RECENT_RUNS]
+        ]
+        # Day-bucketed activity for the heatmap, split per game = (mode, difficulty), so the
+        # client's game-toggle chips filter and the shading adapts (plays across all games;
+        # best score when one game is selected). Only (day, game) cells with runs are sent.
+        since = timezone.now() - dt.timedelta(days=HEATMAP_DAYS - 1)
+        activity = [
+            {
+                "date": d["day"].isoformat(),
+                "game": f"{d['mode']}|{d['difficulty']}",
+                "best": d["best"],
+                "games": d["games"],
+            }
+            for d in Run.objects.filter(user=u, created_at__gte=since)
+            .annotate(day=TruncDate("created_at"))
+            .values("day", "mode", "difficulty")
+            .annotate(best=Max("score"), games=Count("id"))
+            .order_by("day")
         ]
         return Response(
             {
@@ -81,6 +122,8 @@ class AccountStatsView(APIView):
                 "modes": modes,
                 "totals": totals,
                 "recent_runs": recent_runs,
+                "activity": activity,
+                "heatmap_days": HEATMAP_DAYS,
             }
         )
 

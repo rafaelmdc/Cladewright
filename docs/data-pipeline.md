@@ -128,17 +128,12 @@ species):
 > Folivora resolve). Run a real build with `--enrich braidworks`; the default stays
 > `OfflineProvider` so the pipeline still runs without it.
 >
-> **Packaging:** Braidworks (`braidworks-core` + `wikidata_weaver`) is installed from
-> **vendored wheels** in `backend/vendor/` (rebuilt by
-> `backend/scripts/build_braidworks_wheels.sh`, listed in
-> `backend/requirements-pipeline.txt`, installed into `backend/.venv-pipeline`). It is
-> deliberately **not** in the serving image — only asset builds need it.
->
-> **TODO (deployment):** vendored wheels are a local-build convenience built from the
-> dev's `../../braidworks` checkout. For deployment, publish Braidworks as a **pinned
-> GitHub release wheel** (or a Git-tag/index `pip install` target) and point
-> `requirements-pipeline.txt` at that published artifact, so CI/CD never builds from a
-> local path. Until then, asset builds must run on a machine with the sibling repo.
+> **Packaging:** Braidworks (`braidworks-core` + `wikidata_weaver`) is installed straight
+> from its **public GitHub repo** (`rafaelmdc/braidworks`), pinned to an immutable tag in
+> `backend/requirements-pipeline.txt` (`git+https://…@wikidata_weaver-v0.1.0#subdirectory=…`).
+> The same file feeds the local build venv and the pipeline worker image, so they're
+> identical. It is deliberately **not** in the serving image — only asset builds need it.
+> To bump: tag a new release in the Braidworks repo and change the `@ref` on both lines.
 >
 > **Post-MVP (deferred):** the popularity/obscurity "fame" system — a
 > `wikipedia_weaver` pageview score that would weight the Marathon time bonus by

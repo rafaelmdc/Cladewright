@@ -40,6 +40,11 @@ class Command(BaseCommand):
         parser.add_argument("--label", default="",
                             help="Human display name for the scope, e.g. 'Birds'. Shown in the "
                                  "scope picker. Defaults to a title-cased --scope-key.")
+        parser.add_argument("--asset-version", type=int, default=1,
+                            help="Version number baked into the asset (load_gamedata stores it "
+                                 "as the AssetVersion.version). The pipeline worker passes the "
+                                 "next free version per scope; single-clade builds default to 1. "
+                                 "(Not --version: that collides with Django's own flag.)")
         parser.add_argument("--pool-size", type=int, default=0,
                             help="Playable tips to keep; 0 (default) = all non-extinct "
                                  "species in scope (animalist-style 'have them all').")
@@ -107,6 +112,7 @@ class Command(BaseCommand):
             hidden_label_max=opts["hidden_label_max"],
             scope=scope_key,
             label=label,
+            version=opts["asset_version"],
         )
         validate.validate_asset(doc)
         asset_builder.write_asset(doc, opts["out"])

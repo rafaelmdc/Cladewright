@@ -1,0 +1,42 @@
+# nginx for the public frontend: serve the Vite SPA and reverse-proxy /api + /accounts to
+# the Django web Service (so the SPA is same-origin → first-party OAuth/CSRF, like the dev
+# Vite proxy). The Cloudflare tunnel points WAN traffic here; the backend stays in-cluster.
+#
+# This is an nginx *template*: the official image runs envsubst over /etc/nginx/templates/
+# *.template at start, filling ${BACKEND_UPSTREAM} (the web Service host:port) from the
+# Deployment env. A plain proxy_pass to the Service name resolves the stable Service
+# ClusterIP at startup — the Service exists as soon as Argo applies the manifests, so no
+# request-time resolver is needed.
+server {
+  listen 80;
+  server_name _;
+  root /usr/share/nginx/html;
+  index index.html;
+
+  # Content-hashed Vite assets → cache hard.
+  location /assets/ {
+    expires 1y;
+    add_header Cache-Control "public, immutable";
+    try_files $uri =404;
+  }
+
+  location /api/ {
+    proxy_pass http://${BACKEND_UPSTREAM};
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+  location /accounts/ {
+    proxy_pass http://${BACKEND_UPSTREAM};
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  # SPA client-side routing: everything else falls back to index.html.
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+}

@@ -12,8 +12,12 @@ import type { InternedAsset, Target } from "../asset/types";
 import { normalize } from "./normalize";
 import { resolve } from "./resolve";
 
-export async function resolveTarget(asset: InternedAsset, query: string): Promise<Target | null> {
-  if (asset.mode === "blob") return resolve(asset, query);
+export async function resolveTarget(
+  asset: InternedAsset,
+  query: string,
+  scientificOnly = false,
+): Promise<Target | null> {
+  if (asset.mode === "blob") return resolve(asset, query, scientificOnly);
 
   const hits = await searchRemote(asset.scope, query);
   if (hits.length === 0) return null;
@@ -24,5 +28,12 @@ export async function resolveTarget(asset: InternedAsset, query: string): Promis
 
   const payload = await resolveRemote(asset.scope, best.id);
   if (!payload) return null;
-  return foldResolved(asset, payload);
+  const target = foldResolved(asset, payload);
+  // Scientific difficulty: only the actual scientific name counts (common-name aliases
+  // can match /search, so gate the resolved target on its sci name here too).
+  if (target && scientificOnly) {
+    const sci = target.kind === "tip" ? target.tip.sci : target.node.sci;
+    if (normalize(sci) !== norm) return null;
+  }
+  return target;
 }

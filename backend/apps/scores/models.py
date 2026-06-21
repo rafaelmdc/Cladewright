@@ -27,6 +27,73 @@ class Difficulty(models.TextChoices):
     SCIENTIFIC = "scientific", "Scientific only"
 
 
+class GameModeConfig(models.Model):
+    """Admin-controlled on/off (and presentation) for each game mode. The Hub and the
+    leaderboard read the ENABLED rows from /api/scores/games/, so an admin can launch or
+    retire a game without a deploy. v1 ships only Marathon (free play) enabled; the daily
+    + classic modes exist as disabled rows, ready to flip on."""
+
+    mode = models.CharField(max_length=32, choices=GameMode.choices, unique=True)
+    label = models.CharField(max_length=64, help_text="Card title, e.g. 'Marathon'.")
+    blurb = models.CharField(max_length=240, blank=True, help_text="Card subtitle.")
+    # SPA route the card links to (difficulty is appended as ?difficulty=). Kept in config
+    # so a new mode is data, not a frontend special-case.
+    route = models.CharField(max_length=64, default="/marathon")
+    enabled = models.BooleanField(default=False)
+    supports_difficulty = models.BooleanField(
+        default=True, help_text="Whether Common/Scientific (and split boards) apply."
+    )
+    sort_order = models.IntegerField(default=0, help_text="Lower sorts first on the Hub.")
+
+    class Meta:
+        ordering = ["sort_order", "label"]
+
+    def __str__(self) -> str:
+        return f"{self.label} ({self.mode}){'' if self.enabled else ' — disabled'}"
+
+
+class DailyRotationEntry(models.Model):
+    """One (game, clade) entry in the daily rotation pool. The daily for a date with no
+    manual pin cycles deterministically through the ACTIVE entries by date — so the admin
+    tunes both the GAME rotation (mode) and the CLADE rotation (scope) here, no deploy. If
+    the pool is empty, the daily falls back to rotating the currently-served scopes. See
+    docs/games-model.md."""
+
+    mode = models.CharField(
+        max_length=32, choices=GameMode.choices, default=GameMode.MARATHON_DAILY,
+        help_text="The daily game for this entry (e.g. Marathon daily).",
+    )
+    scope = models.CharField(max_length=128, help_text="AssetVersion scope key, e.g. 'mammalia'.")
+    order = models.IntegerField(default=0, help_text="Rotation position (lower cycles first).")
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["order", "scope"]
+        unique_together = ("mode", "scope")
+        verbose_name_plural = "Daily rotation entries"
+
+    def __str__(self) -> str:
+        return f"{self.scope} [{self.mode}]{'' if self.active else ' — off'}"
+
+
+class DailyPin(models.Model):
+    """A manual daily for a specific date — overrides the rotation that day. Admin-set, so a
+    specific date can feature a hand-picked game + clade."""
+
+    date = models.DateField(help_text="The day this daily applies to.")
+    mode = models.CharField(max_length=32, choices=GameMode.choices, default=GameMode.MARATHON_DAILY)
+    scope = models.CharField(max_length=128, help_text="AssetVersion scope key, e.g. 'aves'.")
+    note = models.CharField(max_length=200, blank=True, help_text="Optional admin note.")
+
+    class Meta:
+        ordering = ["-date"]
+        # Per (date, mode): each game can have its own pinned daily on a given day.
+        unique_together = ("date", "mode")
+
+    def __str__(self) -> str:
+        return f"{self.date}: {self.scope} [{self.mode}]"
+
+
 class Run(models.Model):
     """One completed game. For Marathon, ``score`` = tips placed."""
 
@@ -50,6 +117,10 @@ class Run(models.Model):
     # The validated run transcript (ordered placed target ids) the server re-scored from,
     # kept so a run is reproducible/auditable.
     transcript = models.JSONField(default=list, blank=True)
+    # Whether this run used the default ("ranked") settings. EVERY finished run counts
+    # toward the player's stats, but only ranked runs appear on the leaderboard — a custom
+    # run (more time, infinite clock, …) isn't comparable to others.
+    ranked = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -84,6 +155,11 @@ class PlayerStat(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mode_stats"
     )
     mode = models.CharField(max_length=32, choices=GameMode.choices)
+    # The scoring unit is (mode, difficulty): "Marathon · Common" and "Marathon · Scientific"
+    # are separate games with separate stat rows. See docs/games-model.md.
+    difficulty = models.CharField(
+        max_length=16, choices=Difficulty.choices, default=Difficulty.COMMON
+    )
     games_played = models.IntegerField(default=0)
     # Cumulative species placements across sessions (a species named in two runs counts
     # twice) — "total animals named".
@@ -94,7 +170,7 @@ class PlayerStat(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ("user", "mode")
+        unique_together = ("user", "mode", "difficulty")
 
 
 class NamedSpecies(models.Model):
@@ -106,13 +182,19 @@ class NamedSpecies(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="named_species"
     )
     mode = models.CharField(max_length=32, choices=GameMode.choices)
+    # Per (mode, difficulty), matching PlayerStat — a species named in Common and in
+    # Scientific is a distinct entry in each game's collection.
+    difficulty = models.CharField(
+        max_length=16, choices=Difficulty.choices, default=Difficulty.COMMON
+    )
     species_key = models.CharField(max_length=128)  # tip id, e.g. "tip:Panthera_leo"
     first_named_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["user", "mode", "species_key"], name="uniq_user_mode_species"
+                fields=["user", "mode", "difficulty", "species_key"],
+                name="uniq_user_mode_difficulty_species",
             ),
         ]
-        indexes = [models.Index(fields=["user", "mode"])]
+        indexes = [models.Index(fields=["user", "mode", "difficulty"])]

@@ -12,7 +12,9 @@ export interface SubmitResult {
   refinements: number;
   duplicates: number;
   unknown: number;
-  rank: number;
+  // null for an unranked run (recorded to stats, but not placed on the leaderboard).
+  rank: number | null;
+  ranked: boolean;
   run_id: number;
 }
 
@@ -26,6 +28,7 @@ export async function submitRun(payload: {
   difficulty: Difficulty;
   asset_version: number;
   transcript: string[];
+  ranked: boolean;
 }): Promise<SubmitOutcome> {
   try {
     const res = await fetch("/api/scores/runs/", {
@@ -49,18 +52,33 @@ export interface LeaderEntry {
   at: string;
 }
 
+export interface Board {
+  entries: LeaderEntry[];
+  scope_label: string;
+  date: string | null; // set for daily boards (date-indexed); null for free-play
+}
+
+/** `date` (YYYY-MM-DD) selects a daily board's day; ignored for free-play boards. For daily
+ * boards the server derives the scope from the date, so `scope` may be left empty. */
 export async function fetchLeaderboard(
   mode: string,
   scope: string,
   difficulty: Difficulty,
-): Promise<LeaderEntry[]> {
+  date?: string,
+): Promise<Board> {
+  const empty: Board = { entries: [], scope_label: "", date: date ?? null };
   try {
-    const res = await fetch(
-      `/api/scores/leaderboard/?mode=${encodeURIComponent(mode)}&scope=${encodeURIComponent(scope)}&difficulty=${difficulty}`,
-    );
-    if (!res.ok) return [];
-    return ((await res.json()).entries ?? []) as LeaderEntry[];
+    const q = new URLSearchParams({ mode, scope, difficulty });
+    if (date) q.set("date", date);
+    const res = await fetch(`/api/scores/leaderboard/?${q.toString()}`);
+    if (!res.ok) return empty;
+    const data = await res.json();
+    return {
+      entries: (data.entries ?? []) as LeaderEntry[],
+      scope_label: data.scope_label ?? "",
+      date: data.date ?? null,
+    };
   } catch {
-    return [];
+    return empty;
   }
 }

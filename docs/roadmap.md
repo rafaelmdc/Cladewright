@@ -71,23 +71,50 @@ Sequence is dependency-ordered. Each phase should leave something runnable.
   `load_gamedata`. Endpoints: `/current`, `/version`, plus `/search` (trigram) +
   `/resolve` for the huge-scope path. Frontend loads from `/api/gamedata/current/`.
 
-## Phase 4 — Accounts & persistence
+## Phase 4 — Accounts, scores & leaderboards ✅ (done)
 
-- `django-allauth` + Google OAuth (configured; credentials TODO).
-- `Run` / `Streak` models + migrations exist; submit + leaderboard endpoints are
-  scaffolded (`NotImplementedError`). Build score submission with server-side
-  re-validation, then the leaderboard.
+- `django-allauth` + **Google OAuth** working (env-driven creds; 30-min sliding session).
+- **Server-authoritative scoring**: `SubmitRunView` re-scores a run's transcript
+  (`scoring.rescore`) from the relational mirror — the posted number is never trusted.
+- `Run` (+`difficulty`, +`ranked`), `PlayerStat`, `NamedSpecies`, `Streak`. Account page:
+  per-game stats + a filterable activity heatmap; delete-account.
+- **Browsable leaderboards** (`/leaderboard`) with a game dropdown; boards split by
+  `(mode, scope, difficulty)`. Only **ranked** (default-settings) runs count; custom runs
+  still feed stats. See [`games-model.md`](games-model.md).
 
-## Phase 5 — Classic (rides on 1–2)
+## Phase 4.5 — Admin & pipeline worker ✅ (done)
 
-- Server-authoritative daily mystery seed.
-- Guess → place MRCA node; proximity bar + rank label; guess history; limited
-  guesses; win state. Reuses the asset, TreeRenderer, and autocomplete wholesale.
+- Themed **Django admin** (URL-only) — scope control, scores moderation, `make_admin`.
+- **Celery + Redis pipeline worker**: build assets / download the CoL dump from the admin
+  GUI; the web process never builds. Braidworks installs from a pinned GitHub tag.
+- See [`admin.md`](admin.md).
+
+## Phase 5 — Games model & the daily ✅ (done)
+
+- A game = `(mode × difficulty)`; difficulty toggled on the Hub. Admin `GameModeConfig`
+  enables/retires games.
+- **One site-wide daily** (admin-tunable rotation + per-date pins), one-shot per day, **one
+  global streak**; the daily reuses the Marathon game with locked metadata. Date-indexed
+  daily leaderboard with history. See [`games-model.md`](games-model.md) + [`admin.md`](admin.md).
+
+## Phase 6 — Deployment (next)
+
+- Kubernetes via **Argo CD**, matching the homelab patterns (Docker Hub images +
+  image-updater, Bitwarden ExternalSecrets, CNPG Postgres, Gateway API, Cloudflare tunnel).
+- See [`deployment.md`](deployment.md). Still to build: `frontend/Dockerfile`, the homelab
+  manifests, and CI to push the three images.
+
+## Classic — deferred (rides on 1–2)
+
+- Server-authoritative mystery seed; guess → place MRCA; proximity bar + rank label; guess
+  history; win state. Reuses the asset + TreeRenderer wholesale. `classic` GameMode exists,
+  disabled.
 
 ## Later / stretch
 
-- **Design pass**: modernize the UI toward the mocks in `docs/examples/` (homepage
-  hub, Marathon HUD) — animated pages, distinctive type, museum-clean look.
+- ~~**Design pass**~~ ✅ and ~~**Difficulty modes**~~ ✅ (Common/Scientific) — done.
+- **First-timer welcome modal** ("Welcome to Cladewright…" + big "ok!") — acknowledged,
+  not built.
 - **Huge-scope frontend (all-Animalia)**: a *remote-resolver mode* that uses the
   backend `/search` + `/resolve` endpoints (already built) instead of the in-memory
   alias index, so the client never downloads the GB-scale blob. Render/induced-tree
@@ -103,7 +130,6 @@ Sequence is dependency-ordered. Each phase should leave something runnable.
   culling already keep the timed tree legible without interaction. (A cheap middle ground if
   click-drilling ever feels fiddly: auto-open a wedge only once you've zoomed far enough
   *into* it — stable, no continuous recompute.)
-- Difficulty modes (casual common-names / nerd scientific-only).
 - Themed Marathons via biome/environment metadata (marine run, Neotropical run).
 - Open Tree of Life "truer topology" mode.
 - Deeper anti-cheat on the leaderboard.

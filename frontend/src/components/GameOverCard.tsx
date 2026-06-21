@@ -8,9 +8,8 @@ import { Link } from "react-router-dom";
 import { fetchMe, type Me } from "../lib/auth";
 import { fetchLeaderboard, submitRun, type Difficulty, type LeaderEntry, type SubmitOutcome } from "../lib/scores";
 
-const MODE = "marathon_free";
-
 export function GameOverCard({
+  mode = "marathon_free",
   count,
   score,
   scope,
@@ -18,9 +17,11 @@ export function GameOverCard({
   difficulty,
   assetVersion,
   ranked,
+  allowReplay = true,
   transcript,
   onPlayAgain,
 }: {
+  mode?: string;
   count: number;
   score: number;
   scope: string;
@@ -28,6 +29,7 @@ export function GameOverCard({
   difficulty: Difficulty;
   assetVersion: number;
   ranked: boolean;
+  allowReplay?: boolean;
   transcript: string[];
   onPlayAgain: () => void;
 }) {
@@ -41,15 +43,17 @@ export function GameOverCard({
       const who = await fetchMe();
       if (!live) return;
       setMe(who);
-      // Only ranked runs (default modifiers) count — submit first so the board includes
-      // this run, then load the board.
-      if (ranked && who.authenticated && transcript.length > 0) {
-        const outcome = await submitRun({ mode: MODE, scope, difficulty, asset_version: assetVersion, transcript });
+      // EVERY finished run is submitted so it counts toward the player's stats; the
+      // `ranked` flag tells the server whether it's also eligible for the leaderboard.
+      if (who.authenticated && transcript.length > 0) {
+        const outcome = await submitRun({
+          mode, scope, difficulty, asset_version: assetVersion, transcript, ranked,
+        });
         if (!live) return;
         setSubmit(outcome);
       }
-      const entries = await fetchLeaderboard(MODE, scope, difficulty);
-      if (live) setBoard(entries);
+      const result = await fetchLeaderboard(mode, scope, difficulty);
+      if (live) setBoard(result.entries);
     })();
     return () => {
       live = false;
@@ -65,26 +69,32 @@ export function GameOverCard({
         {count} placed · {score} points · {scopeLabel}
       </p>
 
-      <div className="mt-4 w-full">
-        {ranked ? (
-          renderSubmitStatus(me, submit)
-        ) : (
-          <p className="font-mono text-xs text-clade-ink/50">
-            Custom settings — this run isn't ranked.
-          </p>
-        )}
-      </div>
+      <div className="mt-4 w-full">{renderSubmitStatus(me, submit, ranked)}</div>
 
       <Leaderboard board={board} label={`${scopeLabel} · ${difficulty}`} me={me} />
 
-      <button onClick={onPlayAgain} className="btn-play mt-6">
-        ▶ Play again
-      </button>
+      <div className="mt-6 flex items-center gap-3">
+        {allowReplay && (
+          <button onClick={onPlayAgain} className="btn-play">
+            ▶ Play again
+          </button>
+        )}
+        <Link
+          to="/"
+          className={
+            allowReplay
+              ? "rounded-full border-2 border-clade-ink/30 px-4 py-1.5 font-hand text-xl text-clade-ink/70 transition hover:border-clade-ink/60 hover:text-clade-ink"
+              : "btn-play"
+          }
+        >
+          ▶ Menu
+        </Link>
+      </div>
     </div>
   );
 }
 
-function renderSubmitStatus(me: Me | null, submit: SubmitOutcome | null) {
+function renderSubmitStatus(me: Me | null, submit: SubmitOutcome | null, ranked: boolean) {
   if (me === null) return <p className="font-mono text-xs text-clade-ink/40">Checking…</p>;
 
   if (!me.authenticated) {
@@ -98,9 +108,20 @@ function renderSubmitStatus(me: Me | null, submit: SubmitOutcome | null) {
     );
   }
   if (submit?.ok) {
+    // Ranked → a board place; unranked → counted toward stats but off the board.
+    if (ranked && submit.result.rank != null) {
+      return (
+        <p className="font-hand text-2xl text-clade-accent">
+          Saved — rank #{submit.result.rank}
+        </p>
+      );
+    }
     return (
-      <p className="font-hand text-2xl text-clade-accent">
-        Saved — rank #{submit.result.rank}
+      <p className="font-hand text-xl text-clade-ink/70">
+        Saved to your stats
+        <span className="mt-0.5 block font-mono text-[11px] text-clade-ink/45">
+          Custom settings — not ranked on the leaderboard.
+        </span>
       </p>
     );
   }

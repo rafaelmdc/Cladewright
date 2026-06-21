@@ -20,11 +20,24 @@ services:
       timeout: 2s
       retries: 30
 
+  redis:
+    image: redis:7-alpine
+    container_name: ${REDIS_CONTAINER_NAME:-cladewright-redis}
+    # Broker for the pipeline job queue. Not exposed to the host — only web + worker talk
+    # to it on the compose network. In k8s this is a Redis Service.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
   web:
     build: ./backend
     container_name: ${WEB_CONTAINER_NAME:-cladewright-web}
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     env_file:
       - .env
@@ -32,6 +45,7 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
       DJANGO_SETTINGS_MODULE: cladewright.settings
+      CELERY_BROKER_URL: redis://redis:6379/0
       # Dev file-fallback path (used only before the DB is seeded). Points at the built
       # asset mounted from ./data below.
       GAMEDATA_ASSET_PATH: /data/out/mammalia.json
@@ -43,6 +57,34 @@ services:
     # Single line on purpose: a folded (>) block would keep a newline before the
     # over-indented --bind and split it off, leaving gunicorn on its 127.0.0.1 default.
     command: sh -lc "python manage.py migrate && exec gunicorn cladewright.wsgi:application --bind 0.0.0.0:${APP_PORT:-8000} --reload"
+
+  # Pipeline worker: consumes PipelineJobs (build assets / download the CoL dump). Built
+  # from the pipeline image (Braidworks + vendored wheels) — the ONLY process that runs the
+  # heavy build. Maps 1:1 onto a Kubernetes Deployment (same image + command; broker URL,
+  # DB and the dump volume come from env / a mounted PVC). Scale with `--scale worker=N`.
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.pipeline
+    container_name: ${WORKER_CONTAINER_NAME:-cladewright-worker}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      DJANGO_SETTINGS_MODULE: cladewright.settings
+      CELERY_BROKER_URL: redis://redis:6379/0
+    volumes:
+      - ./backend:/app # live code mount (restart worker to pick up task edits)
+      # The dump lives here; RW so a Download-dump job can refresh it in place. coldp_dir
+      # defaults to data/coldp_col, which resolves under /app → /app/data/coldp_col.
+      - ./data:/app/data
+    command: celery -A cladewright worker --loglevel=info --concurrency=1
 
 volumes:
   pgdata:

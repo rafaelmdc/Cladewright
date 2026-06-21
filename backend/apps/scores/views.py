@@ -18,10 +18,121 @@ from rest_framework.views import APIView
 
 from apps.gamedata.models import AssetVersion, TaxonNode, TaxonTip
 
-from .models import Difficulty, GameMode, NamedSpecies, PlayerStat, Run, Streak
+from .models import (
+    Difficulty,
+    GameMode,
+    DailyPin,
+    DailyRotationEntry,
+    GameModeConfig,
+    NamedSpecies,
+    PlayerStat,
+    Run,
+    Streak,
+)
 from .scoring import rescore
 
 LEADERBOARD_LIMIT = 50
+
+
+class GamesView(APIView):
+    """GET /api/scores/games/ -> the ENABLED game modes (admin-toggled), for the Hub and
+    the leaderboard game selector. Public, tiny, and cache-friendly so the SPA can poll it
+    cheaply. If no config rows exist yet (fresh DB), the SPA falls back to its built-in
+    Marathon card — so the game is never dark just because the table is empty."""
+
+    permission_classes: list = []
+
+    def get(self, request: Request) -> Response:
+        games = [
+            {
+                "mode": g.mode,
+                "label": g.label,
+                "blurb": g.blurb,
+                "route": g.route,
+                "supports_difficulty": g.supports_difficulty,
+                "is_daily": g.mode.endswith("_daily"),  # the Hub shows these as the Daily strip
+            }
+            for g in GameModeConfig.objects.filter(enabled=True)
+        ]
+        return Response({"games": games})
+
+
+DAILY_MODE = GameMode.MARATHON_DAILY
+# The day streak is GLOBAL — one per user, advanced by playing ANY game's daily that day
+# (not per game). Stored on the Streak row under this sentinel key so it survives game
+# rotation. See docs/games-model.md.
+DAILY_STREAK_KEY = "daily"
+
+
+def _daily_plan(day: dt.date) -> tuple[str, str, str] | None:
+    """The daily for `day` as (mode, scope, scope_label) — admin-driven:
+
+      1. a manual DailyPin for that exact date wins;
+      2. else the active DailyRotationEntry pool cycles by date (game + clade rotation,
+         both admin-tunable);
+      3. else fall back to rotating the currently-served scopes (so the daily works before
+         the admin configures a pool).
+
+    None if nothing is served yet.
+    """
+    def label_for(scope: str) -> str:
+        lbl = (
+            AssetVersion.objects.filter(scope=scope, is_current=True)
+            .values_list("label", flat=True)
+            .first()
+        )
+        return lbl or scope
+
+    pin = DailyPin.objects.filter(date=day).first()
+    if pin:
+        return pin.mode, pin.scope, label_for(pin.scope)
+
+    pool = list(DailyRotationEntry.objects.filter(active=True).values_list("mode", "scope"))
+    if not pool:
+        scopes = list(
+            AssetVersion.objects.filter(is_current=True).order_by("scope").values_list("scope", flat=True)
+        )
+        if not scopes:
+            return None
+        pool = [(DAILY_MODE, s) for s in scopes]
+
+    mode, scope = pool[day.toordinal() % len(pool)]
+    return mode, scope, label_for(scope)
+
+
+class DailyView(APIView):
+    """GET /api/scores/daily/ -> today's single site-wide daily (the Hub strip reads this).
+    One shared puzzle a day: a fixed scope + default settings, ranked. Carries the signed-in
+    player's streak and whether they've already played today. See docs/games-model.md."""
+
+    permission_classes: list = []
+
+    def get(self, request: Request) -> Response:
+        today = dt.date.today()
+        plan = _daily_plan(today)
+        mode = plan[0] if plan else DAILY_MODE
+        enabled = GameModeConfig.objects.filter(mode=mode, enabled=True).exists()
+        data: dict = {
+            "date": today.isoformat(),
+            "mode": mode,
+            "available": enabled and plan is not None,
+            "scope": plan[1] if plan else None,
+            "scope_label": plan[2] if plan else None,
+        }
+        if request.user.is_authenticated:
+            streak = Streak.objects.filter(user=request.user, mode=DAILY_STREAK_KEY).first()
+            data["streak"] = {
+                "current": streak.current if streak else 0,
+                "best": streak.best if streak else 0,
+            }
+            today_run = (
+                Run.objects.filter(user=request.user, mode=mode, puzzle_date=today)
+                .order_by("-score")
+                .first()
+            )
+            data["played_today"] = today_run is not None
+            data["today_score"] = today_run.score if today_run else None
+        return Response(data)
 
 
 def _asset_for(scope: str, version: int | None) -> AssetVersion | None:
@@ -42,14 +153,35 @@ class SubmitRunView(APIView):
         mode = data.get("mode")
         if mode not in GameMode.values:
             return Response({"error": "invalid mode"}, status=400)
+        # Reject runs for a mode an admin has disabled (or never enabled). A missing config
+        # row counts as disabled here — submitting is gated, even though reads fall back.
+        if not GameModeConfig.objects.filter(mode=mode, enabled=True).exists():
+            return Response({"error": "mode not enabled"}, status=400)
 
         scope = (data.get("scope") or "").strip()
+        # For the daily, the scope is server-decided (today's rotation) — pin it so every
+        # daily run lands on the same board regardless of what the client posts.
+        is_daily = mode in (GameMode.MARATHON_DAILY, GameMode.CLASSIC)
+        if is_daily:
+            plan = _daily_plan(dt.date.today())
+            if plan is None:
+                return Response({"error": "no daily available"}, status=400)
+            scope = plan[1]
+            # One shot per day: the daily locks after a single play (no grinding a better
+            # number). The card then shows the result instead of Play.
+            if Run.objects.filter(
+                user=request.user, mode=mode, puzzle_date=dt.date.today()
+            ).exists():
+                return Response({"error": "already played today"}, status=409)
         difficulty = data.get("difficulty") or Difficulty.COMMON
         if difficulty not in Difficulty.values:
             return Response({"error": "invalid difficulty"}, status=400)
         transcript = data.get("transcript") or []
         if not isinstance(transcript, list):
             return Response({"error": "transcript must be a list of ids"}, status=400)
+        # Default ("ranked") settings → eligible for the leaderboard. A custom run still
+        # records + counts toward stats, but never appears on the board.
+        ranked = bool(data.get("ranked", True))
 
         version = data.get("asset_version")
         av = _asset_for(scope, int(version) if version else None)
@@ -81,24 +213,32 @@ class SubmitRunView(APIView):
                 asset_version=av.version,
                 puzzle_date=puzzle_date,
                 transcript=ids,
+                ranked=ranked,
             )
-            if is_daily:
-                _bump_streak(request.user, mode, puzzle_date)
-            _update_player_stats(request.user, mode, result.score, result.placed_tips)
+            if is_daily and puzzle_date is not None:
+                # Global day streak — any game's daily advances the one streak.
+                _bump_streak(request.user, DAILY_STREAK_KEY, puzzle_date)
+            # Stats fold in EVERY finished run, ranked or not.
+            _update_player_stats(request.user, mode, difficulty, result.score, result.placed_tips)
 
-        # Rank among distinct users with a strictly better run for this board
-        # (mode/scope/difficulty/day).
-        rank = (
-            Run.objects.filter(
-                mode=mode, scope=scope, difficulty=difficulty,
-                puzzle_date=puzzle_date, score__gt=result.score,
+        # Rank only for ranked runs (the leaderboard ignores custom-settings runs). Among
+        # distinct users with a strictly better RANKED run for this board.
+        rank = None
+        if ranked:
+            rank = (
+                Run.objects.filter(
+                    mode=mode, scope=scope, difficulty=difficulty, ranked=True,
+                    puzzle_date=puzzle_date, score__gt=result.score,
+                )
+                .values("user")
+                .distinct()
+                .count()
+                + 1
             )
-            .values("user")
-            .distinct()
-            .count()
-            + 1
+        return Response(
+            {**result.as_dict(), "run_id": run.id, "rank": rank, "ranked": ranked},
+            status=201,
         )
-        return Response({**result.as_dict(), "run_id": run.id, "rank": rank}, status=201)
 
 
 class LeaderboardView(APIView):
@@ -115,9 +255,25 @@ class LeaderboardView(APIView):
         if difficulty not in Difficulty.values:
             return Response({"error": "invalid difficulty"}, status=400)
 
-        qs = Run.objects.filter(mode=mode, scope=scope, difficulty=difficulty)
-        if mode in (GameMode.MARATHON_DAILY, GameMode.CLASSIC):
+        # Daily boards are date-indexed (history is kept): the scope is DERIVED from that
+        # day's daily plan, not the client — and free-play boards are a single all-time
+        # board per (scope, difficulty). See docs/games-model.md.
+        is_daily = mode in (GameMode.MARATHON_DAILY, GameMode.CLASSIC)
+        day = None
+        scope_label = scope
+        if is_daily:
             day = _parse_date(request.query_params.get("date")) or dt.date.today()
+            plan = _daily_plan(day)
+            if plan is None:
+                return Response({
+                    "mode": mode, "scope": "", "scope_label": "", "difficulty": difficulty,
+                    "date": day.isoformat(), "entries": [],
+                })
+            scope, scope_label = plan[1], plan[2]
+
+        # Only ranked (default-settings) runs are comparable on a board.
+        qs = Run.objects.filter(mode=mode, scope=scope, difficulty=difficulty, ranked=True)
+        if day is not None:
             qs = qs.filter(puzzle_date=day)
 
         # Best run per user, highest first. Pull a generous slice then dedupe in Python
@@ -140,7 +296,14 @@ class LeaderboardView(APIView):
             )
             if len(rows) >= LEADERBOARD_LIMIT:
                 break
-        return Response({"mode": mode, "scope": scope, "difficulty": difficulty, "entries": rows})
+        return Response({
+            "mode": mode,
+            "scope": scope,
+            "scope_label": scope_label,
+            "difficulty": difficulty,
+            "date": day.isoformat() if day else None,
+            "entries": rows,
+        })
 
 
 def _parse_date(s: str | None) -> dt.date | None:
@@ -152,16 +315,18 @@ def _parse_date(s: str | None) -> dt.date | None:
         return None
 
 
-def _update_player_stats(user, mode: str, score: int, placed_tips) -> None:
-    """Fold one run into the per-(user, mode) aggregate + the unique-species set. Called
-    inside the submit transaction so stats never drift from the runs."""
+def _update_player_stats(user, mode: str, difficulty: str, score: int, placed_tips) -> None:
+    """Fold one run into the per-(user, mode, difficulty) aggregate + that game's unique-
+    species set. Called inside the submit transaction so stats never drift from the runs.
+    The scoring unit is (mode, difficulty) — see docs/games-model.md."""
     if placed_tips:
         NamedSpecies.objects.bulk_create(
-            [NamedSpecies(user=user, mode=mode, species_key=k) for k in placed_tips],
-            ignore_conflicts=True,  # only species new to this user actually insert
+            [NamedSpecies(user=user, mode=mode, difficulty=difficulty, species_key=k)
+             for k in placed_tips],
+            ignore_conflicts=True,  # only species new to this (game) actually insert
         )
-    unique = NamedSpecies.objects.filter(user=user, mode=mode).count()
-    stat, created = PlayerStat.objects.get_or_create(user=user, mode=mode)
+    unique = NamedSpecies.objects.filter(user=user, mode=mode, difficulty=difficulty).count()
+    stat, _ = PlayerStat.objects.get_or_create(user=user, mode=mode, difficulty=difficulty)
     stat.games_played += 1
     stat.total_named += len(placed_tips)
     stat.unique_named = unique

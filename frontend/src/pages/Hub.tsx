@@ -1,6 +1,6 @@
-// Landing hub. A game = (base × difficulty): each difficulty-supporting game shows two
-// cards (Common / Scientific) — the lens IS the card, no toggle. A single site-wide Daily
-// strip sits on top (its own dopamine zone). See docs/games-model.md.
+// Landing hub. One card per game; a shared Common/Scientific difficulty toggle applies to
+// every game that supports it (future games reuse the same toggle). A single site-wide
+// Daily strip sits on top. See docs/games-model.md.
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -10,21 +10,9 @@ import { fetchGames, FALLBACK_GAMES, type Game } from "../lib/games";
 import type { Difficulty } from "../lib/scores";
 import { useTitle } from "../lib/useTitle";
 
-const LENSES: { id: Difficulty; label: string }[] = [
-  { id: "common", label: "Common names" },
-  { id: "scientific", label: "Scientific only" },
-];
-
-interface Card {
-  key: string;
-  to: string;
-  title: string;
-  lens: string | null;
-  blurb: string;
-}
-
 export function Hub() {
   useTitle();
+  const [difficulty, setDifficulty] = useState<Difficulty>("common");
   // Enabled games come from the admin-toggled config; start with the built-in fallback so
   // the cards paint instantly, then reconcile with the server.
   const [games, setGames] = useState<Game[]>(FALLBACK_GAMES);
@@ -38,18 +26,7 @@ export function Hub() {
     };
   }, []);
 
-  // One card per (game × lens): the lens is the card, not a toggle.
-  const cards: Card[] = games.flatMap((g): Card[] =>
-    g.supports_difficulty
-      ? LENSES.map((l) => ({
-          key: `${g.mode}-${l.id}`,
-          to: `${g.route}?difficulty=${l.id}`,
-          title: g.label,
-          lens: l.label,
-          blurb: g.blurb,
-        }))
-      : [{ key: g.mode, to: g.route, title: g.label, lens: null, blurb: g.blurb }],
-  );
+  const anyDifficulty = games.some((g) => g.supports_difficulty);
 
   return (
     <div className="min-h-screen">
@@ -60,9 +37,36 @@ export function Hub() {
         <div className="flex flex-1 flex-col justify-center gap-5 pb-16">
           <DailyCard />
 
+          {anyDifficulty && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mr-1 font-mono text-xs uppercase tracking-wider text-clade-ink/45">
+                Difficulty
+              </span>
+              <button
+                type="button"
+                onClick={() => setDifficulty("common")}
+                className={`pill ${difficulty === "common" ? "pill-active" : ""}`}
+              >
+                Common names
+              </button>
+              <button
+                type="button"
+                onClick={() => setDifficulty("scientific")}
+                className={`pill ${difficulty === "scientific" ? "pill-active" : "border-dashed"}`}
+              >
+                Scientific only
+              </button>
+            </div>
+          )}
+
           <div className="grid gap-4 sm:grid-cols-2">
-            {cards.map((c) => (
-              <ModeCard key={c.key} to={c.to} title={c.title} lens={c.lens} blurb={c.blurb} />
+            {games.map((g) => (
+              <ModeCard
+                key={g.mode}
+                to={g.supports_difficulty ? `${g.route}?difficulty=${difficulty}` : g.route}
+                title={g.label}
+                blurb={g.blurb}
+              />
             ))}
           </div>
 
@@ -98,17 +102,10 @@ function DailyCard() {
   );
 }
 
-function ModeCard({ to, title, lens, blurb }: Omit<Card, "key">) {
+function ModeCard({ to, title, blurb }: { to: string; title: string; blurb: string }) {
   return (
     <div className="ink-card flex flex-col p-5">
-      <div className="flex items-start justify-between">
-        <LeafMark className="h-7 w-7 text-clade-accent" />
-        {lens && (
-          <span className="rounded-full bg-clade-ink px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-clade-bg">
-            {lens}
-          </span>
-        )}
-      </div>
+      <LeafMark className="h-7 w-7 text-clade-accent" />
       <h2 className="mt-2 font-hand text-4xl font-bold leading-none text-clade-ink">{title}</h2>
       <p className="mt-2 font-hand text-xl leading-snug text-clade-ink/70">{blurb}</p>
       <div className="mt-auto pt-4">

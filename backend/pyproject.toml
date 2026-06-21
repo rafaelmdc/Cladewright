@@ -11,6 +11,7 @@ dependencies = [
     "psycopg[binary]>=3.1",   # Postgres driver (prod + local)
     "dj-database-url>=2.2",   # DATABASE_URL parsing
     "gunicorn>=22.0",         # WSGI server (docker)
+    "celery[redis]>=5.4",     # pipeline job queue (web enqueues, worker consumes)
 ]
 
 # The data pipeline (backend/pipeline/) additionally imports BICHO and Braidworks

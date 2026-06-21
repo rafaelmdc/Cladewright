@@ -192,3 +192,14 @@ CSRF_COOKIE_SECURE = _secure_cookies
 CSRF_TRUSTED_ORIGINS = os.environ.get(
     "CSRF_TRUSTED_ORIGINS", "http://localhost:5173,http://localhost:8000"
 ).split(",")
+
+# ── Celery / pipeline job queue ──────────────────────────────────────────────────────
+# The web process enqueues PipelineJobs onto Redis; a separate pipeline worker consumes
+# them (see cladewright/celery.py, apps/gamedata/tasks.py). Default points at the compose
+# ``redis`` service; prod overrides via env.
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://redis:6379/0")
+CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
+CELERY_TASK_ACKS_LATE = True  # a build is long; redeliver if a worker dies mid-job
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # one heavy build at a time per worker process
+CELERY_TASK_TIME_LIMIT = int(os.environ.get("CELERY_TASK_TIME_LIMIT", str(6 * 60 * 60)))
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True

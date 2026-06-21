@@ -1,0 +1,134 @@
+"""Celery tasks for the pipeline job queue.
+
+ONE task, two job kinds: download a fresh CoL dump, or build+load a game-data asset. This
+runs only on the pipeline worker (Dockerfile.pipeline — Braidworks + the CoL dump). The
+web image imports this module only to *enqueue* (``run_pipeline_job.delay(id)``), so every
+heavy import (call_command → pipeline → Braidworks) stays lazy, inside the task body.
+
+Status lifecycle: QUEUED ──claim──▶ RUNNING ──ok──▶ SUCCEEDED / ──err──▶ FAILED. The
+command stdout is streamed into ``PipelineJob.log`` so the admin shows live progress.
+"""
+from __future__ import annotations
+
+import io
+import tempfile
+import traceback
+from pathlib import Path
+
+from celery import shared_task
+from django.utils import timezone
+
+
+class _JobLog(io.TextIOBase):
+    """A writable stream that appends to a PipelineJob's ``log`` and persists on each write,
+    so the admin's job page reflects build progress without waiting for completion."""
+
+    def __init__(self, job):
+        self._job = job
+        self._buf: list[str] = []
+
+    def write(self, s: str) -> int:
+        if s:
+            self._buf.append(s)
+            self.flush()
+        return len(s)
+
+    def flush(self) -> None:  # noqa: D401 - stream contract
+        self._job.log = "".join(self._buf)
+        self._job.save(update_fields=["log"])
+
+
+def _parse_scope_filter(scope_filter: str) -> str:
+    """The admin form stores a single ``rank=value[,value]`` string; build_gamedata's
+    --scope takes exactly that, so this is a pass-through guard against blanks."""
+    sf = (scope_filter or "").strip()
+    if "=" not in sf:
+        raise ValueError(f"scope_filter must be rank=value[,value…]; got {sf!r}")
+    return sf
+
+
+@shared_task(bind=True)
+def run_pipeline_job(self, job_id: int) -> str:
+    from .models import PipelineJob
+
+    job = PipelineJob.objects.get(pk=job_id)
+    job.status = PipelineJob.Status.RUNNING
+    job.started_at = timezone.now()
+    job.log = ""
+    job.save(update_fields=["status", "started_at", "log"])
+
+    stream = _JobLog(job)
+
+    def emit(line: str) -> None:
+        stream.write(line if line.endswith("\n") else line + "\n")
+
+    try:
+        if job.kind == PipelineJob.Kind.FETCH_DUMP:
+            result = _run_fetch_dump(job, stream, emit)
+        else:
+            result = _run_build(job, stream, emit)
+    except Exception:  # noqa: BLE001 - record any failure on the job, then re-raise
+        job.refresh_from_db(fields=["log"])
+        job.status = PipelineJob.Status.FAILED
+        job.finished_at = timezone.now()
+        job.log += "\n== FAILED ==\n" + traceback.format_exc()
+        job.save(update_fields=["status", "finished_at", "log"])
+        raise
+
+    job.refresh_from_db(fields=["log"])
+    job.status = PipelineJob.Status.SUCCEEDED
+    job.finished_at = timezone.now()
+    job.log += f"\n== done: {result} =="
+    job.save(update_fields=["status", "finished_at", "log"])
+    return result
+
+
+def _run_fetch_dump(job, stream, emit) -> str:
+    # Imported lazily so the web image can enqueue without these on the import path.
+    from django.core.management import call_command
+
+    emit(f"== download CoL dump -> {job.coldp_dir} (replaces the old one) ==")
+    call_command("fetch_col_dump", "--out", job.coldp_dir, stdout=stream, stderr=stream)
+    return f"dump refreshed at {job.coldp_dir}"
+
+
+def _run_build(job, stream, emit) -> str:
+    from django.core.management import call_command
+
+    from .models import AssetVersion
+
+    scope_filter = _parse_scope_filter(job.scope_filter)
+    if not job.scope_key:
+        raise ValueError("a Build job needs a scope_key.")
+
+    # Each build gets the next version for its scope, so prior builds stay browsable in the
+    # admin and remain promotable via "Set current".
+    last = AssetVersion.objects.filter(scope=job.scope_key).order_by("-version").first()
+    version = (last.version + 1) if last else 1
+
+    emit(f"== build {job.scope_key} v{version} (filter {scope_filter!r}, "
+         f"enrich={job.enrich}, include_extinct={job.include_extinct}) ==")
+
+    with tempfile.TemporaryDirectory(prefix="cladewright-build-") as tmp:
+        out = Path(tmp) / f"{job.scope_key}.json"
+        build_args = [
+            "--coldp-dir", job.coldp_dir,
+            "--out", str(out),
+            "--scope", scope_filter,
+            "--scope-key", job.scope_key,
+            "--enrich", job.enrich,
+            "--asset-version", str(version),
+        ]
+        if job.label:
+            build_args += ["--label", job.label]
+        if job.include_extinct:
+            build_args += ["--include-extinct"]
+        call_command("build_gamedata", *build_args, stdout=stream, stderr=stream)
+
+        load_args = ["--asset", str(out)]
+        if job.load_current:
+            load_args += ["--current"]
+        emit(f"== load {out.name} (current={job.load_current}) ==")
+        call_command("load_gamedata", *load_args, stdout=stream, stderr=stream)
+
+    return f"{job.scope_key} v{version}"

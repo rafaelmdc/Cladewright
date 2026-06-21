@@ -1,6 +1,11 @@
 # Deps to BUILD a game-data asset (manage.py build_gamedata --enrich braidworks).
-# Serving deps + the vendored Braidworks wheels (real common-name enrichment via the
-# wikidata weaver). Build the wheels with: scripts/build_braidworks_wheels.sh
+# Serving deps + real common-name enrichment via Braidworks (the wikidata weaver).
+#
+# Braidworks is installed straight from its public GitHub repo, pinned to an immutable
+# tag, so the pipeline worker image is the SAME in test and prod (no vendored wheels to
+# drift). braidworks-core is wikidata_weaver's dependency, pinned to the same ref for a
+# reproducible build. Needs `git` in the image (see Dockerfile.pipeline). To bump: tag a
+# new release in rafaelmdc/braidworks and change the @ref on both lines.
 -r requirements.txt
-./vendor/braidworks_core-0.10.0-py3-none-any.whl
-./vendor/wikidata_weaver-0.1.0-py3-none-any.whl
+braidworks-core @ git+https://github.com/rafaelmdc/braidworks@wikidata_weaver-v0.1.0#subdirectory=braidworks-core
+wikidata_weaver @ git+https://github.com/rafaelmdc/braidworks@wikidata_weaver-v0.1.0#subdirectory=weavers/wikidata_weaver

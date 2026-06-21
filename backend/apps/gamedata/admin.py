@@ -46,19 +46,65 @@ class AssetVersionAdmin(admin.ModelAdmin):
 @admin.register(PipelineJob)
 class PipelineJobAdmin(admin.ModelAdmin):
     """Queue an asset build. A separate pipeline worker (Braidworks + CoL dump) runs it —
-    the web process never does the heavy build. Create a job, then watch its status/log."""
+    the web process never does the heavy build. Create a job: it enqueues onto Redis and a
+    worker picks it up; watch status/log refresh here. Re-queue a finished/stuck job with
+    the action below."""
 
-    list_display = ("scope_key", "label", "status", "enrich", "include_extinct", "created_at",
-                    "finished_at", "requested_by")
-    list_filter = ("status", "enrich", "include_extinct")
+    list_display = ("kind", "scope_key", "label", "status_badge", "enrich", "include_extinct",
+                    "created_at", "finished_at", "requested_by")
+    list_filter = ("kind", "status", "enrich", "include_extinct")
     search_fields = ("scope_key", "label", "scope_filter")
     readonly_fields = ("status", "log", "requested_by", "created_at", "started_at", "finished_at")
-    fields = (
-        "scope_key", "label", "scope_filter", "coldp_dir", "enrich", "include_extinct",
-        "load_current", "status", "log", "requested_by", "created_at", "started_at", "finished_at",
+    fieldsets = (
+        (None, {
+            "fields": ("kind",),
+            "description": "Build an asset, or download a fresh CoL dump (replaces the old "
+                           "one). A separate worker runs the job — refresh to watch status.",
+        }),
+        ("Build asset (ignored for a Download job)", {
+            "fields": ("scope_key", "label", "scope_filter", "enrich", "include_extinct",
+                       "load_current"),
+        }),
+        ("Source / lifecycle", {
+            "fields": ("coldp_dir", "status", "log", "requested_by", "created_at",
+                       "started_at", "finished_at"),
+        }),
     )
+    actions = ["requeue"]
+
+    @admin.display(description="status", ordering="status")
+    def status_badge(self, obj: PipelineJob) -> str:
+        from django.utils.html import format_html
+        color = {
+            obj.Status.QUEUED: "#8a7e5e", obj.Status.RUNNING: "#3f6b4c",
+            obj.Status.SUCCEEDED: "#2e7d32", obj.Status.FAILED: "#b03030",
+        }.get(obj.status, "#555")
+        return format_html(
+            '<b style="color:{}">{}</b>', color, obj.get_status_display()
+        )
+
+    def _enqueue(self, job: PipelineJob) -> None:
+        # Lazy import: keeps the admin module importable even if Celery isn't configured in
+        # some odd context, and matches the web-never-builds boundary.
+        from .tasks import run_pipeline_job
+        run_pipeline_job.delay(job.id)
 
     def save_model(self, request, obj, form, change):
-        if not change:
+        first_time = not change
+        if first_time:
             obj.requested_by = request.user  # stamp who queued it
         super().save_model(request, obj, form, change)
+        if first_time:
+            self._enqueue(obj)
+            self.message_user(request, f"Queued build for '{obj.scope_key}' — a worker will "
+                                       "pick it up; refresh to watch status.")
+
+    @admin.action(description="Re-queue — run this build again on a worker")
+    def requeue(self, request, queryset):
+        for job in queryset:
+            job.status = PipelineJob.Status.QUEUED
+            job.started_at = job.finished_at = None
+            job.log = ""
+            job.save(update_fields=["status", "started_at", "finished_at", "log"])
+            self._enqueue(job)
+        self.message_user(request, f"Re-queued {queryset.count()} job(s).")

@@ -25,7 +25,7 @@ OUT     ?= data/out/mammalia.json    # asset JSON to write (host path)
 
 .PHONY: help gui gui-up gui-down gui-restart gui-logs gui-status install build \
         dev dev-down be-up be-up-build be-down be-logs be-shell migrate seed dbshell \
-        wheels pipeline-venv build-asset col-dump starter-scopes
+        pipeline-venv build-asset col-dump starter-scopes
 
 help: ## List available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -109,10 +109,7 @@ seed: ## Load the built asset into Postgres (ASSET=$(ASSET)) and mark it current
 col-dump: ## Download the CoL bulk ColDP archive (~1GB) into data/coldp_col, for any-scope builds
 	backend/scripts/fetch_col_dump.sh
 
-wheels: ## Rebuild the vendored Braidworks wheels from the sibling repo
-	backend/scripts/build_braidworks_wheels.sh
-
-pipeline-venv: ## Create the build venv and install serving deps + Braidworks wheels
+pipeline-venv: ## Create the build venv and install serving deps + Braidworks (from GitHub)
 	cd backend && uv venv .venv-pipeline --python 3.12 \
 	  && uv pip install --python .venv-pipeline -r requirements-pipeline.txt
 

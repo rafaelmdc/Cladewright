@@ -30,11 +30,23 @@ class PipelineJob(models.Model):
         SUCCEEDED = "succeeded", "Succeeded"
         FAILED = "failed", "Failed"
 
-    # What to build.
-    scope_key = models.CharField(max_length=128, help_text="Asset scope id, e.g. 'fish'.")
+    class Kind(models.TextChoices):
+        BUILD = "build", "Build asset"
+        FETCH_DUMP = "fetch_dump", "Download CoL dump"
+
+    kind = models.CharField(
+        max_length=16, choices=Kind.choices, default=Kind.BUILD,
+        help_text="Build an asset, or download a fresh CoL dump (replaces the old one). "
+                  "Download jobs ignore the scope fields.",
+    )
+
+    # What to build. (scope_key/scope_filter are unused for a Download-dump job.)
+    scope_key = models.CharField(
+        max_length=128, blank=True, help_text="Asset scope id, e.g. 'fish'."
+    )
     label = models.CharField(max_length=128, blank=True, help_text="Display name, e.g. 'Fish'.")
     scope_filter = models.CharField(
-        max_length=512, help_text="CoL filter rank=value[,value…], e.g. 'class=Aves'."
+        max_length=512, blank=True, help_text="CoL filter rank=value[,value…], e.g. 'class=Aves'."
     )
     coldp_dir = models.CharField(max_length=256, default="data/coldp_col")
     enrich = models.CharField(max_length=16, default="braidworks")

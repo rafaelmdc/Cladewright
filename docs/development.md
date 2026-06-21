@@ -64,18 +64,21 @@ python manage.py migrate
 python manage.py runserver           # :8000
 ```
 
-The data pipeline additionally imports **Braidworks** (sibling repo) for real
-common-name enrichment; it's *only* needed to regenerate the asset, never to serve.
-Braidworks ships as **vendored wheels** under `backend/vendor/` (built from the sibling
-repo by `backend/scripts/build_braidworks_wheels.sh`) and is installed into a separate
-build venv via `backend/requirements-pipeline.txt` — kept out of the serving image.
+The data pipeline additionally imports **Braidworks** for real common-name enrichment;
+it's *only* needed to regenerate the asset, never to serve. Braidworks is installed
+**straight from its public GitHub repo** (`rafaelmdc/braidworks`), pinned to an immutable
+tag in `backend/requirements-pipeline.txt`, and kept out of the serving image. The same
+file installs into the build venv (local dev) and into the pipeline worker image (CI/prod),
+so the two are byte-for-byte the same.
 
 ```bash
-make wheels            # rebuild backend/vendor/*.whl from ../../braidworks (uv)
-make pipeline-venv     # backend/.venv-pipeline with serving deps + Braidworks wheels
+make pipeline-venv     # backend/.venv-pipeline with serving deps + Braidworks (from GitHub)
 make build-asset SCOPE=family=Felidae COLDP=data/coldp_mammalia OUT=data/out/felidae.json
 make seed ASSET=/data/out/felidae.json   # load into Postgres, mark current for its scope
 ```
+
+To bump Braidworks: tag a new release in `rafaelmdc/braidworks` and change the `@ref` on
+both lines of `requirements-pipeline.txt`.
 
 ### Starter scopes (reproduce the full playable set)
 
@@ -108,26 +111,19 @@ Load one with `make seed ASSET=/data/out/<key>.json`.
 > needs a separate source (Paleobiology Database, or Wikidata); deferred until the rest is
 > done. (The only dinosaurs CoL knows are the birds in Aves.)
 
-> **TODO (deployment):** the vendored wheels are a *local-build* convenience — they're
-> built from the developer's checkout of `../../braidworks`. Before deploying, publish
-> Braidworks properly as a **GitHub release wheel** (or a tag the build can `pip install`
-> from a Git URL / index), so CI/CD installs it from a pinned published artifact rather
-> than from a local path. Then `requirements-pipeline.txt` points at that pinned release
-> instead of `./vendor/*.whl`. See [`data-pipeline.md`](data-pipeline.md#stage-4--braidworks-enrichment-common-names).
+> **Done — Braidworks is installed from a pinned GitHub tag** (`requirements-pipeline.txt`),
+> so CI/CD and the worker image install it from an immutable published ref, not a local
+> path. No vendored wheels.
 
-> **TODO (deployment, a phase of its own — not now):** run the asset build as a
-> **dedicated Docker worker / batch job**, not a host venv. The pieces already favour
-> this: `build_gamedata` (needs Braidworks + the ~2 GB dump) is fully decoupled from
-> `load_gamedata` (needs only Django + the output JSON), so the build can run anywhere
-> and just hand a JSON asset to the serving side. Shape: a `backend/Dockerfile.pipeline`
-> (`FROM python:3.12-slim`, `COPY vendor/*.whl` + `requirements-pipeline.txt`, `pip install`,
-> `ENTRYPOINT manage.py build_gamedata`) run as a one-off Job/CronJob. This (a) keeps the
-> serving image lean — no Braidworks, no dump tooling, no `.venv-pipeline`; (b) gives the
-> build the fat, short-lived resource profile it wants (dump on disk + backbone index in
-> RAM) instead of loading the web container; and (c) makes the image self-contained via
-> `COPY vendor/*.whl`, so it works before the release-wheel TODO above lands (the dump
-> itself stays out of the image, mounted/fetched at job runtime). It quarantines the
-> pipeline deps into an image nobody ships to the web tier, rather than making them vanish.
+> **Done — the asset build runs as a dedicated worker, not a host venv.** `build_gamedata`
+> (Braidworks + the ~2 GB dump) is decoupled from `load_gamedata` (Django + the output
+> JSON), so the build runs in the pipeline worker (`backend/Dockerfile.pipeline`: slim
+> Python + `git` + `requirements-pipeline.txt`) and hands a loaded asset to the serving
+> side. The worker is a long-running Celery consumer driven by the admin job queue (see
+> [`data-pipeline.md`](data-pipeline.md) and the admin's *Pipeline jobs*). It maps 1:1 onto
+> a Kubernetes Deployment: same image + `celery -A cladewright worker`, broker URL and the
+> dump volume from env / a PVC. The serving image stays lean — no Braidworks, no dump
+> tooling. Scale builds with worker replicas (`--scale worker=N` / k8s `replicas`).
 
 ## Frontend
 

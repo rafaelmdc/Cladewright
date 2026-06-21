@@ -16,6 +16,7 @@ export interface ResolvedNode {
   sci: string;
   common: string | null;
   pool_count: number;
+  pool_count_extant?: number; // absent on older serves -> falls back to pool_count
 }
 
 /** A /resolve response: the placed target plus its denormalized root→… lineage. */
@@ -46,6 +47,7 @@ export function createEmptyAsset(scope: string, hiddenLabelMax: number): Interne
     nodeIndex: new Map(),
     nodeIds: [],
     poolCount: [], // number[] so we can append
+    poolCountExtant: [],
     parent: [],
     tipLineage: new Map(),
     tipById: new Map(),
@@ -66,9 +68,11 @@ function ensureNode(
   if (existing !== undefined) return existing;
 
   const idx = asset.nodeIds.length;
+  const extant = node.pool_count_extant ?? node.pool_count;
   asset.nodeIndex.set(node.id, idx);
   asset.nodeIds.push(node.id);
   (asset.poolCount as number[]).push(node.pool_count);
+  (asset.poolCountExtant as number[]).push(extant);
   (asset.parent as number[]).push(parentIdx);
 
   const parentId = parentIdx >= 0 ? asset.nodeIds[parentIdx] : null;
@@ -79,6 +83,7 @@ function ensureNode(
     common: node.common,
     parent: parentId,
     pool_count: node.pool_count,
+    pool_count_extant: extant,
   };
   asset.nodeById.set(node.id, record);
   return idx;

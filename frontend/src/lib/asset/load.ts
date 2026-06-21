@@ -9,14 +9,15 @@ import type { AssetNode, AssetTip, GameAsset, InternedAsset } from "./types";
 // path as prod. Vite proxies /api -> :8000 in dev (see vite.config.ts). Fallbacks keep
 // the app booting when the backend isn't running: the gitignored static Mammalia asset,
 // then the committed tiny sample. Override the primary with VITE_GAMEDATA_URL.
-const SOURCES = [
-  import.meta.env.VITE_GAMEDATA_URL ?? "/api/gamedata/current/",
-  "/mammalia.json",
-  "/sample_asset.json",
-];
+const PRIMARY = import.meta.env.VITE_GAMEDATA_URL ?? "/api/gamedata/current/";
+const FALLBACKS = ["/mammalia.json", "/sample_asset.json"];
 
-export async function loadAsset(url?: string): Promise<InternedAsset> {
-  const sources = url ? [url] : SOURCES;
+/** Load + intern a blob-mode asset. `scope` selects which current build to fetch
+ *  (?scope=key); omitted = the server's default current. Dev fallbacks keep the app
+ *  booting when the backend is down. */
+export async function loadAsset(scope?: string): Promise<InternedAsset> {
+  const primary = scope ? `${PRIMARY}?scope=${encodeURIComponent(scope)}` : PRIMARY;
+  const sources = [primary, ...FALLBACKS];
   let lastStatus = 0;
   for (const src of sources) {
     try {
@@ -44,11 +45,14 @@ export function intern(raw: GameAsset): InternedAsset {
 
   const n = nodeIds.length;
   const poolCount = new Int32Array(n);
+  const poolCountExtant = new Int32Array(n);
   const parent = new Int32Array(n);
 
   for (const node of raw.nodes) {
     const i = nodeIndex.get(node.id)!;
     poolCount[i] = node.pool_count;
+    // Fallback to pool_count for assets built before extant counts existed.
+    poolCountExtant[i] = node.pool_count_extant ?? node.pool_count;
     parent[i] = node.parent === null ? -1 : (nodeIndex.get(node.parent) ?? -1);
   }
 
@@ -69,9 +73,11 @@ export function intern(raw: GameAsset): InternedAsset {
   return {
     raw,
     mode: "blob",
+    scope: raw.scope,
     nodeIndex,
     nodeIds,
     poolCount,
+    poolCountExtant,
     parent,
     tipLineage,
     tipById,

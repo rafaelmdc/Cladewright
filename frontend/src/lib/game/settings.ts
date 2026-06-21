@@ -10,6 +10,9 @@ export interface GameSettings {
   treeLayout: TreeLayout;
   /** Show the scientific name (smaller) under a species' common name on the tree. */
   showScientific: boolean;
+  /** "Living only": exclude extinct species — they don't count and the "N remaining"
+   *  denominator switches to the extant-only counts. Off = include extinct. */
+  extantOnly: boolean;
   /** Free-play: timer never runs down, game never ends. */
   infiniteTime: boolean;
   /** Seconds on the clock at the start of a run. */
@@ -25,6 +28,7 @@ export interface GameSettings {
 export const DEFAULT_SETTINGS: GameSettings = {
   treeLayout: "radial",
   showScientific: true,
+  extantOnly: true,
   infiniteTime: false,
   startSeconds: 60,
   timePerNew: 4,

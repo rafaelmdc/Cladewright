@@ -37,6 +37,10 @@ class Command(BaseCommand):
                                  "species in scope (animalist-style 'have them all').")
         parser.add_argument("--clade-floor", type=int, default=10,
                             help="Min tips guaranteed per major clade (capped mode only).")
+        parser.add_argument("--include-extinct", action="store_true",
+                            help="Keep extinct species in the pool (tagged extinct). The "
+                                 "client extinct toggle hides/shows them; asset bakes a "
+                                 "separate extant-only 'N remaining' count.")
         parser.add_argument("--hidden-label-max", type=int, default=15,
                             help="Default 'N remaining' reveal threshold baked into the asset.")
         parser.add_argument("--enrich", choices=["offline", "braidworks"], default="offline",
@@ -71,7 +75,8 @@ class Command(BaseCommand):
 
         self.stdout.write("3/5 pool select…")
         pool_taxa = pool.select_pool(
-            tree, size=opts["pool_size"], clade_floor=opts["clade_floor"]
+            tree, size=opts["pool_size"], clade_floor=opts["clade_floor"],
+            include_extinct=opts["include_extinct"],
         )
         self.stdout.write(f"      {len(pool_taxa)} playable tips")
 

@@ -33,10 +33,13 @@ def select_pool(
     size: int = 0,
     clade_floor: int = 10,
     floor_rank: str = "order",
+    include_extinct: bool = False,
 ) -> list[Taxon]:
-    # Deterministic global order: source_id (fame ranking is post-MVP).
+    # Deterministic global order: source_id (fame ranking is post-MVP). Extinct taxa are
+    # dropped by default; with include_extinct they stay in the pool (tagged extinct in
+    # the asset) so a mode can offer them and the client toggle can hide/show them.
     candidates = sorted(
-        (t for _, t in tree.tips.values() if not t.extinct),
+        (t for _, t in tree.tips.values() if include_extinct or not t.extinct),
         key=lambda t: t.source_id,
     )
 

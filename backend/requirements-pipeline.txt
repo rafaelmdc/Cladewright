@@ -1,0 +1,6 @@
+# Deps to BUILD a game-data asset (manage.py build_gamedata --enrich braidworks).
+# Serving deps + the vendored Braidworks wheels (real common-name enrichment via the
+# wikidata weaver). Build the wheels with: scripts/build_braidworks_wheels.sh
+-r requirements.txt
+./vendor/braidworks_core-0.10.0-py3-none-any.whl
+./vendor/wikidata_weaver-0.1.0-py3-none-any.whl

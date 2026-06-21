@@ -44,7 +44,8 @@ def build_asset(
     group_aliases = group_aliases or {}
     # Resolve each pool tip to its backbone parent + lineage.
     tip_lineages: dict[str, list[str]] = {}
-    pool_count: Counter[str] = Counter()
+    pool_count: Counter[str] = Counter()  # all pool tips (incl. extinct, if pooled)
+    pool_count_extant: Counter[str] = Counter()  # excluding extinct tips
     for tip in enriched:
         tid = tip_id(tip.taxon.scientific_name)
         parent_id, _ = tree.tips[tid]
@@ -52,6 +53,8 @@ def build_asset(
         tip_lineages[tid] = lineage
         for node_id in lineage:
             pool_count[node_id] += 1
+            if not tip.taxon.extinct:
+                pool_count_extant[node_id] += 1
 
     induced = set(pool_count)  # every ancestor of some pool tip
 
@@ -72,6 +75,9 @@ def build_asset(
                 # Parent is always ancestral to the same tips, hence also induced.
                 "parent": node.parent,
                 "pool_count": pool_count[node_id],
+                # Extant-only denominator for the "N remaining" counter when the player
+                # has the extinct toggle off. Equals pool_count when no extinct pooled.
+                "pool_count_extant": pool_count_extant[node_id],
             }
         )
     nodes.sort(key=lambda n: n["id"])

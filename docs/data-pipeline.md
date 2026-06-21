@@ -45,6 +45,24 @@ What each accepted species row gives us, denormalized, with no tree-walk:
   often not). Read it here; fill the gaps in Stage 4. BICHO doesn't currently ingest
   this file, so either extend its `taxa ingest` or read the side table directly.
 
+### Getting the ColDP dump (bulk, not the API)
+
+`pipeline/ingest.py` reads **two ColDP shapes**, picked automatically from the header,
+so the pipeline never needs a separate denormalize step:
+
+- **normalized** — the standard CoL archive (`latest_coldp.zip`): a `parentID` chain.
+  Ingest indexes the accepted backbone once, then walks each species' parents into a
+  ranked lineage. **This is the source for any scope** — `make col-dump` downloads the
+  ~1 GB archive once and every clade (`--scope class=Aves`, `order=Carnivora`, …) is
+  sliced locally from it. Prefer this over the ChecklistBank *search API*, which would
+  have to be paginated per clade and risks rate-limiting.
+- **denormalized** — `scripts/fetch_clb_coldp.py` output (each row carries its lineage
+  columns). Kept for small, targeted API pulls; fine for a single clade but don't fan it
+  out over the whole kingdom.
+
+Wikidata enrichment (Stage 4) is rate-safe by construction: the weaver batches 200
+names per SPARQL POST and caches by month, so a full clade is tens of cached queries.
+
 ## Stage 2 — Backbone build
 
 Turn the denormalized lineages into a single rooted tree:
@@ -103,12 +121,24 @@ species):
   "monkey", "kangaroo" live there, not on the family). Hangs off
   `organism.scientific_name`; the whole batch resolves in chunked SPARQL `POST`s.
 
-> **Status: built.** `wikidata_weaver` exists (branch `cladewright-weavers`), passes
-> `verify --strict` + live E2E; the planner routes `organism.scientific_name →
-> {organism.vernacular_names, wikipedia.title}`. Cladewright consumes it via
-> `enrich.BraidworksProvider`, which harvests names for **species *and* clade nodes**
-> (so "bear" → Ursidae, "sloth" → Folivora resolve). The default stays
-> `OfflineProvider` so the pipeline runs without the weaver installed.
+> **Status: built + wired.** `wikidata_weaver` exists, passes `verify --strict` + live
+> E2E; the planner routes `organism.scientific_name → {organism.vernacular_names,
+> wikipedia.title}`. Cladewright consumes it via `enrich.BraidworksProvider`, which
+> harvests names for **species *and* clade nodes** (so "bear" → Ursidae, "sloth" →
+> Folivora resolve). Run a real build with `--enrich braidworks`; the default stays
+> `OfflineProvider` so the pipeline still runs without it.
+>
+> **Packaging:** Braidworks (`braidworks-core` + `wikidata_weaver`) is installed from
+> **vendored wheels** in `backend/vendor/` (rebuilt by
+> `backend/scripts/build_braidworks_wheels.sh`, listed in
+> `backend/requirements-pipeline.txt`, installed into `backend/.venv-pipeline`). It is
+> deliberately **not** in the serving image — only asset builds need it.
+>
+> **TODO (deployment):** vendored wheels are a local-build convenience built from the
+> dev's `../../braidworks` checkout. For deployment, publish Braidworks as a **pinned
+> GitHub release wheel** (or a Git-tag/index `pip install` target) and point
+> `requirements-pipeline.txt` at that published artifact, so CI/CD never builds from a
+> local path. Until then, asset builds must run on a machine with the sibling repo.
 >
 > **Post-MVP (deferred):** the popularity/obscurity "fame" system — a
 > `wikipedia_weaver` pageview score that would weight the Marathon time bonus by
@@ -158,6 +188,26 @@ needs so play is O(lineage length):
 - The alias/autocomplete index.
 - A **provenance block**: ColDP release, BICHO/Braidworks versions, pool config,
   build timestamp, asset `version`.
+
+## Stage 6 — load into Postgres (serving)
+
+The build above writes a JSON file; `manage.py load_gamedata --asset <file> --current`
+ingests it into Postgres, the store of record. Decoupled from `build_gamedata` on
+purpose: loading needs **no** pipeline deps, so a built asset is promoted to any
+environment by shipping the JSON. One load writes both representations of the same build:
+
+- **`AssetVersion.blob`** — the whole asset JSON in a `JSONB` column (one row per
+  `(scope, version)`, `is_current` flag). This is what *blob mode* serves: small scopes
+  download it whole and play in-memory.
+- **Relational mirror** — `TaxonNode` / `TaxonTip` / `Alias`. Lineages are denormalized
+  onto the rows (array columns) so `/resolve` is a single-row read, and `Alias.norm`
+  gets a **GIN trigram index** (a Postgres-only, vendor-guarded migration) so `/search`
+  autocomplete is fast over millions of names. This is what *incremental mode* serves for
+  the huge scope (all-Animalia), where the blob would be too big to ship. See
+  [`architecture.md`](architecture.md#scaling-to-huge-scope).
+
+`load_gamedata` is idempotent per `(scope, version)` and computes node depth + lineage
+from the asset's parent pointers at load time.
 
 ## Reproducibility & versioning
 

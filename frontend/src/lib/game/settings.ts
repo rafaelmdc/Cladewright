@@ -3,7 +3,13 @@
 // session survives reloads. The "real" defaults will be locked once playtested;
 // see docs/marathon-design.md#still-to-settle-by-playtest.
 
+export type TreeLayout = "radial" | "rectangular";
+
 export interface GameSettings {
+  /** Tree-of-life canvas style: radial (circular) or rectangular phylogram. */
+  treeLayout: TreeLayout;
+  /** Show the scientific name (smaller) under a species' common name on the tree. */
+  showScientific: boolean;
   /** Free-play: timer never runs down, game never ends. */
   infiniteTime: boolean;
   /** Seconds on the clock at the start of a run. */
@@ -17,6 +23,8 @@ export interface GameSettings {
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
+  treeLayout: "radial",
+  showScientific: true,
   infiniteTime: false,
   startSeconds: 60,
   timePerNew: 4,

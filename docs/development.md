@@ -1,76 +1,93 @@
 # Development
 
-How the repo is laid out and how to run the two halves. This is the **Phase 0
-scaffold** — most modules are stubs with `TODO(phase-N)` markers tied to
-[`roadmap.md`](roadmap.md). Nothing is implemented yet.
+How the repo is laid out and how to run it. The data pipeline, Marathon, the
+TreeRenderer, the NodeCard learn-cards, and the Postgres-backed backend are all
+implemented; build order and what's left live in [`roadmap.md`](roadmap.md).
 
 ## Layout
 
 ```
 Cladewright/
-├── AGENTS.md                  contributor contract
-├── README.md
 ├── docs/                      design of record (architecture, pipeline, marathon, performance, …)
-├── backend/                   Django + DRF
-│   ├── pyproject.toml
-│   ├── manage.py
+├── docker-compose.dev.yml     dev stack: Postgres + Django API (mirrors the prod shape)
+├── .env.example               copy to .env for the dev stack
+├── Makefile                   make dev / seed / gui-* / be-* targets
+├── backend/                   Django + DRF + Postgres
+│   ├── Dockerfile, requirements.txt
 │   ├── cladewright/           project (settings, urls, wsgi/asgi)
 │   ├── apps/
-│   │   ├── gamedata/          serves the game-data asset; build_gamedata command
+│   │   ├── gamedata/          models (AssetVersion + TaxonNode/Tip/Alias), views
+│   │   │   └── management/commands/  build_gamedata, load_gamedata
 │   │   ├── accounts/          Google OAuth via django-allauth
 │   │   └── scores/            scores, streaks, leaderboards
 │   └── pipeline/              offline ETL: ingest → backbone → pool → enrich → asset → validate
 ├── frontend/                  React + TS + Vite + Tailwind SPA
-│   ├── package.json
-│   ├── public/
-│   │   └── sample_asset.json  tiny hand-authored game-data asset (shared dev fixture)
+│   ├── vite.config.ts         proxies /api → :8000 in dev
 │   └── src/
-│       ├── lib/asset/         asset types + loader (intern to typed arrays)
-│       ├── lib/tree/          MRCA, induced display tree
-│       ├── lib/game/          found_count + "N remaining" labels
-│       ├── components/        TreeRenderer
+│       ├── lib/asset/         asset types + loader (API first, static fallback)
+│       ├── lib/tree/          MRCA, induced display tree, render-tree builder
+│       ├── lib/game/          resolve, "N remaining", settings
+│       ├── lib/wiki.ts        Wikipedia summary fetch (localStorage-cached)
+│       ├── components/        TreeRenderer, NodeCard, SettingsPanel
 │       └── pages/             Hub, Marathon, Classic
-└── data/                      ColDP dumps etc. — git-ignored, never committed
+└── data/                      ColDP dumps + built assets — git-ignored, never committed
 ```
 
-## Backend
+## Quickstart (Docker — dev on the same Postgres as prod)
 
-Requires Python 3.12+. From `backend/`:
+The dev stack runs Postgres + the Django API in Docker; the Vite frontend stays a
+host dev server (HMR) and proxies `/api` to it. One command:
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e .                 # web deps (django, DRF, allauth)
+cp .env.example .env          # tweak POSTGRES_PASSWORD etc.
+make dev                      # db + API (docker) + GUI (vite on :5173)
+make seed                     # one-time: load a built asset into Postgres
+```
+
+- GUI: `http://localhost:5173/` (proxies `/api` → `:8000`)
+- API: `http://localhost:8000/api/gamedata/current/`
+- `make dev-down` tears it all down. `make help` lists every target
+  (`be-up/down/logs/shell`, `migrate`, `seed`, `dbshell`, `gui-*`).
+
+`make seed` runs `load_gamedata --asset /data/out/mammalia.json --current` inside the
+web container (`./data` is mounted). Build that asset first (below) or drop a prebuilt
+JSON at `data/out/`.
+
+## Backend without Docker (optional)
+
+Requires Python 3.12+ and a Postgres reachable via `DATABASE_URL` or `POSTGRES_*`
+env vars (no env → sqlite fallback, which skips the trigram index). From `backend/`:
+
+```bash
+pip install -r requirements.txt
 python manage.py migrate
-python manage.py runserver
+python manage.py runserver           # :8000
 ```
 
-The data pipeline imports **BICHO** and **Braidworks** (sibling repos
-`../BICHOv2`, `../braidworks`). Those are *only* needed to regenerate the asset and
-are wired in Phase 1 — see `backend/pipeline/README.md`. Normal request serving
-never imports them.
-
-Regenerate the game-data asset (Phase 1; currently a stub):
+The data pipeline additionally imports **Braidworks** (sibling repo) for real
+common-name enrichment; it's *only* needed to regenerate the asset, never to serve.
+Braidworks ships as **vendored wheels** under `backend/vendor/` (built from the sibling
+repo by `backend/scripts/build_braidworks_wheels.sh`) and is installed into a separate
+build venv via `backend/requirements-pipeline.txt` — kept out of the serving image.
 
 ```bash
-python manage.py build_gamedata --coldp-dir /path/to/coldp \
-    --out ../frontend/public/sample_asset.json
+make wheels            # rebuild backend/vendor/*.whl from ../../braidworks (uv)
+make pipeline-venv     # backend/.venv-pipeline with serving deps + Braidworks wheels
+make build-asset SCOPE=family=Felidae COLDP=data/coldp_mammalia OUT=data/out/felidae.json
+make seed ASSET=/data/out/felidae.json   # load into Postgres, mark current for its scope
 ```
+
+> **TODO (deployment):** the vendored wheels are a *local-build* convenience — they're
+> built from the developer's checkout of `../../braidworks`. Before deploying, publish
+> Braidworks properly as a **GitHub release wheel** (or a tag the build can `pip install`
+> from a Git URL / index), so CI/CD installs it from a pinned published artifact rather
+> than from a local path. Then `requirements-pipeline.txt` points at that pinned release
+> instead of `./vendor/*.whl`. See [`data-pipeline.md`](data-pipeline.md#stage-4--braidworks-enrichment-common-names).
 
 ## Frontend
 
-Requires Node 20+. From `frontend/`:
-
-```bash
-npm install
-npm run dev                      # Vite dev server
-```
-
-In dev the SPA loads `public/sample_asset.json` (override with `VITE_GAMEDATA_URL`,
-e.g. point it at the backend's `/api/gamedata/current/`) so the UI can be built
-before the real pipeline exists — see the asset contract in
-[`game-asset-format.md`](game-asset-format.md).
-
-## Where to start implementing
-
-Follow [`roadmap.md`](roadmap.md). Phase 0 is this scaffold; Phase 1 is the
-pipeline (`backend/pipeline/`), Phase 2 is `TreeRenderer`, Phase 3 is Marathon.
+Requires Node 20+. `make gui` (or `cd frontend && npm run dev`) runs Vite on `:5173`.
+The SPA loads the asset from `/api/gamedata/current/` (DB-backed) first, falling back
+to a static `public/mammalia.json` then the committed `sample_asset.json` if the
+backend is down — so `make gui` alone still boots. Override the source with
+`VITE_GAMEDATA_URL`. Asset contract: [`game-asset-format.md`](game-asset-format.md).

@@ -14,10 +14,14 @@ export interface RenderNode {
   key: string; // stable id (node id or tip id) — animation key
   kind: "node" | "tip";
   label: string;
+  sci?: string; // scientific name (tips) — shown under the common name when enabled
   rank?: string;
   remaining: number; // hidden-sister count (nodes only; 0 for tips)
   showHidden: boolean; // this node displays its "N hidden" label
   children: RenderNode[];
+  // --- set by the collapse pass (see collapse.ts) ---
+  collapsed?: boolean; // rendered as a single wedge; its subtree is hidden
+  collapsedCount?: number; // # of placed species folded under the wedge
 }
 
 export function buildDisplayTree(
@@ -54,9 +58,16 @@ export function buildDisplayTree(
     for (const c of childNodes.get(idx) ?? []) kids.push(build(c));
     for (const tipId of tipsByParent.get(idx) ?? []) {
       const tip = asset.tipById.get(tipId)!;
-      kids.push({ key: tipId, kind: "tip", label: tip.common, remaining: 0, showHidden: false, children: [] });
+      kids.push({ key: tipId, kind: "tip", label: tip.common, sci: tip.sci, remaining: 0, showHidden: false, children: [] });
     }
+    // Deterministic sibling order: the tree shape is a function of WHICH items are
+    // placed, never the order they were typed. Without this, children landed in
+    // `present`-set insertion order, so branches interleaved by typing sequence and
+    // sparse twigs got slotted next to dense clusters (boar appearing beside the deer
+    // cluster). Sorting by stable key keeps the radial layout stable as play grows.
+    kids.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 
+    const remaining = tracker.remaining(idx);
     const eligible = tracker.activeLabels.has(idx);
     const descendantShows = kids.some((k) => k.showHidden || subtreeShows(k));
     return {
@@ -64,8 +75,10 @@ export function buildDisplayTree(
       kind: "node",
       label: node.common ?? node.sci,
       rank: node.rank,
-      remaining: tracker.remaining(idx),
-      showHidden: eligible && !descendantShows, // deepest-branch placement
+      remaining,
+      // deepest-branch placement; "0 hidden" is meaningless clutter (you've found
+      // everything under this node), so a fully-found node shows no label.
+      showHidden: eligible && !descendantShows && remaining > 0,
       children: kids,
     };
   };

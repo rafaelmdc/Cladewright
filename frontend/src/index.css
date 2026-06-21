@@ -8,6 +8,49 @@
 
 body {
   margin: 0;
-  background: theme(colors.clade.bg);
+  background-color: theme(colors.clade.bg);
+  /* faint paper dot-grid — barely-there field-notebook texture */
+  background-image: radial-gradient(theme(colors.clade.ink / 4%) 1px, transparent 1px);
+  background-size: 22px 22px;
   color: theme(colors.clade.ink);
+  font-family: theme(fontFamily.sans);
+}
+
+@layer components {
+  /* Hand-inked card: thick rounded ink border + a slight printed offset shadow. */
+  .ink-card {
+    @apply rounded-[20px] border-2 border-clade-ink/85 bg-clade-paper/70;
+    box-shadow: 4px 5px 0 0 theme(colors.clade.ink / 10%);
+  }
+
+  /* Pill button (nav, toggles). Add .pill-active for the filled state. */
+  .pill {
+    @apply rounded-full border-2 border-clade-ink/25 px-4 py-1.5 font-mono text-sm text-clade-ink/70 transition;
+  }
+  .pill:hover {
+    @apply border-clade-ink/60 text-clade-ink;
+  }
+  .pill-active {
+    @apply border-clade-ink bg-clade-ink text-clade-bg;
+  }
+
+  /* Primary call-to-action — green handwriting pill. */
+  .btn-play {
+    @apply inline-flex items-center gap-1.5 rounded-full bg-clade-accent px-5 py-1.5 font-hand text-2xl font-bold text-clade-paper transition;
+    box-shadow: 2px 3px 0 0 theme(colors.clade.ink / 18%);
+  }
+  .btn-play:hover {
+    filter: brightness(1.08);
+  }
+  .btn-play:active {
+    transform: translate(1px, 2px);
+    box-shadow: 1px 1px 0 0 theme(colors.clade.ink / 18%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
 }

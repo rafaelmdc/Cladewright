@@ -5,17 +5,32 @@
 
 import type { AssetNode, AssetTip, GameAsset, InternedAsset } from "./types";
 
-// Dev serves the real (gitignored) Mammalia asset from public/; a fresh clone without
-// it falls back to the committed tiny sample so the app still boots.
-const PRIMARY_URL = import.meta.env.VITE_GAMEDATA_URL ?? "/mammalia.json";
-const FALLBACK_URL = "/sample_asset.json";
+// Primary source is the DB-backed API (served by Django, blob from Postgres) — same
+// path as prod. Vite proxies /api -> :8000 in dev (see vite.config.ts). Fallbacks keep
+// the app booting when the backend isn't running: the gitignored static Mammalia asset,
+// then the committed tiny sample. Override the primary with VITE_GAMEDATA_URL.
+const SOURCES = [
+  import.meta.env.VITE_GAMEDATA_URL ?? "/api/gamedata/current/",
+  "/mammalia.json",
+  "/sample_asset.json",
+];
 
-export async function loadAsset(url: string = PRIMARY_URL): Promise<InternedAsset> {
-  let res = await fetch(url);
-  if (!res.ok && url !== FALLBACK_URL) res = await fetch(FALLBACK_URL);
-  if (!res.ok) throw new Error(`Failed to load game asset: ${res.status}`);
-  const raw: GameAsset = await res.json();
-  return intern(raw);
+export async function loadAsset(url?: string): Promise<InternedAsset> {
+  const sources = url ? [url] : SOURCES;
+  let lastStatus = 0;
+  for (const src of sources) {
+    try {
+      const res = await fetch(src);
+      if (res.ok) {
+        const raw: GameAsset = await res.json();
+        return intern(raw);
+      }
+      lastStatus = res.status;
+    } catch {
+      // network error (e.g. backend down) — try the next source
+    }
+  }
+  throw new Error(`Failed to load game asset (last status ${lastStatus})`);
 }
 
 export function intern(raw: GameAsset): InternedAsset {

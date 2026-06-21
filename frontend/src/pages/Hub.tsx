@@ -1,40 +1,84 @@
-// Landing hub — pick a mode. See docs/examples/homepage.png for the intended look.
+// Landing hub — pick a mode. Mirrors docs/examples/homepage.png: leaf wordmark + nav,
+// a big handwritten headline, two mode cards with play buttons, difficulty pills, all
+// over the drifting-leaf background.
 import { Link } from "react-router-dom";
+
+import { LeafMark, TopBar } from "../components/Brand";
+import { LeafBackground } from "../components/LeafBackground";
 
 export function Hub() {
   return (
-    <main className="mx-auto max-w-4xl px-6 py-16">
-      <h1 className="text-5xl font-semibold leading-tight">
-        Guess your way across the tree of life.
-      </h1>
-      <p className="mt-3 text-lg text-clade-ink/70">
-        One daily puzzle, two ways to play. Pick a mode.
-      </p>
+    <div className="min-h-screen">
+      <LeafBackground density={30} />
+      <div className="mx-auto max-w-5xl px-6 py-8">
+        <TopBar />
 
-      <div className="mt-10 grid gap-6 sm:grid-cols-2">
-        <ModeCard
-          to="/marathon"
-          title="Marathon"
-          blurb="Name as many organisms as you can against the clock — each lands on a living tree you build. Empty branches show how many sisters stay hidden."
-        />
-        <ModeCard
-          to="/classic"
-          title="Classic"
-          blurb="Guess the mystery animal. Each wrong guess reveals the nearest shared ancestor. Limited guesses."
-        />
+        <p className="mt-8 font-mono text-xs uppercase tracking-wider text-clade-ink/45">
+          data: Catalogue of Life · every taxon shown common + scientific
+        </p>
+
+        <h1 className="mt-4 max-w-3xl font-hand text-7xl font-bold leading-[0.95] text-clade-ink sm:text-8xl">
+          Guess your way across the tree of life.
+        </h1>
+
+        <div className="mt-10 grid gap-6 sm:grid-cols-2">
+          <ModeCard
+            to="/marathon"
+            title="Marathon"
+            blurb="Name as many organisms as you can against the clock — each one lands on a living tree you build. Empty branches show how many sisters stay hidden. Zoom in to hunt them."
+            meta="best: — · grow the tree"
+          />
+          <ModeCard
+            to="/classic"
+            title="Classic"
+            blurb="Guess the mystery animal. Each wrong guess reveals the nearest shared ancestor. Limited guesses."
+            meta="daily · guess the animal"
+          />
+        </div>
+
+        <div className="mt-8 flex flex-wrap items-center gap-3">
+          <span className="font-mono text-xs uppercase tracking-wider text-clade-ink/45">
+            Difficulty
+          </span>
+          <span className="pill pill-active cursor-default">Common names</span>
+          <span className="pill cursor-default border-dashed">Scientific only</span>
+        </div>
       </div>
-    </main>
+    </div>
   );
 }
 
-function ModeCard({ to, title, blurb }: { to: string; title: string; blurb: string }) {
+function ModeCard({
+  to,
+  title,
+  blurb,
+  meta,
+  tag,
+}: {
+  to: string;
+  title: string;
+  blurb: string;
+  meta: string;
+  tag?: string;
+}) {
   return (
-    <Link
-      to={to}
-      className="block rounded-2xl border border-clade-ink/15 bg-white/40 p-6 transition hover:border-clade-ink/40"
-    >
-      <h2 className="text-2xl font-semibold">{title}</h2>
-      <p className="mt-2 text-clade-ink/70">{blurb}</p>
-    </Link>
+    <div className="ink-card flex flex-col p-6">
+      <LeafMark className="h-8 w-8 text-clade-accent" />
+      <div className="mt-3 flex items-center gap-2">
+        <h2 className="font-hand text-5xl font-bold leading-none text-clade-ink">{title}</h2>
+        {tag && (
+          <span className="rounded-full bg-clade-ink px-2 py-0.5 font-mono text-[10px] tracking-wider text-clade-bg">
+            {tag}
+          </span>
+        )}
+      </div>
+      <p className="mt-3 font-hand text-2xl leading-snug text-clade-ink/70">{blurb}</p>
+      <div className="mt-auto flex items-center justify-between pt-5">
+        <Link to={to} className="btn-play">
+          ▶ Play
+        </Link>
+        <span className="font-mono text-xs text-clade-ink/45">{meta}</span>
+      </div>
+    </div>
   );
 }

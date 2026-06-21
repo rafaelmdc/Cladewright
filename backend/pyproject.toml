@@ -4,10 +4,13 @@ version = "0.0.0"
 description = "Cladewright backend: serves the game-data asset, accounts, scores."
 requires-python = ">=3.12"
 dependencies = [
-    "django>=5.0",
+    "django>=6.0,<6.1",
     "djangorestframework>=3.15",
     "django-allauth[socialaccount]>=0.63",
     "django-cors-headers>=4.4",
+    "psycopg[binary]>=3.1",   # Postgres driver (prod + local)
+    "dj-database-url>=2.2",   # DATABASE_URL parsing
+    "gunicorn>=22.0",         # WSGI server (docker)
 ]
 
 # The data pipeline (backend/pipeline/) additionally imports BICHO and Braidworks

@@ -1,0 +1,12 @@
+# Keep the build context (and image) lean and free of secrets / gitignored data.
+__pycache__/
+*.pyc
+*.sqlite3
+.env
+.env.*
+reference/          # vendored animalist source — gitignored, never ship it
+.pytest_cache/
+.ruff_cache/
+*.log
+.venv/          # local pipeline build venv — never needed in the serving image
+.venv-pipeline/

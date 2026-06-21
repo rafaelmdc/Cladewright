@@ -1,0 +1,10 @@
+# Runtime deps to SERVE the app (mirrors pyproject [project.dependencies]). The data
+# pipeline (BICHO/Braidworks) is NOT here — it isn't needed to serve or to load a built
+# asset; see pyproject [project.optional-dependencies].
+django>=6.0,<6.1
+djangorestframework>=3.15
+django-allauth[socialaccount]>=0.63
+django-cors-headers>=4.4
+psycopg[binary]>=3.1
+dj-database-url>=2.2
+gunicorn>=22.0

@@ -5,14 +5,16 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
 
-import { DEFAULT_SETTINGS, type GameSettings } from "../lib/game/settings";
+import { DEFAULT_SETTINGS, type GameSettings, type TreeLayout } from "../lib/game/settings";
 
 interface Props {
   settings: GameSettings;
   onChange: (next: GameSettings) => void;
+  /** DEV CHEAT (remove before launch): auto-place N random organisms onto the tree. */
+  onAutofill?: (n: number) => void;
 }
 
-export function SettingsPanel({ settings, onChange }: Props) {
+export function SettingsPanel({ settings, onChange, onAutofill }: Props) {
   const [open, setOpen] = useState(false);
   const set = <K extends keyof GameSettings>(key: K, value: GameSettings[K]) =>
     onChange({ ...settings, [key]: value });
@@ -54,23 +56,48 @@ export function SettingsPanel({ settings, onChange }: Props) {
                 </button>
               </div>
 
-              <Toggle
-                label="Infinite time"
-                hint="Free play — the clock never runs out."
-                checked={settings.infiniteTime}
-                onChange={(v) => set("infiniteTime", v)}
-              />
+              <div>
+                <p className="mb-2 text-xs uppercase tracking-wide text-clade-ink/40">Visual</p>
+                <Segmented<TreeLayout>
+                  label="Tree layout"
+                  value={settings.treeLayout}
+                  options={[
+                    { value: "radial", label: "Radial" },
+                    { value: "rectangular", label: "Phylogram" },
+                  ]}
+                  onChange={(v) => set("treeLayout", v)}
+                />
+                <div className="mt-4">
+                  <Toggle
+                    label="Scientific names"
+                    hint="Show the binomial under each species' common name."
+                    checked={settings.showScientific}
+                    onChange={(v) => set("showScientific", v)}
+                  />
+                </div>
+              </div>
 
-              <Slider
-                label="Start time"
-                unit="s"
-                min={10}
-                max={300}
-                step={5}
-                value={settings.startSeconds}
-                disabled={settings.infiniteTime}
-                onChange={(v) => set("startSeconds", v)}
-              />
+              <div className="border-t border-clade-ink/10 pt-4">
+                <p className="mb-3 text-xs uppercase tracking-wide text-clade-ink/40">Time</p>
+                <Toggle
+                  label="Infinite time"
+                  hint="Free play — the clock never runs out."
+                  checked={settings.infiniteTime}
+                  onChange={(v) => set("infiniteTime", v)}
+                />
+                <div className="mt-4">
+                  <Slider
+                    label="Start time"
+                    unit="s"
+                    min={10}
+                    max={300}
+                    step={5}
+                    value={settings.startSeconds}
+                    disabled={settings.infiniteTime}
+                    onChange={(v) => set("startSeconds", v)}
+                  />
+                </div>
+              </div>
 
               <div className="border-t border-clade-ink/10 pt-4">
                 <p className="mb-3 text-xs uppercase tracking-wide text-clade-ink/40">
@@ -110,6 +137,30 @@ export function SettingsPanel({ settings, onChange }: Props) {
                 />
               </div>
 
+              {/* DEV CHEAT — remove this whole block before launch. */}
+              {onAutofill && (
+                <div className="border-t border-dashed border-clade-ink/20 pt-4">
+                  <p className="mb-1 text-xs uppercase tracking-wide text-clade-ink/40">
+                    Cheat · dev
+                  </p>
+                  <p className="mb-3 text-xs text-clade-ink/45">
+                    Auto-place random organisms so you don't have to type a tree by hand.
+                  </p>
+                  <div className="flex gap-2">
+                    {[25, 50, 100, 300].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => onAutofill(n)}
+                        className="flex-1 rounded-md border border-clade-ink/15 px-2 py-1.5 font-mono text-sm text-clade-ink/70 transition hover:border-clade-accent hover:text-clade-accent"
+                      >
+                        +{n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <button
                 onClick={() => onChange({ ...DEFAULT_SETTINGS })}
                 className="mt-auto rounded-lg border border-clade-ink/15 px-3 py-2 text-sm text-clade-ink/60 transition hover:border-clade-ink/40"
@@ -121,6 +172,41 @@ export function SettingsPanel({ settings, onChange }: Props) {
         )}
       </AnimatePresence>
     </>
+  );
+}
+
+function Segmented<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div>
+      <span className="text-sm font-medium">{label}</span>
+      <div className="mt-1.5 flex rounded-lg border border-clade-ink/15 p-0.5">
+        {options.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onChange(o.value)}
+            aria-pressed={value === o.value}
+            className={`flex-1 rounded-md px-3 py-1.5 text-sm transition ${
+              value === o.value
+                ? "bg-clade-accent text-white"
+                : "text-clade-ink/60 hover:text-clade-ink"
+            }`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

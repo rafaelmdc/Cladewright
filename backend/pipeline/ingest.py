@@ -58,6 +58,20 @@ def _read_tsv(path: Path):
             yield row, get
 
 
+def _headers(path: Path) -> list[str]:
+    with open(path, encoding="utf-8", newline="") as fh:
+        return next(csv.reader(fh, delimiter="\t"), []) or []
+
+
+# Ranks that are never ancestors in the accepted backbone — we don't index these into the
+# parentID walk map (keeps it to the backbone, not the millions of species rows).
+_TERMINAL_RANKS = frozenset(
+    {"species", "subspecies", "variety", "subvariety", "form", "subform", "natio",
+     "aberration", "morph", "infraspecificname"}
+)
+_LINEAGE_RANK_SET = frozenset(LINEAGE_RANKS)
+
+
 def _load_vernacular(coldp_dir: Path) -> dict[str, str]:
     """taxonID -> a preferred common name (English first), if VernacularName.tsv exists."""
     path = coldp_dir / "VernacularName.tsv"
@@ -94,7 +108,15 @@ def _load_distribution(coldp_dir: Path) -> dict[str, list[str]]:
 
 
 def ingest_coldp(coldp_dir: Path, *, scope: str = "kingdom=Animalia") -> list[Taxon]:
-    """Read accepted species from a ColDP dump into Taxa with their lineages."""
+    """Read accepted species from a ColDP dump into Taxa with their lineages.
+
+    Handles BOTH ColDP shapes so the pipeline never needs a separate denormalize step:
+      * **denormalized** — each row already carries its ranked lineage columns
+        (``col:class``, ``col:order``, …). What ``scripts/fetch_clb_coldp.py`` writes.
+      * **normalized** — the standard ColDP archive (e.g. CoL's ``latest_coldp.zip``):
+        each row has a ``col:parentID``, and the lineage is reconstructed by walking the
+        parent chain. The bulk dump is ingested directly, no preprocessing.
+    """
     coldp_dir = Path(coldp_dir)
     name_usage = coldp_dir / "NameUsage.tsv"
     if not name_usage.exists():
@@ -106,28 +128,35 @@ def ingest_coldp(coldp_dir: Path, *, scope: str = "kingdom=Animalia") -> list[Ta
     vernacular = _load_vernacular(coldp_dir)
     distribution = _load_distribution(coldp_dir)
 
+    # Pick the shape from the header. Normalized ColDP carries `parentID` and atomized
+    # name parts (including a `genus` column) but NO higher-rank lineage columns; the
+    # denormalized API dump carries class/order/family/… columns and no parentID. So key
+    # off the *higher* ranks (excluding genus/subgenus, which exist in both as name parts)
+    # and fall back to parentID.
+    hset = {h.replace("col:", "") for h in _headers(name_usage)}
+    has_higher = any(r in hset for r in LINEAGE_RANKS if r not in ("genus", "subgenus"))
+    denormalized = has_higher or "parentID" not in hset
+    lineage_of = _denorm_lineage if denormalized else _build_parent_walker(name_usage)
+
     taxa: list[Taxon] = []
     for row, get in _read_tsv(name_usage):
         if get(row, "status").lower() not in ACCEPTED_STATUSES:
             continue
         if get(row, "rank").lower() != "species":
             continue
-        if scope_rank and get(row, scope_rank).lower() != scope_value:
+
+        lineage = lineage_of(row, get)
+        if not lineage:
+            continue
+        if scope_rank and dict(lineage).get(scope_rank, "").lower() != scope_value:
             continue
 
         # Prefer a clean binomial from the atomic fields; fall back to scientificName.
-        genus = get(row, "genericName")
+        # Normalized ColDP names the genus field "genus"; the API dump uses "genericName".
+        genus = get(row, "genericName") or get(row, "genus")
         epithet = get(row, "specificEpithet")
         sci = f"{genus} {epithet}".strip() if genus and epithet else get(row, "scientificName")
         if not sci:
-            continue
-
-        lineage: list[tuple[str, str]] = []
-        for rank in LINEAGE_RANKS:
-            name = get(row, rank)
-            if name:
-                lineage.append((rank, name))
-        if not lineage:
             continue
 
         source_id = get(row, "ID")
@@ -143,3 +172,46 @@ def ingest_coldp(coldp_dir: Path, *, scope: str = "kingdom=Animalia") -> list[Ta
             )
         )
     return taxa
+
+
+def _denorm_lineage(row, get) -> list[tuple[str, str]]:
+    """Lineage straight off a row's ranked columns (denormalized ColDP)."""
+    out: list[tuple[str, str]] = []
+    for rank in LINEAGE_RANKS:
+        name = get(row, rank)
+        if name:
+            out.append((rank, name))
+    return out
+
+
+def _build_parent_walker(name_usage: Path):
+    """First pass over a NORMALIZED dump: index the accepted backbone (every non-terminal
+    rank) as id → (parentID, rank, name). Returns a closure that, given a species row,
+    walks its parent chain into an ordered ranked lineage. Memory is bounded by the
+    backbone (higher taxa), not the species rows."""
+    backbone: dict[str, tuple[str, str, str]] = {}
+    for row, get in _read_tsv(name_usage):
+        if get(row, "status").lower() not in ACCEPTED_STATUSES:
+            continue
+        rank = get(row, "rank").lower()
+        if rank in _TERMINAL_RANKS:
+            continue
+        nid = get(row, "ID")
+        if not nid:
+            continue
+        name = get(row, "scientificName") or get(row, "uninomial") or get(row, "genus")
+        backbone[nid] = (get(row, "parentID"), rank, name)
+
+    def lineage_of(row, get) -> list[tuple[str, str]]:
+        by_rank: dict[str, str] = {}
+        cur = get(row, "parentID")
+        seen: set[str] = set()
+        while cur and cur in backbone and cur not in seen:
+            seen.add(cur)
+            parent_id, rank, name = backbone[cur]
+            if name and rank in _LINEAGE_RANK_SET and rank not in by_rank:
+                by_rank[rank] = name
+            cur = parent_id
+        return [(r, by_rank[r]) for r in LINEAGE_RANKS if r in by_rank]
+
+    return lineage_of

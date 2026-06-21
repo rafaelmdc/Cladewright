@@ -1,0 +1,48 @@
+# Dev stack: Postgres + the Django API, so dev runs on the same database as prod.
+# The Vite frontend stays a host dev server (HMR) and proxies /api -> :8000 (see
+# frontend/vite.config.ts). Bring it all up with `make dev`. Mirrors the portfolio repo's
+# docker-compose.dev.yml conventions (healthchecked db, code-mounted web).
+services:
+  db:
+    image: postgres:16
+    container_name: ${DB_CONTAINER_NAME:-cladewright-db}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${DB_HOST_PORT:-5432}:5432" # exposed so host tools (psql/DBeaver) can connect
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  web:
+    build: ./backend
+    container_name: ${WEB_CONTAINER_NAME:-cladewright-web}
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      DJANGO_SETTINGS_MODULE: cladewright.settings
+      # Dev file-fallback path (used only before the DB is seeded). Points at the built
+      # asset mounted from ./data below.
+      GAMEDATA_ASSET_PATH: /data/out/mammalia.json
+    ports:
+      - "${BACKEND_HOST_PORT:-8000}:${APP_PORT:-8000}"
+    volumes:
+      - ./backend:/app # live code mount (gunicorn --reload picks up edits)
+      - ./data:/data:ro # built assets, for `make seed` / file fallback
+    # Single line on purpose: a folded (>) block would keep a newline before the
+    # over-indented --bind and split it off, leaving gunicorn on its 127.0.0.1 default.
+    command: sh -lc "python manage.py migrate && exec gunicorn cladewright.wsgi:application --bind 0.0.0.0:${APP_PORT:-8000} --reload"
+
+volumes:
+  pgdata:

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { fetchMe, GOOGLE_LOGIN_URL, type Me } from "../lib/auth";
+import { fetchMe, type Me } from "../lib/auth";
 
 export function AuthChip() {
   const [me, setMe] = useState<Me | null>(null);
@@ -14,9 +14,9 @@ export function AuthChip() {
   if (me === null) return null; // unknown yet — don't flash
   if (!me.authenticated) {
     return (
-      <a href={GOOGLE_LOGIN_URL} className="pill">
+      <Link to="/login" className="pill">
         Sign in
-      </a>
+      </Link>
     );
   }
   return (

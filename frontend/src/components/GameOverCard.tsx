@@ -3,8 +3,9 @@
 // All network side-effects live here so Marathon's render stays about gameplay.
 
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 
-import { fetchMe, GOOGLE_LOGIN_URL, type Me } from "../lib/auth";
+import { fetchMe, type Me } from "../lib/auth";
 import { fetchLeaderboard, submitRun, type LeaderEntry, type SubmitOutcome } from "../lib/scores";
 
 const MODE = "marathon_free";
@@ -86,12 +87,12 @@ function renderSubmitStatus(me: Me | null, submit: SubmitOutcome | null) {
 
   if (!me.authenticated) {
     return (
-      <a
-        href={GOOGLE_LOGIN_URL}
+      <Link
+        to="/login"
         className="inline-flex items-center gap-2 rounded-full border-2 border-clade-ink/80 bg-clade-paper px-4 py-1.5 font-hand text-xl text-clade-ink transition hover:border-clade-accent"
       >
-        Sign in with Google to save your score
-      </a>
+        Sign in to save your score
+      </Link>
     );
   }
   if (submit?.ok) {

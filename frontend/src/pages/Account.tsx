@@ -7,7 +7,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { Wordmark } from "../components/Brand";
 import { fetchAccountStats, deleteAccount, type AccountStats, type ModeStat } from "../lib/account";
-import { GOOGLE_LOGIN_URL, logout } from "../lib/auth";
+import { logout } from "../lib/auth";
 
 export function Account() {
   const [stats, setStats] = useState<AccountStats | null>(null);
@@ -138,12 +138,12 @@ function SignedOut() {
   return (
     <div className="ink-card flex flex-col items-center gap-3 bg-clade-paper px-8 py-10 text-center">
       <p className="font-hand text-2xl text-clade-ink">You're not signed in.</p>
-      <a
-        href={GOOGLE_LOGIN_URL}
+      <Link
+        to="/login"
         className="rounded-full border-2 border-clade-ink/80 bg-clade-paper px-4 py-1.5 font-hand text-xl text-clade-ink transition hover:border-clade-accent"
       >
-        Sign in with Google
-      </a>
+        Sign in
+      </Link>
     </div>
   );
 }

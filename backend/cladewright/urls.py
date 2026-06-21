@@ -7,4 +7,5 @@ urlpatterns = [
     path("accounts/", include("allauth.urls")),
     path("api/gamedata/", include("apps.gamedata.urls")),
     path("api/scores/", include("apps.scores.urls")),
+    path("api/auth/", include("apps.accounts.urls")),
 ]

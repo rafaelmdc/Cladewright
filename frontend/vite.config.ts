@@ -5,9 +5,12 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    // Proxy API to the Django backend in dev so the SPA can hit /api/* same-origin.
+    // Proxy API + the allauth OAuth routes to Django so the SPA — and the Google login
+    // redirect round-trip — are all same-origin (localhost:5173). That keeps the session
+    // + CSRF cookies first-party with no cross-origin cookie fuss in dev.
     proxy: {
       "/api": "http://localhost:8000",
+      "/accounts": "http://localhost:8000",
     },
   },
 });

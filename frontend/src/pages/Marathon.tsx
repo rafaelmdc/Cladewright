@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Wordmark } from "../components/Brand";
+import { GameOverCard } from "../components/GameOverCard";
 import { ScopePicker } from "../components/ScopePicker";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { TreeRenderer } from "../components/TreeRenderer";
@@ -108,6 +109,8 @@ function Game({
   const treeRef = useRef<InducedTree>(createInducedTree());
   const tracker = useMemo(() => new RemainingTracker(asset), [asset]);
   const [rev, setRev] = useState(0);
+  // Ordered ids of placements this run — submitted at game-over for server re-scoring.
+  const transcriptRef = useRef<string[]>([]);
 
   const [settings, setSettings] = useState<GameSettings>(loadSettings);
   function updateSettings(next: GameSettings) {
@@ -188,6 +191,7 @@ function Game({
     if (p.kind === "duplicate") {
       setFlash({ text: `${label} — already on the tree`, tone: "none" });
     } else {
+      transcriptRef.current.push(target.id); // record for server re-scoring
       const { time, points } = rewardFor(p);
       setScore((v) => v + points);
       setCount((v) => v + 1);
@@ -220,6 +224,7 @@ function Game({
       const p = place(asset, treeRef.current, target);
       if (p.kind !== "duplicate") {
         tracker.name(tip.id);
+        transcriptRef.current.push(tip.id);
         added += 1;
       }
     }
@@ -302,28 +307,26 @@ function Game({
 
       {!running && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-clade-bg/60 backdrop-blur-sm">
-          <div className="ink-card flex flex-col items-center bg-clade-paper px-10 py-8 text-center">
-            <h2 className="font-hand text-6xl font-bold text-clade-ink">Time!</h2>
-            <p className="mt-2 font-mono text-sm text-clade-ink/60">
-              {count} placed · {score} points
-            </p>
-            <button
-              onClick={() => {
-                treeRef.current = createInducedTree();
-                tracker.reset();
-                setScore(0);
-                setCount(0);
-                setSeconds(settings.startSeconds);
-                setFlash(null);
-                setPulse(null);
-                setRev((n) => n + 1);
-                setRunning(true);
-              }}
-              className="btn-play mt-6"
-            >
-              ▶ Play again
-            </button>
-          </div>
+          <GameOverCard
+            count={count}
+            score={score}
+            scope={asset.scope ?? scopeKey ?? ""}
+            scopeLabel={scopes.find((s) => s.key === (asset.scope ?? scopeKey))?.label ?? "this scope"}
+            assetVersion={asset.raw.version}
+            transcript={transcriptRef.current}
+            onPlayAgain={() => {
+              treeRef.current = createInducedTree();
+              tracker.reset();
+              transcriptRef.current = [];
+              setScore(0);
+              setCount(0);
+              setSeconds(settings.startSeconds);
+              setFlash(null);
+              setPulse(null);
+              setRev((n) => n + 1);
+              setRunning(true);
+            }}
+          />
         </div>
       )}
     </div>

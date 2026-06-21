@@ -18,10 +18,16 @@ and [`docs/roadmap.md`](docs/roadmap.md).
 
 ## The load-bearing ideas (do not erode these)
 
-1. **Gameplay is client-side; data is precomputed.** The client loads one static
-   game-data asset and runs MRCA / proximity / "N remaining" locally. Do **not**
-   add per-guess server round-trips. The backend serves the asset, identity,
-   scores, and the daily seed — nothing more. See `docs/architecture.md`.
+1. **Gameplay is client-side; data is precomputed.** The client loads the game-data
+   asset and runs MRCA / proximity / "N remaining" locally. Do **not** add a
+   per-guess *scoring/judging* round-trip — the play loop is local. The **one**
+   sanctioned server interaction during play is **huge-scope incremental delivery**
+   (`/search` + `/resolve`) for scopes too big to ship as a blob (all-Animalia): the
+   client lazily fetches names + one organism's lineage and **grows its asset**, still
+   judging locally. Those endpoints must stay **single-indexed-read + immutable/cacheable**,
+   the client **debounces search and caches every resolve**, so the server load is
+   minimal. Everything else (identity, scores, daily seed) is the only other backend
+   surface. See `docs/architecture.md#scaling-to-huge-scope`.
 2. **The game-asset format is a contract.** [`docs/game-asset-format.md`](docs/game-asset-format.md)
    is the interface between the pipeline and the app. Both sides depend on its
    shape. Change it deliberately, keep its validation green, and bump `version`.
@@ -76,7 +82,28 @@ and [`docs/roadmap.md`](docs/roadmap.md).
 - Keep `docs/` truthful: when a decision changes, update the doc it lives in rather
   than leaving it stale. These docs are the design of record.
 
+## Git workflow
+
+Treat this like a real open-source project — don't let work pile up uncommitted on one
+branch.
+
+- **Commit in logical units, continuously.** Each commit is one coherent change with a
+  clear message (what + why); don't batch unrelated edits. End commit messages with the
+  `Co-Authored-By: Claude …` trailer.
+- **Branch per feature/phase.** Cut a feature branch off the active phase branch for a
+  new unit of work (e.g. `feat/remote-resolver`); don't stack unrelated features on one
+  branch. Never commit straight to a release/default branch.
+- **Open PRs over time, not in one dump.** When a feature branch reaches a reviewable
+  milestone, push it and open a PR (`gh pr create`) with a short summary + test notes —
+  even if work continues after. Small, frequent PRs over one giant one.
+- **Never commit data artifacts or secrets** (see Boundaries): `/data/`, dumps,
+  `.env`, pasted screenshots. `backend/vendor/*.whl` are the one intended binary.
+- **Keep builds green before a PR**: `tsc`/lint on the frontend, the pipeline's
+  `validate_asset`, and any touched tests.
+
 ## Status
 
-Planning / initial-documentation phase — nothing is built yet. The docs describe
-the intended system; the first code is Phase 0 in [`docs/roadmap.md`](docs/roadmap.md).
+Phase 1+ — actively built. Backend (Postgres asset store, blob + incremental serving,
+`build_gamedata` pipeline with Braidworks enrichment, starter clade scopes) and the
+Marathon vertical slice exist. See [`docs/roadmap.md`](docs/roadmap.md) and the project
+memory for the current frontier (scope picker, extinct toggle, remote-resolver).

@@ -52,8 +52,8 @@ export function GameOverCard({
         if (!live) return;
         setSubmit(outcome);
       }
-      const entries = await fetchLeaderboard(mode, scope, difficulty);
-      if (live) setBoard(entries);
+      const result = await fetchLeaderboard(mode, scope, difficulty);
+      if (live) setBoard(result.entries);
     })();
     return () => {
       live = false;

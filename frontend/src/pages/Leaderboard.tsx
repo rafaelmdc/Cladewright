@@ -1,6 +1,6 @@
-// Browsable leaderboards. Boards are a matrix of (scope × difficulty), so the page pairs
-// a scope picker with a difficulty toggle and shows the top players for the chosen board.
-// Reached from the Hub; reuses the Marathon scope picker so the control reads the same.
+// Browsable leaderboards. A game dropdown picks the board; free-play boards are an
+// all-time (scope × difficulty) matrix, while the daily board is date-indexed with history
+// (◀/▶) and a server-decided scope. See docs/games-model.md.
 
 import { useEffect, useState } from "react";
 
@@ -10,22 +10,41 @@ import { ScopePicker } from "../components/ScopePicker";
 import { fetchMe, type Me } from "../lib/auth";
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import { fetchGames, FALLBACK_GAMES, type Game } from "../lib/games";
-import { fetchLeaderboard, type Difficulty, type LeaderEntry } from "../lib/scores";
+import { fetchLeaderboard, type Board, type Difficulty, type LeaderEntry } from "../lib/scores";
 import { useTitle } from "../lib/useTitle";
+
+function isoToday(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function shiftIso(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d + days);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+function prettyIso(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
 
 export function Leaderboard() {
   useTitle("Leaderboards");
-  // Boards are game-specific: each enabled mode has its own (scope × difficulty) matrix.
   const [games, setGames] = useState<Game[]>(FALLBACK_GAMES);
   const [mode, setMode] = useState<string>(FALLBACK_GAMES[0].mode);
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
   const [scopeKey, setScopeKey] = useState<string | null>(null);
   const [difficulty, setDifficulty] = useState<Difficulty>("common");
-  const [board, setBoard] = useState<LeaderEntry[]>([]);
+  const [date, setDate] = useState<string>(isoToday()); // for the daily board
+  const [board, setBoard] = useState<Board>({ entries: [], scope_label: "", date: null });
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(false);
 
   const activeGame = games.find((g) => g.mode === mode) ?? games[0];
+  const isDaily = !!activeGame?.is_daily;
 
   useEffect(() => {
     fetchMe().then(setMe);
@@ -37,23 +56,27 @@ export function Leaderboard() {
       setGames(g);
       if (g.length > 0 && !g.some((x) => x.mode === mode)) setMode(g[0].mode);
     });
-    // mode intentionally omitted: this only seeds the initial game list once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (!scopeKey) return;
+    // Free-play needs a scope; daily derives it server-side from the date.
+    if (!isDaily && !scopeKey) return;
     let live = true;
     setLoading(true);
-    fetchLeaderboard(mode, scopeKey, difficulty).then((entries) => {
-      if (!live) return;
-      setBoard(entries);
-      setLoading(false);
-    });
+    fetchLeaderboard(mode, isDaily ? "" : (scopeKey ?? ""), difficulty, isDaily ? date : undefined).then(
+      (b) => {
+        if (!live) return;
+        setBoard(b);
+        setLoading(false);
+      },
+    );
     return () => {
       live = false;
     };
-  }, [mode, scopeKey, difficulty]);
+  }, [mode, scopeKey, difficulty, date, isDaily]);
+
+  const atToday = date >= isoToday();
 
   return (
     <div className="min-h-screen w-screen px-4 py-8">
@@ -63,23 +86,31 @@ export function Leaderboard() {
 
         <h1 className="font-hand text-5xl font-bold text-clade-ink">Leaderboards</h1>
 
-        {games.length > 1 && (
-          <div className="flex flex-wrap gap-2">
-            {games.map((g) => (
-              <button
-                key={g.mode}
-                type="button"
-                onClick={() => setMode(g.mode)}
-                className={`pill ${g.mode === mode ? "pill-active" : ""}`}
-              >
-                {g.label}
-              </button>
-            ))}
-          </div>
-        )}
-
         <div className="flex flex-wrap items-center gap-3">
-          <ScopePicker scopes={scopes} value={scopeKey} onChange={setScopeKey} />
+          {/* Game dropdown */}
+          <select
+            value={mode}
+            onChange={(e) => setMode(e.target.value)}
+            className="rounded-full border-2 border-clade-ink/25 bg-clade-paper px-4 py-1.5 font-mono text-sm text-clade-ink/80 outline-none transition hover:border-clade-ink/50"
+          >
+            {games.map((g) => (
+              <option key={g.mode} value={g.mode}>
+                {g.label}
+              </option>
+            ))}
+          </select>
+
+          {isDaily ? (
+            <DateNav
+              label={prettyIso(date)}
+              onPrev={() => setDate((d) => shiftIso(d, -1))}
+              onNext={() => setDate((d) => shiftIso(d, 1))}
+              atToday={atToday}
+            />
+          ) : (
+            <ScopePicker scopes={scopes} value={scopeKey} onChange={setScopeKey} />
+          )}
+
           {activeGame?.supports_difficulty && (
             <div className="flex gap-2">
               <DiffPill active={difficulty === "common"} onClick={() => setDifficulty("common")}>
@@ -92,14 +123,24 @@ export function Leaderboard() {
           )}
         </div>
 
+        {/* Which board you're looking at */}
+        {board.scope_label && (
+          <p className="-mt-2 font-mono text-[11px] uppercase tracking-widest text-clade-ink/40">
+            {board.scope_label}
+            {isDaily ? ` · ${prettyIso(date)}` : ""}
+          </p>
+        )}
+
         <section className="ink-card bg-clade-paper px-6 py-5">
           {loading ? (
             <p className="font-mono text-xs text-clade-ink/40">Loading…</p>
-          ) : board.length === 0 ? (
-            <p className="font-mono text-sm text-clade-ink/45">No runs on this board yet — be the first.</p>
+          ) : board.entries.length === 0 ? (
+            <p className="font-mono text-sm text-clade-ink/45">
+              {isDaily ? "No one's played this day yet." : "No runs on this board yet — be the first."}
+            </p>
           ) : (
             <ol className="space-y-0.5">
-              {board.map((e) => {
+              {board.entries.map((e: LeaderEntry) => {
                 const mine = me?.authenticated && e.user === me.username;
                 return (
                   <li
@@ -120,6 +161,36 @@ export function Leaderboard() {
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+function DateNav({
+  label,
+  onPrev,
+  onNext,
+  atToday,
+}: {
+  label: string;
+  onPrev: () => void;
+  onNext: () => void;
+  atToday: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <button type="button" onClick={onPrev} className="pill px-3" aria-label="Previous day">
+        ◀
+      </button>
+      <span className="min-w-[6.5rem] text-center font-mono text-sm text-clade-ink/80">{label}</span>
+      <button
+        type="button"
+        onClick={onNext}
+        disabled={atToday}
+        className="pill px-3 disabled:opacity-30"
+        aria-label="Next day"
+      >
+        ▶
+      </button>
     </div>
   );
 }

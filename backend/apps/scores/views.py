@@ -255,10 +255,25 @@ class LeaderboardView(APIView):
         if difficulty not in Difficulty.values:
             return Response({"error": "invalid difficulty"}, status=400)
 
+        # Daily boards are date-indexed (history is kept): the scope is DERIVED from that
+        # day's daily plan, not the client — and free-play boards are a single all-time
+        # board per (scope, difficulty). See docs/games-model.md.
+        is_daily = mode in (GameMode.MARATHON_DAILY, GameMode.CLASSIC)
+        day = None
+        scope_label = scope
+        if is_daily:
+            day = _parse_date(request.query_params.get("date")) or dt.date.today()
+            plan = _daily_plan(day)
+            if plan is None:
+                return Response({
+                    "mode": mode, "scope": "", "scope_label": "", "difficulty": difficulty,
+                    "date": day.isoformat(), "entries": [],
+                })
+            scope, scope_label = plan[1], plan[2]
+
         # Only ranked (default-settings) runs are comparable on a board.
         qs = Run.objects.filter(mode=mode, scope=scope, difficulty=difficulty, ranked=True)
-        if mode in (GameMode.MARATHON_DAILY, GameMode.CLASSIC):
-            day = _parse_date(request.query_params.get("date")) or dt.date.today()
+        if day is not None:
             qs = qs.filter(puzzle_date=day)
 
         # Best run per user, highest first. Pull a generous slice then dedupe in Python
@@ -281,7 +296,14 @@ class LeaderboardView(APIView):
             )
             if len(rows) >= LEADERBOARD_LIMIT:
                 break
-        return Response({"mode": mode, "scope": scope, "difficulty": difficulty, "entries": rows})
+        return Response({
+            "mode": mode,
+            "scope": scope,
+            "scope_label": scope_label,
+            "difficulty": difficulty,
+            "date": day.isoformat() if day else None,
+            "entries": rows,
+        })
 
 
 def _parse_date(s: str | None) -> dt.date | None:

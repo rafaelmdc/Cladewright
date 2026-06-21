@@ -71,9 +71,17 @@ export function GameOverCard({
 
       <Leaderboard board={board} label={`${scopeLabel} · ${difficulty}`} me={me} />
 
-      <button onClick={onPlayAgain} className="btn-play mt-6">
-        ▶ Play again
-      </button>
+      <div className="mt-6 flex items-center gap-3">
+        <button onClick={onPlayAgain} className="btn-play">
+          ▶ Play again
+        </button>
+        <Link
+          to="/"
+          className="rounded-full border-2 border-clade-ink/30 px-4 py-1.5 font-hand text-xl text-clade-ink/70 transition hover:border-clade-ink/60 hover:text-clade-ink"
+        >
+          Menu
+        </Link>
+      </div>
     </div>
   );
 }

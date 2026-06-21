@@ -47,6 +47,46 @@ def _current(scope: str | None) -> AssetVersion | None:
     return qs.first()
 
 
+class ScopesView(APIView):
+    """GET /api/gamedata/scopes/ -> the catalog the picker renders.
+
+    One row per current AssetVersion: its stable key, display label, tip counts (all +
+    extant, for the extinct toggle's "N remaining" denominator), and delivery `mode`
+    (blob = download whole; remote = play incrementally via /search + /resolve). Cheap:
+    one indexed query over the small set of current builds, no blobs read.
+    """
+
+    permission_classes: list = []
+
+    def get(self, request: Request) -> Response:
+        try:
+            rows = list(
+                AssetVersion.objects.filter(is_current=True)
+                .values("scope", "label", "pool_size", "pool_size_extant", "version")
+                .order_by("label", "scope")
+            )
+            # `blob__isnull` without pulling the (possibly huge) blob into Python.
+            blob_scopes = set(
+                AssetVersion.objects.filter(is_current=True, blob__isnull=False)
+                .values_list("scope", flat=True)
+            )
+        except DatabaseError:
+            return Response({"scopes": []})
+
+        scopes = [
+            {
+                "key": r["scope"],
+                "label": r["label"] or r["scope"],
+                "tip_count": r["pool_size"],
+                "extant_count": r["pool_size_extant"],
+                "version": r["version"],
+                "mode": "blob" if r["scope"] in blob_scopes else "remote",
+            }
+            for r in rows
+        ]
+        return Response({"scopes": scopes})
+
+
 class CurrentAssetView(APIView):
     """GET /api/gamedata/current/?scope= -> the full current asset (blob mode)."""
 

@@ -37,6 +37,7 @@ def build_asset(
     group_aliases: dict[str, list[str]] | None = None,
     hidden_label_max: int = 15,
     scope: str = "kingdom=Animalia",
+    label: str = "",
     version: int = 1,
     provenance: dict | None = None,
 ) -> dict:
@@ -148,11 +149,16 @@ def build_asset(
         **(provenance or {}),
     }
 
+    extant_tips = sum(1 for t in enriched if not t.taxon.extinct)
     return {
         "version": version,
         "schema": "1.0",
         "scope": scope,
+        "label": label,
         "pool_size": len(tips),
+        # Tips excluding extinct — the "N remaining" denominator when the player's extinct
+        # toggle is off. Equals pool_size when no extinct were pooled.
+        "pool_size_extant": extant_tips,
         "thresholds": {"hidden_label_max": hidden_label_max},
         "provenance": prov,
         "nodes": nodes,

@@ -31,7 +31,15 @@ class Command(BaseCommand):
         parser.add_argument("--out", required=True, type=Path,
                             help="Where to write the game-data asset JSON.")
         parser.add_argument("--scope", default="kingdom=Animalia",
-                            help="BICHO scope filter (default: kingdom=Animalia).")
+                            help="Taxonomic filter, rank=value[,value…] (union). The bulk of "
+                                 "the dump is sliced to this. Default: kingdom=Animalia.")
+        parser.add_argument("--scope-key", default="",
+                            help="Stable scope identity baked into the asset + used by the API "
+                                 "(?scope=, one-current-per-scope), e.g. 'fish'. Defaults to "
+                                 "--scope when omitted (so single-clade builds stay as-is).")
+        parser.add_argument("--label", default="",
+                            help="Human display name for the scope, e.g. 'Birds'. Shown in the "
+                                 "scope picker. Defaults to a title-cased --scope-key.")
         parser.add_argument("--pool-size", type=int, default=0,
                             help="Playable tips to keep; 0 (default) = all non-extinct "
                                  "species in scope (animalist-style 'have them all').")
@@ -86,13 +94,19 @@ class Command(BaseCommand):
         self.stdout.write(f"      {len(node_names)} clades got common names")
 
         self.stdout.write("5/5 build + validate asset…")
+        # Identity vs filter: --scope slices the dump; --scope-key is the stable id the API
+        # serves under. Single-clade builds that pass neither key nor label still work
+        # (key falls back to the filter string, label to a title-cased key).
+        scope_key = opts["scope_key"] or opts["scope"]
+        label = opts["label"] or scope_key.replace("_", " ").title()
         doc = asset_builder.build_asset(
             tree,
             enriched,
             node_names=node_names,
             group_aliases=group_aliases,
             hidden_label_max=opts["hidden_label_max"],
-            scope=opts["scope"],
+            scope=scope_key,
+            label=label,
         )
         validate.validate_asset(doc)
         asset_builder.write_asset(doc, opts["out"])

@@ -4,7 +4,9 @@ import { csrfToken } from "./auth";
 
 export interface ModeStat {
   mode: string;
-  label: string;
+  difficulty: string;
+  game: string; // stable id "mode|difficulty"
+  label: string; // composed "Marathon · Common"
   games_played: number;
   total_named: number;
   unique_named: number;
@@ -18,9 +20,11 @@ export interface RecentRun {
   at: string;
 }
 
-/** One day with at least one run, for the activity heatmap. */
+/** One (day, game) cell with at least one run, for the activity heatmap. The client groups
+ * by date and filters by `game` (the chips). */
 export interface DayActivity {
   date: string; // YYYY-MM-DD
+  game: string; // "mode|difficulty"
   best: number;
   games: number;
 }

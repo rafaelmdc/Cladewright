@@ -92,7 +92,7 @@ export function Account() {
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2">
                   {stats.modes.map((m) => (
-                    <ModeCard key={m.mode} stat={m} />
+                    <ModeCard key={m.game} stat={m} />
                   ))}
                 </div>
               )}
@@ -101,9 +101,13 @@ export function Account() {
             {stats.totals.games_played > 0 && (
               <section className="ink-card bg-clade-paper px-6 py-5">
                 <h2 className="mb-3 font-mono text-[10px] uppercase tracking-widest text-clade-ink/40">
-                  Activity · best score per day
+                  Activity
                 </h2>
-                <ActivityHeatmap activity={stats.activity} days={stats.heatmap_days} />
+                <ActivityHeatmap
+                  activity={stats.activity}
+                  days={stats.heatmap_days}
+                  games={stats.modes.map((m) => ({ game: m.game, label: m.label }))}
+                />
               </section>
             )}
 
@@ -190,10 +194,17 @@ function ModeCard({ stat }: { stat: ModeStat }) {
 }
 
 interface Cell {
-  key: string;
+  key: string; // YYYY-MM-DD
   date: Date;
-  act?: DayActivity;
   idx: number; // position in the flat, non-future day list (for range selection)
+}
+/** A day's value under the current game filter. */
+interface DayValue {
+  value: number; // plays (All) or best score (single game)
+  plays: number;
+  best: number;
+  title: string;
+  has: boolean;
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -205,14 +216,48 @@ const HEAT_FILL = [
   "bg-clade-accent",
 ];
 
-/** GitHub-style activity heatmap, but interactive: one square per day over the last ~13
- * weeks, shaded by best score that day. CLICK a day or DRAG across a range to select it;
- * a comparison bar plot of the selected days' scores appears below. Hover shows the
- * date + score. Columns are weeks (Sun→Sat); month labels run along the top, weekday
- * labels down the left. Dependency-free. */
-function ActivityHeatmap({ activity, days }: { activity: DayActivity[]; days: number }) {
-  const byDate = new Map(activity.map((a) => [a.date, a]));
-  const maxBest = Math.max(1, ...activity.map((a) => a.best));
+/** Interactive GitHub-style activity heatmap with game-toggle chips. ONE heatmap for all
+ * games; the chips filter it and the shading adapts: "All" shades by plays/day (activity
+ * aggregates across games), a single game shades by that game's best score/day (now
+ * comparable). Click a day or drag a range to select; a comparison bar plot of the
+ * selected days appears below. Columns are weeks (Sun→Sat); month labels on top, weekday
+ * labels on the left. See docs/games-model.md. Dependency-free. */
+function ActivityHeatmap({
+  activity,
+  days,
+  games,
+}: {
+  activity: DayActivity[];
+  days: number;
+  games: { game: string; label: string }[];
+}) {
+  const labelOf = new Map(games.map((g) => [g.game, g.label]));
+  // With a single game, default to it (shade by score); with several, default to All.
+  const [filter, setFilter] = useState<string>(games.length === 1 ? games[0].game : "all");
+  const single = filter !== "all";
+
+  // Group activity rows by date, then aggregate per day under the active filter.
+  const byDate = new Map<string, DayActivity[]>();
+  for (const a of activity) {
+    const list = byDate.get(a.date);
+    if (list) list.push(a);
+    else byDate.set(a.date, [a]);
+  }
+  const fmtDay = (d: Date) =>
+    d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+
+  function dayValue(key: string, date: Date): DayValue {
+    const rows = (byDate.get(key) ?? []).filter((e) => filter === "all" || e.game === filter);
+    if (rows.length === 0) return { value: 0, plays: 0, best: 0, has: false, title: `${fmtDay(date)} · no games` };
+    const plays = rows.reduce((s, e) => s + e.games, 0);
+    const best = Math.max(...rows.map((e) => e.best));
+    const title = single
+      ? `${fmtDay(date)} · best ${best} · ${plays} play${plays > 1 ? "s" : ""}`
+      : `${fmtDay(date)} · ${plays} play${plays > 1 ? "s" : ""} (${rows
+          .map((e) => `${e.games} ${labelOf.get(e.game) ?? e.game}`)
+          .join(", ")})`;
+    return { value: single ? best : plays, plays, best, has: true, title };
+  }
 
   const fmtKey = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
@@ -239,14 +284,18 @@ function ActivityHeatmap({ activity, days }: { activity: DayActivity[]; days: nu
         col.push(null);
       } else {
         const date = new Date(cursor);
-        const cell: Cell = { key: fmtKey(date), date, act: byDate.get(fmtKey(date)), idx: idx++ };
-        col.push(cell);
-        flat.push(cell);
+        col.push({ key: fmtKey(date), date, idx: idx++ } as Cell);
+        flat.push(col[col.length - 1] as Cell);
       }
       cursor.setDate(cursor.getDate() + 1);
     }
     weeks.push(col);
   }
+
+  // Scale: max day-value under the current filter.
+  let vmax = 1;
+  for (const cell of flat) vmax = Math.max(vmax, dayValue(cell.key, cell.date).value);
+  const level = (v: number) => (v <= 0 ? 0 : Math.min(4, Math.ceil((v / vmax) * 4)));
 
   // Month labels: one per column, shown when the column's Sunday opens a new month.
   let lastMonth = -1;
@@ -271,12 +320,24 @@ function ActivityHeatmap({ activity, days }: { activity: DayActivity[]; days: nu
   }, []);
   const lo = Math.min(sel.a, sel.b);
   const hi = Math.max(sel.a, sel.b);
-  const selected = flat.slice(lo, hi + 1);
-
-  const level = (best: number) => Math.min(4, Math.ceil((best / maxBest) * 4));
+  const selected = flat
+    .slice(lo, hi + 1)
+    .map((c) => ({ key: c.key, date: c.date, v: dayValue(c.key, c.date) }));
 
   return (
     <div className="select-none">
+      {games.length > 1 && (
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          <HeatChip active={filter === "all"} onClick={() => setFilter("all")}>
+            All
+          </HeatChip>
+          {games.map((g) => (
+            <HeatChip key={g.game} active={filter === g.game} onClick={() => setFilter(g.game)}>
+              {g.label}
+            </HeatChip>
+          ))}
+        </div>
+      )}
       <div className="overflow-x-auto">
         {/* month labels */}
         <div className="flex gap-[3px] pl-8">
@@ -299,10 +360,10 @@ function ActivityHeatmap({ activity, days }: { activity: DayActivity[]; days: nu
           <div className="flex gap-[3px]">
             {weeks.map((col, wi) => (
               <div key={wi} className="flex flex-col gap-[3px]">
-                {col.map((cell, di) =>
-                  cell === null ? (
-                    <div key={di} className="h-3 w-3" />
-                  ) : (
+                {col.map((cell, di) => {
+                  if (cell === null) return <div key={di} className="h-3 w-3" />;
+                  const dv = dayValue(cell.key, cell.date);
+                  return (
                     <div
                       key={cell.key}
                       onMouseDown={() => {
@@ -312,23 +373,19 @@ function ActivityHeatmap({ activity, days }: { activity: DayActivity[]; days: nu
                       onMouseEnter={() => {
                         if (dragging.current) setSel((s) => ({ a: s.a, b: cell.idx }));
                       }}
-                      title={`${cell.date.toLocaleDateString(undefined, {
-                        weekday: "short",
-                        month: "short",
-                        day: "numeric",
-                      })} · ${cell.act ? `best ${cell.act.best} · ${cell.act.games} game${cell.act.games > 1 ? "s" : ""}` : "no games"}`}
-                      className={`h-3 w-3 cursor-pointer rounded-[3px] ${
-                        HEAT_FILL[cell.act ? level(cell.act.best) : 0]
-                      } ${cell.idx >= lo && cell.idx <= hi ? "ring-1 ring-clade-ink/55" : ""}`}
+                      title={dv.title}
+                      className={`h-3 w-3 cursor-pointer rounded-[3px] ${HEAT_FILL[level(dv.value)]} ${
+                        cell.idx >= lo && cell.idx <= hi ? "ring-1 ring-clade-ink/55" : ""
+                      }`}
                     />
-                  ),
-                )}
+                  );
+                })}
               </div>
             ))}
           </div>
         </div>
         <div className="mt-2 flex items-center justify-between pl-8 font-mono text-[10px] text-clade-ink/45">
-          <span>click or drag days to compare ↓</span>
+          <span>{single ? "shaded by best score · " : "shaded by plays · "}click or drag ↓</span>
           <span className="flex items-center gap-1.5">
             less
             {HEAT_FILL.map((f, i) => (
@@ -339,48 +396,81 @@ function ActivityHeatmap({ activity, days }: { activity: DayActivity[]; days: nu
         </div>
       </div>
 
-      <SelectionBars cells={selected} maxBest={maxBest} />
+      <SelectionBars items={selected} vmax={vmax} unit={single ? "best" : "plays"} />
     </div>
   );
 }
 
-/** Comparison bar plot of the days currently selected on the heatmap. Best score per day;
- * no-game days show as a faint nub so gaps read. Date + score labels appear when few. */
-function SelectionBars({ cells, maxBest }: { cells: Cell[]; maxBest: number }) {
-  if (cells.length === 0) return null;
-  const showLabels = cells.length <= 16;
-  const first = cells[0].date;
-  const last = cells[cells.length - 1].date;
+function HeatChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full px-2.5 py-0.5 font-mono text-[11px] transition ${
+        active
+          ? "bg-clade-ink text-clade-bg"
+          : "border border-clade-ink/20 text-clade-ink/60 hover:border-clade-ink/40 hover:text-clade-ink"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Comparison bar plot of the days selected on the heatmap. Bars are the day's value under
+ * the active filter — plays (All) or best score (single game). No-activity days show as a
+ * faint nub so gaps read. Date + value labels appear when few days are selected. */
+function SelectionBars({
+  items,
+  vmax,
+  unit,
+}: {
+  items: { key: string; date: Date; v: DayValue }[];
+  vmax: number;
+  unit: "best" | "plays";
+}) {
+  if (items.length === 0) return null;
+  const showLabels = items.length <= 16;
   const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const first = items[0].date;
+  const last = items[items.length - 1].date;
 
   return (
     <div className="mt-4 border-t border-clade-ink/10 pt-3">
       <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-clade-ink/40">
-        {cells.length === 1 ? fmt(first) : `${fmt(first)} – ${fmt(last)}`} · {cells.length} day
-        {cells.length > 1 ? "s" : ""}
+        {items.length === 1 ? fmt(first) : `${fmt(first)} – ${fmt(last)}`} · {items.length} day
+        {items.length > 1 ? "s" : ""} · {unit === "best" ? "best score" : "plays"}
       </p>
       <div className="flex h-24 items-end gap-1">
-        {cells.map((c) => {
-          const best = c.act?.best ?? 0;
-          const pct = (best / maxBest) * 100;
+        {items.map((it) => {
+          const v = it.v.value;
+          const pct = (v / vmax) * 100;
           return (
             <div
-              key={c.key}
-              title={`${c.date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${c.act ? `best ${best} · ${c.act.games} game${c.act.games > 1 ? "s" : ""}` : "no games"}`}
+              key={it.key}
+              title={it.v.title}
               className="flex h-full min-w-[6px] max-w-[2rem] flex-1 flex-col justify-end"
             >
               {showLabels && (
                 <span className="mb-0.5 text-center font-mono text-[9px] leading-none text-clade-ink/45">
-                  {best || ""}
+                  {v || ""}
                 </span>
               )}
               <div
-                className={`w-full rounded-t-sm ${best ? "bg-clade-accent" : "bg-clade-ink/15"}`}
+                className={`w-full rounded-t-sm ${v ? "bg-clade-accent" : "bg-clade-ink/15"}`}
                 style={{ height: `max(${pct}%, 2px)` }}
               />
               {showLabels && (
                 <span className="mt-1 text-center font-mono text-[8px] leading-none text-clade-ink/35">
-                  {c.date.getMonth() + 1}/{c.date.getDate()}
+                  {it.date.getMonth() + 1}/{it.date.getDate()}
                 </span>
               )}
             </div>

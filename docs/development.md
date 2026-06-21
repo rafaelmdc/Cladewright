@@ -84,6 +84,20 @@ make seed ASSET=/data/out/felidae.json   # load into Postgres, mark current for 
 > than from a local path. Then `requirements-pipeline.txt` points at that pinned release
 > instead of `./vendor/*.whl`. See [`data-pipeline.md`](data-pipeline.md#stage-4--braidworks-enrichment-common-names).
 
+> **TODO (deployment, a phase of its own — not now):** run the asset build as a
+> **dedicated Docker worker / batch job**, not a host venv. The pieces already favour
+> this: `build_gamedata` (needs Braidworks + the ~2 GB dump) is fully decoupled from
+> `load_gamedata` (needs only Django + the output JSON), so the build can run anywhere
+> and just hand a JSON asset to the serving side. Shape: a `backend/Dockerfile.pipeline`
+> (`FROM python:3.12-slim`, `COPY vendor/*.whl` + `requirements-pipeline.txt`, `pip install`,
+> `ENTRYPOINT manage.py build_gamedata`) run as a one-off Job/CronJob. This (a) keeps the
+> serving image lean — no Braidworks, no dump tooling, no `.venv-pipeline`; (b) gives the
+> build the fat, short-lived resource profile it wants (dump on disk + backbone index in
+> RAM) instead of loading the web container; and (c) makes the image self-contained via
+> `COPY vendor/*.whl`, so it works before the release-wheel TODO above lands (the dump
+> itself stays out of the image, mounted/fetched at job runtime). It quarantines the
+> pipeline deps into an image nobody ships to the web tier, rather than making them vanish.
+
 ## Frontend
 
 Requires Node 20+. `make gui` (or `cd frontend && npm run dev`) runs Vite on `:5173`.

@@ -6,6 +6,8 @@ import { Link } from "react-router-dom";
 
 import { LeafMark, TopBar } from "../components/Brand";
 import { LeafBackground } from "../components/LeafBackground";
+import { OnboardingTour } from "../components/onboarding/OnboardingTour";
+import { HUB_STEPS } from "../components/onboarding/tourSteps";
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import { fetchDaily, type DailyInfo } from "../lib/daily";
 import { fetchGames, FALLBACK_GAMES, type Game } from "../lib/games";
@@ -19,6 +21,7 @@ const SCOPE_KEY = "cladewright.scope";
 export function Hub() {
   useTitle();
   const [difficulty, setDifficulty] = useState<Difficulty>("common");
+  const [tourOpen, setTourOpen] = useState(false);
 
   // Scope mixing: the player toggles which clades to play; the selection rides to the game
   // as ?scopes=mammalia,aves and the assets merge there. Only blob scopes are mixable.
@@ -84,13 +87,15 @@ export function Hub() {
         <TopBar />
 
         <div className="flex flex-1 flex-col justify-center gap-5 pb-16">
-          <DailyCard difficulty={difficulty} />
+          <div data-tour="daily">
+            <DailyCard difficulty={difficulty} />
+          </div>
 
           {anyDifficulty && (
             // One row, never wrapping: a short "Difficulty" label + a two-option segmented
             // toggle. Shortened labels ("Common"/"Scientific") keep it on a single line down
             // to the narrowest phones instead of spilling onto two.
-            <div className="flex flex-nowrap items-center justify-center gap-2">
+            <div data-tour="difficulty" className="flex flex-nowrap items-center justify-center gap-2">
               <span className="font-mono text-[11px] uppercase tracking-wider text-clade-ink/45 sm:text-xs">
                 Difficulty
               </span>
@@ -115,7 +120,7 @@ export function Hub() {
             // Scope toggles — pick one clade or mix several (their trees merge in-game).
             // Selected = filled brand-green (on-brand + obvious vs the ghost outline of the
             // unselected); each shows its species count, with a running mix summary below.
-            <div className="flex flex-col items-center gap-1.5">
+            <div data-tour="clades" className="flex flex-col items-center gap-1.5">
               <div className="flex flex-wrap items-center justify-center gap-2">
                 <span className="font-mono text-[11px] uppercase tracking-wider text-clade-ink/45 sm:text-xs">
                   Clades
@@ -158,7 +163,14 @@ export function Hub() {
             ))}
           </div>
 
-          <div className="flex justify-center">
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => setTourOpen(true)}
+              className="rounded-full border-2 border-clade-ink/25 px-5 py-2 font-mono text-xs uppercase tracking-widest text-clade-ink/60 transition hover:border-clade-accent hover:text-clade-ink"
+            >
+              How to play
+            </button>
             <Link
               to="/leaderboard"
               className="rounded-full border-2 border-clade-ink/25 px-5 py-2 font-mono text-xs uppercase tracking-widest text-clade-ink/60 transition hover:border-clade-ink/50 hover:text-clade-ink"
@@ -167,6 +179,8 @@ export function Hub() {
             </Link>
           </div>
         </div>
+
+        <OnboardingTour open={tourOpen} onClose={() => setTourOpen(false)} steps={HUB_STEPS} />
 
         <p className="text-center font-mono text-[11px] uppercase tracking-wider text-clade-ink/35">
           data: Catalogue of Life · common + scientific ·{" "}
@@ -203,11 +217,14 @@ function DailyCard({ difficulty }: { difficulty: Difficulty }) {
   const played = daily?.played_today ?? false;
 
   return (
+    // The daily is a SECONDARY action, deliberately styled apart from the one primary green
+    // "▶ Play" (Time attack) so it never reads as a second/competing play button (#64): a
+    // distinct label ("Today's puzzle"), an outlined button, and a one-line "what is this".
     <div className="ink-card flex items-center justify-between border-clade-accent/30 px-5 py-4">
       <div className="leading-none">
         <h2 className="font-hand text-3xl font-bold text-clade-ink">Daily</h2>
         <span className="font-mono text-[10px] uppercase tracking-widest text-clade-ink/40">
-          {daily?.scope_label ? `today · ${daily.scope_label}` : "day streak"}
+          {daily?.scope_label ? `one a day · ${daily.scope_label}` : "one shared puzzle, once a day"}
         </span>
       </div>
       <div className="flex items-center gap-4">
@@ -230,8 +247,11 @@ function DailyCard({ difficulty }: { difficulty: Difficulty }) {
             </Link>
           </div>
         ) : (
-          <Link to={`/marathon?daily=1&difficulty=${difficulty}`} className="btn-play">
-            ▶ Play
+          <Link
+            to={`/marathon?daily=1&difficulty=${difficulty}`}
+            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border-2 border-clade-accent px-4 py-1.5 font-hand text-xl font-bold text-clade-accent transition hover:bg-clade-accent hover:text-clade-paper"
+          >
+            ▶ Today's puzzle
           </Link>
         )}
       </div>

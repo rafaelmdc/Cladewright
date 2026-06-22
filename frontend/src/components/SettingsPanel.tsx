@@ -32,6 +32,7 @@ export function SettingsPanel({ settings, onChange, runRanked, onAutofill }: Pro
     <>
       <button
         aria-label="Settings"
+        data-tour="settings"
         onClick={() => setOpen((o) => !o)}
         className="pointer-events-auto absolute right-4 top-4 z-30 grid h-9 w-9 place-items-center rounded-lg border border-clade-ink/15 bg-white/70 text-clade-ink/70 backdrop-blur transition hover:border-clade-ink/40"
       >

@@ -25,14 +25,24 @@ server {
   index index.html;
 
   # Compress on the wire — the browser decompresses transparently via Content-Encoding, so
-  # no client code is needed. The big win is the game-data blob (/api/gamedata/current/):
-  # JSON compresses ~10x, so a 10-20MB Animalia asset ships as ~1-2MB. gzip_proxied any so
-  # the reverse-proxied /api responses are compressed too (Django sends them uncompressed).
+  # no client code is needed. Brotli first (≈50% smaller than gzip on our JSON/JS), gzip as
+  # the fallback for the rare client that doesn't accept br; nginx picks per request from
+  # Accept-Encoding. The big win is the game-data blob (/api/gamedata/current/), compressed
+  # dynamically here since Django sends it uncompressed. Static assets are precompressed at
+  # build time and served as-is via *_static (no per-request CPU). Transport-only — nothing
+  # about the stored asset changes, so it applies to every existing build at once.
+  brotli on;
+  brotli_comp_level 5;          # on-the-fly: strong ratio without burning CPU on big JSON
+  brotli_min_length 1024;
+  brotli_static on;             # prefer the prebuilt .br for hashed assets
+  brotli_types application/json application/javascript text/css image/svg+xml text/plain;
+
   gzip on;
   gzip_comp_level 6;
   gzip_min_length 1024;
   gzip_proxied any;
   gzip_vary on;
+  gzip_static on;               # prefer the prebuilt .gz fallback for hashed assets
   gzip_types application/json application/javascript text/css image/svg+xml text/plain;
 
   # Content-hashed Vite assets → cache hard.

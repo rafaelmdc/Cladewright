@@ -1,0 +1,41 @@
+{% extends "admin/base_site.html" %}
+{% load admin_urls %}
+
+{% block content %}
+  <div style="max-width:720px">
+    <p style="background:#b03030;color:#fff;padding:12px 16px;border-radius:8px;font-weight:600">
+      ⚠ This permanently deletes the selected pipeline-job records and drains the Redis
+      queue of pending messages.
+    </p>
+
+    <p style="margin-top:14px">
+      Use this only to clear <strong>wedged / cursed</strong> jobs (stuck in Queued or
+      Running with no worker progressing them). It does <strong>not</strong> touch your
+      built game data — <em>Asset versions</em> live in a separate table and are safe. It
+      will <strong>not</strong> revive a worker stuck on a dead Redis connection; that needs
+      the worker pod restarted.
+    </p>
+
+    <p style="margin-top:14px"><strong>{{ queryset.count }}</strong> job record(s) will be deleted:</p>
+    <ul>
+      {% for job in queryset %}
+        <li><code>{{ job.scope_key|default:job.kind }}</code> — {{ job.get_status_display }} · {{ job.created_at }}</li>
+      {% endfor %}
+    </ul>
+
+    <form method="post">
+      {% csrf_token %}
+      {% for obj in queryset %}
+        <input type="hidden" name="{{ action_checkbox_name }}" value="{{ obj.pk }}">
+      {% endfor %}
+      <input type="hidden" name="action" value="purge_jobs">
+      <input type="hidden" name="_purge_confirm" value="1">
+      <div style="margin-top:18px">
+        <input type="submit" value="Yes, PURGE these jobs"
+               style="background:#b03030;color:#fff;padding:10px 18px;border:0;border-radius:6px;cursor:pointer;font-weight:600">
+        <a href="{% url opts|admin_urlname:'changelist' %}"
+           style="margin-left:12px">Cancel</a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

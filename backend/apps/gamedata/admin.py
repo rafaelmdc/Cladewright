@@ -85,7 +85,7 @@ class PipelineJobAdmin(admin.ModelAdmin):
                        "started_at", "finished_at"),
         }),
     )
-    actions = ["requeue"]
+    actions = ["requeue", "force_rerun", "purge_jobs"]
 
     @admin.display(description="status", ordering="status")
     def status_badge(self, obj: PipelineJob) -> str:
@@ -123,3 +123,77 @@ class PipelineJobAdmin(admin.ModelAdmin):
             job.save(update_fields=["status", "started_at", "finished_at", "log"])
             self._enqueue(job)
         self.message_user(request, f"Re-queued {queryset.count()} job(s).")
+
+    @admin.action(description="Force re-run — purge stale queue messages, then re-dispatch")
+    def force_rerun(self, request, queryset):
+        """Recovery for a jam: drain the broker queue of stale/duplicate messages, then
+        reset + re-dispatch the selected job(s) fresh. Use when plain Re-queue didn't take
+        because the queue was clogged. NOTE: this can't revive a worker stuck on a dead
+        Redis connection — that needs the worker pod restarted (and the broker-resilience
+        fix deployed). It clears the queue and re-dispatches; the worker must be alive to
+        pick the jobs up."""
+        from django.contrib import messages
+
+        purged = 0
+        try:
+            # Drain the default Celery queue directly on the broker (doesn't depend on a
+            # live worker, unlike app.control.purge()).
+            from cladewright.celery import app
+            with app.connection_for_write() as conn:
+                purged = conn.default_channel.queue_purge("celery") or 0
+        except Exception as exc:  # noqa: BLE001 - broker may be unreachable; still re-dispatch
+            self.message_user(
+                request, f"Couldn't purge the queue ({exc}); re-dispatching anyway.",
+                level=messages.WARNING,
+            )
+        for job in queryset:
+            job.status = PipelineJob.Status.QUEUED
+            job.started_at = job.finished_at = None
+            job.log = ""
+            job.save(update_fields=["status", "started_at", "finished_at", "log"])
+            self._enqueue(job)
+        self.message_user(
+            request,
+            f"Purged {purged} stale message(s); re-dispatched {queryset.count()} job(s). "
+            "If they stay Queued, the worker pod needs a restart.",
+        )
+
+    @admin.action(description="⚠ PURGE — drain the queue + delete these job records")
+    def purge_jobs(self, request, queryset):
+        """Hard reset for a cursed queue: when jobs are wedged in Queued/Running and even a
+        Redis reload didn't clear them, the dead state is these DB rows. PURGE drains the
+        broker queue AND deletes the selected job records, so you can start clean. Built
+        game assets (Asset versions) live in a SEPARATE table and are NOT touched. Shows a
+        confirmation page first."""
+        from django.contrib import messages
+        from django.contrib.admin import helpers
+        from django.template.response import TemplateResponse
+
+        if request.POST.get("_purge_confirm"):
+            purged = 0
+            try:
+                from cladewright.celery import app
+                with app.connection_for_write() as conn:
+                    purged = conn.default_channel.queue_purge("celery") or 0
+            except Exception as exc:  # noqa: BLE001 - broker may be down; still clear the rows
+                self.message_user(request, f"Couldn't drain the queue ({exc}); clearing rows anyway.",
+                                  level=messages.WARNING)
+            n = queryset.count()
+            queryset.delete()
+            self.message_user(
+                request,
+                f"PURGED: drained {purged} queued message(s) and deleted {n} job record(s). "
+                "Built assets were not touched.",
+                level=messages.WARNING,
+            )
+            return None
+
+        # First click → confirmation page listing exactly what will be purged.
+        return TemplateResponse(request, "admin/pipelinejob_purge_confirm.html", {
+            **self.admin_site.each_context(request),
+            "title": "Purge pipeline jobs?",
+            "queryset": queryset,
+            "opts": self.model._meta,
+            "action_checkbox_name": helpers.ACTION_CHECKBOX_NAME,
+            "media": self.media,
+        })

@@ -57,6 +57,16 @@ def _scope_label(scope: str) -> str:
     return " + ".join(labels.get(p) or p for p in parts)
 
 
+def _board_modes(mode: str) -> list[str]:
+    """The modes whose ranked runs share a board. The all-time global board for a scope
+    (marathon_free) ALSO counts every daily run on that scope (#46) — a daily is just a
+    marathon under default/ranked settings, so daily-only players still rank globally. The
+    daily board itself (mode=marathon_daily) stays its own date-indexed thing."""
+    if mode == GameMode.MARATHON_FREE:
+        return [GameMode.MARATHON_FREE, GameMode.MARATHON_DAILY]
+    return [mode]
+
+
 class GamesView(APIView):
     """GET /api/scores/games/ -> the ENABLED game modes (admin-toggled), for the Hub and
     the leaderboard game selector. Public, tiny, and cache-friendly so the SPA can poll it
@@ -259,16 +269,15 @@ class SubmitRunView(APIView):
         # distinct users with a strictly better RANKED run for this board.
         rank = None
         if ranked:
-            rank = (
-                Run.objects.filter(
-                    mode=mode, scope=scope, difficulty=difficulty, ranked=True,
-                    puzzle_date=puzzle_date, score__gt=result.score,
-                )
-                .values("user")
-                .distinct()
-                .count()
-                + 1
+            rank_qs = Run.objects.filter(
+                mode__in=_board_modes(mode), scope=scope, difficulty=difficulty, ranked=True,
+                score__gt=result.score,
             )
+            # The global free board is all-time across free + daily; the daily board is the
+            # one specific day. (#46)
+            if mode != GameMode.MARATHON_FREE:
+                rank_qs = rank_qs.filter(puzzle_date=puzzle_date)
+            rank = rank_qs.values("user").distinct().count() + 1
         return Response(
             {**result.as_dict(), "run_id": run.id, "rank": rank, "ranked": ranked},
             status=201,
@@ -308,8 +317,10 @@ class LeaderboardView(APIView):
                 })
             scope, scope_label = plan[1], plan[2]
 
-        # Only ranked (default-settings) runs are comparable on a board.
-        qs = Run.objects.filter(mode=mode, scope=scope, difficulty=difficulty, ranked=True)
+        # Only ranked (default-settings) runs are comparable on a board. The global free
+        # board also folds in dailies on the same scope (#46); the daily board stays the one
+        # day.
+        qs = Run.objects.filter(mode__in=_board_modes(mode), scope=scope, difficulty=difficulty, ranked=True)
         if day is not None:
             qs = qs.filter(puzzle_date=day)
 

@@ -96,8 +96,11 @@ Treat this like a real open-source project — don't let work pile up uncommitte
   messages with the `Co-Authored-By: Claude …` trailer.
 - **Branch per feature; never commit straight to `main`** (it's prod). Cut `feat/…` or
   `fix/…` off `main`, PR it (`gh pr create`) with a short summary + test notes, squash-merge.
-- **Releases are git tags.** `git tag vX.Y.Z && git push --tags` builds an image stamped with
-  that version (shown in the footer / admin / `GET /api/version/`). See `docs/deployment.md`.
+- **Bump the version when you ship — don't forget.** Releases are git tags: once a batch of
+  user-facing changes is on `main`, `git tag vX.Y.Z && git push --tags` (semver) so the new
+  build is stamped. CI runs `git describe` → `APP_VERSION` → the footer / admin /
+  `GET /api/version/`; skip the tag and the footer keeps showing the *previous* release (with a
+  trailing `-N-gSHA`), so "did my deploy land?" gets murky. See `docs/deployment.md`.
 - **Never commit data artifacts or secrets** (`/data/`, dumps, `.env`, screenshots).
 - **Keep builds green before a PR:** `tsc`/lint (frontend), `validate_asset` + touched tests
   (backend).

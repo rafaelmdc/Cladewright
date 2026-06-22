@@ -441,14 +441,13 @@ function Game({
 
   const lowTime = !settings.infiniteTime && seconds <= 10;
 
-  // A merged (mixed-scope) run can't be re-scored server-side — the server only has the
-  // individual scope assets, not the union — so it plays locally and isn't submitted/ranked.
+  // The scope this run submits to. A mix is a '+'-joined key ("aves+mammalia"); the server
+  // re-scores it against each component scope's current build and ranks it on its own
+  // combined board, so mixed runs are first-class (submitted + ranked) like single ones.
   const scopeId = asset.scope ?? scopeKey ?? "";
-  const mixedScopes = scopeId.includes("+") || scopeId.includes(",");
-  // Run-level ranked: tainted-once-custom (not just the settings at game-over) and never on
-  // a mixed-scope run. Drives both the live badge and what's actually submitted, so they
-  // can't disagree.
-  const runRanked = !rankTainted && !mixedScopes;
+  // Run-level ranked: tainted-once-custom (not just the settings at game-over), so the live
+  // badge and what's actually submitted can't disagree.
+  const runRanked = !rankTainted;
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-clade-bg">
@@ -556,7 +555,6 @@ function Game({
             difficulty={difficulty}
             assetVersion={asset.raw.version}
             ranked={runRanked}
-            submittable={!mixedScopes}
             allowReplay={!isDaily}
             transcript={transcriptRef.current}
             onPlayAgain={() => {

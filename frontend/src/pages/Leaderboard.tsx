@@ -110,9 +110,12 @@ export function Leaderboard() {
           ) : (
             <ScopePicker
               scopes={scopes}
-              multiple={false}
-              value={scopeKey ? [scopeKey] : []}
-              onChange={(keys) => setScopeKey(keys[0] ?? null)}
+              value={scopeKey ? scopeKey.split("+") : []}
+              onChange={(keys) =>
+                // Mixed boards share the game's scope mixing: a sorted '+'-joined key, so the
+                // order picked doesn't matter (matches the server's canonical board).
+                setScopeKey(keys.length ? [...keys].sort().join("+") : null)
+              }
             />
           )}
 

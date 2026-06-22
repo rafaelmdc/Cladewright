@@ -237,6 +237,38 @@ class SubmitAndLeaderboardTests(TestCase):
         self.assertEqual(after["today_score"], 2)
         self.assertEqual(after["streak"]["current"], 1)
 
+    def test_mixed_scope_submit_and_leaderboard(self):
+        # A second scope that shares the deterministic backbone node "kng:A" (as real scopes
+        # do) but has its own tips — exactly what client-side scope mixing merges.
+        av2 = AssetVersion.objects.create(scope="test2", version=1, pool_size=1, is_current=True)
+        TaxonNode.objects.create(asset=av2, key="kng:A", rank="kingdom", sci="kng:A",
+                                 parent_key=None, lineage=[])
+        TaxonNode.objects.create(asset=av2, key="gen:Z", rank="genus", sci="gen:Z",
+                                 parent_key="kng:A", lineage=["kng:A"])
+        TaxonTip.objects.create(asset=av2, key="tip:9", sci="tip:9", common="tip:9",
+                                parent_key="gen:Z", lineage=["kng:A", "gen:Z"])
+
+        user = User.objects.create_user("alice", password="x")
+        self.client.force_authenticate(user)
+        # Mix posted in non-canonical order; the run should re-score across BOTH assets
+        # (tip:1 from "test", tip:9 from "test2") and store the canonical scope.
+        res = self.client.post(
+            "/api/scores/runs/",
+            {"mode": "marathon_free", "scope": "test2+test",
+             "transcript": ["tip:1", "tip:9"]},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data["score"], 2)        # both tips placed across the mix
+        self.assertEqual(res.data["unknown"], 0)      # tip:9 is NOT unknown — found in test2
+        run = Run.objects.get(user=user)
+        self.assertEqual(run.scope, "test+test2")     # canonical (sorted)
+
+        # The board is reachable regardless of the order the client lists the clades.
+        board = self.client.get("/api/scores/leaderboard/?mode=marathon_free&scope=test2+test")
+        self.assertEqual(board.status_code, 200)
+        self.assertEqual([e["score"] for e in board.data["entries"]], [2])
+
     def test_submit_to_disabled_mode_rejected(self):
         user = User.objects.create_user("alice", password="x")
         self.client.force_authenticate(user)

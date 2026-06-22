@@ -1,9 +1,9 @@
-// Combo juice for Time Attack (#60). Mixes two layers so it reads big without overwhelming:
-//   • the canopy — a low-opacity warm-gold edge vignette that builds with the combo, plus a
-//     rare leaf burst at each milestone (the "let it rip" moment); and
-//   • the readout — a small hand-lettered "×N" tag by the timer that charges green→gold.
-// (The third, on-tree layer is the node bloom in TreeRenderer.) Global effects stay faint and
-// eased; bright things are either tiny (the tag) or rare (milestones). Honors reduced-motion.
+// Combo juice for Time Attack (#60) — the screen-space layer. (The explosion lives on the
+// placed node, in TreeRenderer.) Here we keep two restrained things:
+//   • the canopy — a low-opacity warm-gold edge vignette that builds with the combo; and
+//   • the readout — a hand-lettered "×N" tag by the timer whose colour fill DRAINS top→bottom
+//     over the keep-alive window, so you can see at a glance how long the combo has left.
+// Plus a clade-complete toast. Global effects stay faint/eased; honors reduced-motion.
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
@@ -17,27 +17,22 @@ function heatColor(t: number): string {
   return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
 }
 
-function leafPath(s: number): string {
-  return `M0,${-s} Q${s * 0.72},${-s * 0.15} 0,${s} Q${-s * 0.72},${-s * 0.15} 0,${-s} Z`;
-}
-
 export interface ComboFxProps {
   /** current combo length (0/1 = no active combo) */
   combo: number;
   /** heat 0..1 driving the vignette + colour */
   intensity: number;
-  /** bumps each time the combo grows — replays the tag bounce */
+  /** bumps each time the combo grows — restarts the drain + tag bounce */
   comboNonce: number;
-  /** bumps when a milestone (×5, ×10, …) is hit — fires the leaf burst */
-  milestoneNonce: number;
+  /** the combo keep-alive window in ms — the drain runs over exactly this long */
+  windowMs: number;
   /** a just-completed clade to celebrate, or null */
   cladeEvent: { name: string; bonus: number; nonce: number } | null;
 }
 
-export function ComboFx({ combo, intensity, comboNonce, milestoneNonce, cladeEvent }: ComboFxProps) {
+export function ComboFx({ combo, intensity, comboNonce, windowMs, cladeEvent }: ComboFxProps) {
   const reduced = useReducedMotion();
   const active = combo >= 2;
-  const color = heatColor(intensity);
 
   return (
     <div className="pointer-events-none absolute inset-0 z-40 overflow-hidden">
@@ -54,7 +49,8 @@ export function ComboFx({ combo, intensity, comboNonce, milestoneNonce, cladeEve
         />
       )}
 
-      {/* Combo readout, tucked under the timer (top-left). */}
+      {/* Combo readout, tucked under the timer (top-left), with a draining fill that doubles
+          as the combo's countdown. */}
       <AnimatePresence>
         {active && (
           <motion.div
@@ -64,41 +60,38 @@ export function ComboFx({ combo, intensity, comboNonce, milestoneNonce, cladeEve
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
           >
-            <motion.div
-              key={comboNonce}
-              initial={{ scale: reduced ? 1 : 1.35 }}
-              animate={{ scale: 1 }}
-              transition={{ type: "spring", stiffness: 380, damping: 16 }}
-              className="font-hand text-5xl font-bold"
-              style={{ color }}
+            <ComboTag
+              combo={combo}
+              intensity={intensity}
+              comboNonce={comboNonce}
+              windowMs={windowMs}
+              reduced={!!reduced}
+            />
+            <span
+              className="block font-mono text-[10px] uppercase tracking-widest"
+              style={{ color: heatColor(intensity), opacity: 0.7 }}
             >
-              ×{combo}
-            </motion.div>
-            <span className="font-mono text-[10px] uppercase tracking-widest" style={{ color, opacity: 0.7 }}>
               combo
             </span>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Milestone burst — the rare big moment that links the readout to the canopy. */}
-      {!reduced && milestoneNonce > 0 && <MilestoneBurst key={milestoneNonce} />}
-
-      {/* Clade-complete banner. */}
+      {/* Clade-complete toast — floats up and fades (auto-cleared upstream). */}
       <AnimatePresence>
         {cladeEvent && (
           <motion.div
             key={cladeEvent.nonce}
-            className="absolute left-1/2 top-1/3 -translate-x-1/2 whitespace-nowrap rounded-full border-2 border-clade-accent/40 bg-clade-paper/95 px-5 py-2 text-center shadow-lg backdrop-blur"
+            className="absolute left-1/2 top-[30%] -translate-x-1/2 whitespace-nowrap rounded-full border-2 border-clade-accent/40 bg-clade-paper/95 px-5 py-2 text-center shadow-lg backdrop-blur"
             initial={{ opacity: 0, scale: reduced ? 1 : 0.7, y: 0 }}
-            animate={{ opacity: 1, scale: 1, y: reduced ? 0 : -24 }}
-            exit={{ opacity: 0, y: -48 }}
-            transition={{ duration: 0.5, ease: "easeOut" }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, y: reduced ? 0 : -28 }}
+            transition={{ duration: 0.45, ease: "easeOut" }}
           >
             <span className="font-hand text-3xl font-bold text-clade-ink">
               ✓ {cladeEvent.name} complete
             </span>
-            <span className="ml-2 font-hand text-2xl font-bold" style={{ color: heatColor(0.8) }}>
+            <span className="ml-2 font-hand text-2xl font-bold" style={{ color: heatColor(0.85) }}>
               +{cladeEvent.bonus}s
             </span>
           </motion.div>
@@ -108,36 +101,51 @@ export function ComboFx({ combo, intensity, comboNonce, milestoneNonce, cladeEve
   );
 }
 
-/** A one-shot ring of leaves flung from screen centre. Mounted fresh per milestone (keyed
- *  upstream), so it just plays its entrance once. */
-function MilestoneBurst() {
-  const leaves = 14;
+/** The "×N" tag. A faded base glyph sits under a colour-filled copy whose visible height
+ *  shrinks from 100%→0% over the keep-alive window (anchored at the bottom, so the fill
+ *  drains downward) — a glanceable countdown for the combo. Restarts on each placement. */
+function ComboTag({
+  combo,
+  intensity,
+  comboNonce,
+  windowMs,
+  reduced,
+}: {
+  combo: number;
+  intensity: number;
+  comboNonce: number;
+  windowMs: number;
+  reduced: boolean;
+}) {
+  const color = heatColor(intensity);
+  const label = `×${combo}`;
   return (
-    <div className="absolute left-1/2 top-1/2">
-      {Array.from({ length: leaves }).map((_, i) => {
-        const ang = (i / leaves) * Math.PI * 2;
-        const dist = 150 + (i % 3) * 40;
-        return (
-          <motion.svg
-            key={i}
-            width={20}
-            height={20}
-            viewBox="-10 -10 20 20"
-            className="absolute"
-            initial={{ x: 0, y: 0, scale: 0.2, opacity: 0.85, rotate: 0 }}
-            animate={{
-              x: Math.cos(ang) * dist,
-              y: Math.sin(ang) * dist,
-              scale: 1,
-              opacity: 0,
-              rotate: i % 2 ? 140 : -140,
-            }}
-            transition={{ duration: 1, ease: "easeOut" }}
-          >
-            <path d={leafPath(8)} fill={heatColor(0.85)} />
-          </motion.svg>
-        );
-      })}
-    </div>
+    <motion.div
+      key={comboNonce}
+      className="relative inline-block"
+      initial={{ scale: reduced ? 1 : 1.3 }}
+      animate={{ scale: 1 }}
+      transition={{ type: "spring", stiffness: 380, damping: 16 }}
+    >
+      {/* faded base */}
+      <span className="block font-hand text-5xl font-bold" style={{ color, opacity: 0.22 }}>
+        {label}
+      </span>
+      {/* draining colour fill (bottom-anchored: as height shrinks, the fill recedes downward) */}
+      <motion.div
+        key={comboNonce}
+        className="absolute inset-x-0 bottom-0 overflow-hidden"
+        initial={{ height: "100%" }}
+        animate={{ height: reduced ? "100%" : "0%" }}
+        transition={{ duration: windowMs / 1000, ease: "linear" }}
+      >
+        <span
+          className="absolute inset-x-0 bottom-0 block font-hand text-5xl font-bold"
+          style={{ color }}
+        >
+          {label}
+        </span>
+      </motion.div>
+    </motion.div>
   );
 }

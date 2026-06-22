@@ -23,7 +23,12 @@ RUN pip install --no-cache-dir -r requirements-pipeline.txt
 
 COPY . /app/
 
-ENV DJANGO_SETTINGS_MODULE=cladewright.settings
+# Build stamp (same as the web image) so the worker's version matches in logs / admin.
+ARG APP_VERSION=dev
+ARG BUILD_TIME=
+ENV DJANGO_SETTINGS_MODULE=cladewright.settings \
+    APP_VERSION=$APP_VERSION \
+    BUILD_TIME=$BUILD_TIME
 
 # Concurrency 1: a build is heavy (CoL dump + Braidworks); run one at a time per worker.
 # Scale out by running more worker replicas (compose --scale / k8s replicas), not threads.

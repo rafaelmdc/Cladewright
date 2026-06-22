@@ -12,8 +12,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . /app/
 
+# Build stamp (CI passes the git version + UTC build time). Surfaced at /api/version/ and
+# in the admin so you can confirm which build is actually running.
+ARG APP_VERSION=dev
+ARG BUILD_TIME=
 ENV DJANGO_SETTINGS_MODULE=cladewright.settings \
-    APP_PORT=8000
+    APP_PORT=8000 \
+    APP_VERSION=$APP_VERSION \
+    BUILD_TIME=$BUILD_TIME
 
 EXPOSE 8000
 

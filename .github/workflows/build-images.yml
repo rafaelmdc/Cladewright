@@ -29,6 +29,17 @@ jobs:
             dockerfile: frontend/Dockerfile
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history + tags so `git describe` can resolve a version
+
+      # The version stamped into the images and shown in the site footer / admin. Prefers
+      # the nearest git tag (e.g. v1.2.0, or v1.2.0-3-gabc1234 a few commits on); falls back
+      # to the short commit SHA when there are no tags yet. So `git tag v1.0.0 && git push
+      # --tags` is all it takes to start showing real release numbers.
+      - id: ver
+        run: |
+          echo "version=$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
+          echo "built=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -42,6 +53,9 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: true
+          build-args: |
+            APP_VERSION=${{ steps.ver.outputs.version }}
+            BUILD_TIME=${{ steps.ver.outputs.built }}
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}:${{ github.sha }}

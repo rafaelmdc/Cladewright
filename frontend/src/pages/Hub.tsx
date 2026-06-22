@@ -11,6 +11,7 @@ import { fetchDaily, type DailyInfo } from "../lib/daily";
 import { fetchGames, FALLBACK_GAMES, type Game } from "../lib/games";
 import type { Difficulty } from "../lib/scores";
 import { useTitle } from "../lib/useTitle";
+import { fetchApiVersion, FRONTEND_BUILT, FRONTEND_VERSION } from "../lib/version";
 
 // Shared with Marathon's scope memory: the picked mix carries over either way.
 const SCOPE_KEY = "cladewright.scope";
@@ -176,7 +177,8 @@ export function Hub() {
             className="underline decoration-clade-ink/25 underline-offset-2 transition hover:text-clade-ink/70 hover:decoration-clade-ink/50"
           >
             report a bug ↗
-          </a>
+          </a>{" "}
+          · <BuildTag />
         </p>
       </div>
     </div>
@@ -250,5 +252,27 @@ function ModeCard({ to, title, blurb }: { to: string; title: string; blurb: stri
         </Link>
       </div>
     </div>
+  );
+}
+
+/** Build stamp: the frontend's baked version + the live API's version. They normally match
+ *  (built from the same commit); a mismatch (shown amber) flags a half-applied deploy. */
+function BuildTag() {
+  const [api, setApi] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetchApiVersion().then((v) => {
+      if (alive) setApi(v);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const skew = api !== null && api !== FRONTEND_VERSION;
+  return (
+    <span title={FRONTEND_BUILT ? `built ${FRONTEND_BUILT}` : undefined}>
+      {FRONTEND_VERSION}
+      {skew && <span className="text-amber-600"> · api {api}</span>}
+    </span>
   );
 }

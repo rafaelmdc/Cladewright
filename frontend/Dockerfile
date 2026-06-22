@@ -3,6 +3,13 @@
 # the dev Vite proxy) — Django sees the public Host and builds first-party OAuth callbacks.
 FROM node:20-alpine AS build
 WORKDIR /app
+# Build stamp (CI passes the git version + UTC build time). Vite only inlines env vars
+# prefixed VITE_, so re-export them before the build; they end up in the bundle and surface
+# in the site footer. Default to "dev" for local builds.
+ARG APP_VERSION=dev
+ARG BUILD_TIME=
+ENV VITE_APP_VERSION=$APP_VERSION \
+    VITE_APP_BUILT=$BUILD_TIME
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .

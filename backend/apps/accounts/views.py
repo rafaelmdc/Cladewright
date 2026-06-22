@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 
 from django.contrib.auth import logout
+from django.core.exceptions import ValidationError
 from django.db.models import Count, Max
 from django.db.models.functions import TruncDate
 from django.utils import timezone
@@ -19,6 +20,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.scores.models import GameMode, GameModeConfig, PlayerStat, Run
+
+from .models import (
+    DISPLAY_NAME_MAX,
+    DISPLAY_NAME_MIN,
+    get_or_create_profile,
+    validate_display_name,
+)
 
 RECENT_RUNS = 30
 HEATMAP_DAYS = 7 * 13  # ~13 weeks, GitHub-style
@@ -49,9 +57,37 @@ class MeView(APIView):
         u = request.user
         if not u.is_authenticated:
             return Response({"authenticated": False})
+        profile = get_or_create_profile(u)
         return Response(
-            {"authenticated": True, "username": u.get_username(), "email": getattr(u, "email", "")}
+            {
+                "authenticated": True,
+                "username": u.get_username(),
+                "email": getattr(u, "email", ""),
+                "display_name": profile.display_name,
+                # Drives the one-time "set your display name" card after sign-up.
+                "name_chosen": profile.name_chosen,
+            }
         )
+
+
+class ProfileView(APIView):
+    """PATCH /api/auth/profile/ {display_name} -> set the public display name (validated,
+    case-insensitively unique). Marks the name as chosen so the set-name card stops showing."""
+
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request: Request) -> Response:
+        u = request.user
+        profile = get_or_create_profile(u)
+        raw = request.data.get("display_name", "")
+        try:
+            name = validate_display_name(raw, exclude_user_id=u.pk)
+        except ValidationError as e:
+            return Response({"error": e.messages[0]}, status=400)
+        profile.display_name = name
+        profile.name_chosen = True
+        profile.save(update_fields=["display_name", "name_chosen"])
+        return Response({"display_name": profile.display_name, "name_chosen": True})
 
 
 class LogoutView(APIView):
@@ -116,9 +152,11 @@ class AccountStatsView(APIView):
             {
                 "user": {
                     "username": u.get_username(),
+                    "display_name": get_or_create_profile(u).display_name,
                     "email": getattr(u, "email", ""),
                     "joined": u.date_joined.date().isoformat(),
                 },
+                "display_name_rules": {"min": DISPLAY_NAME_MIN, "max": DISPLAY_NAME_MAX},
                 "modes": modes,
                 "totals": totals,
                 "recent_runs": recent_runs,

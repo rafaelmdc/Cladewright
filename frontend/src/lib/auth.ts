@@ -7,6 +7,34 @@ export interface Me {
   authenticated: boolean;
   username?: string;
   email?: string;
+  display_name?: string;
+  /** False while the display name is still the auto-generated default — drives the one-time
+   * "set your name" prompt after sign-up. */
+  name_chosen?: boolean;
+}
+
+export interface UpdateNameResult {
+  ok: boolean;
+  display_name?: string;
+  error?: string;
+}
+
+/** PATCH the public display name. Validation (length/charset/uniqueness) is server-side; on
+ * failure the message is returned for inline display. */
+export async function updateDisplayName(name: string): Promise<UpdateNameResult> {
+  try {
+    const res = await fetch("/api/auth/profile/", {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
+      body: JSON.stringify({ display_name: name }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data.error ?? "Could not save that name." };
+    return { ok: true, display_name: data.display_name };
+  } catch {
+    return { ok: false, error: "Network error — try again." };
+  }
 }
 
 /** Top-level navigation target for "Sign in with Google". */

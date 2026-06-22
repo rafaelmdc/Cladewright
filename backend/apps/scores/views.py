@@ -329,7 +329,7 @@ class LeaderboardView(APIView):
         seen: set[int] = set()
         rows = []
         for r in qs.order_by("-score", "created_at").values(
-            "user_id", "user__username", "score", "created_at"
+            "user_id", "user__username", "user__profile__display_name", "score", "created_at"
         )[: LEADERBOARD_LIMIT * 4]:
             if r["user_id"] in seen:
                 continue
@@ -337,7 +337,7 @@ class LeaderboardView(APIView):
             rows.append(
                 {
                     "rank": len(rows) + 1,
-                    "user": r["user__username"],
+                    "user": r["user__profile__display_name"] or r["user__username"],
                     "score": r["score"],
                     "at": r["created_at"].isoformat(),
                 }

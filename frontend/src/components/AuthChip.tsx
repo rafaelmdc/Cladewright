@@ -21,7 +21,7 @@ export function AuthChip() {
   }
   return (
     <Link to="/account" className="pill pill-active" title="Account">
-      {me.username}
+      {me.display_name || me.username}
     </Link>
   );
 }

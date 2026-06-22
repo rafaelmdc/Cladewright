@@ -109,16 +109,19 @@ export function Marathon() {
     }
     if (!isDaily) localStorage.setItem(SCOPE_KEY, scopeKey); // don't clobber free-play memory
     const list = scopeKey.split(",").filter(Boolean);
+    // Current version per scope, so the loader can hit the local cache (#43) and skip the
+    // big download when our stored copy is still current.
+    const versions = Object.fromEntries(scopes.map((s) => [s.key, s.version]));
     setAsset(null);
     if (list.length > 1) {
       // Scope mixing: fetch each blob and merge into one tree (remote scopes aren't mixable).
-      loadAssets(list).then(apply).catch(console.error);
+      loadAssets(list, versions).then(apply).catch(console.error);
     } else {
       const info = scopes.find((s) => s.key === list[0]);
       if (info?.mode === "remote") {
         apply(createEmptyAsset(list[0], 15));
       } else {
-        loadAsset(list[0]).then(apply).catch(console.error);
+        loadAsset(list[0], info?.version).then(apply).catch(console.error);
       }
     }
     return () => {

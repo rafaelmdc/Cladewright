@@ -174,8 +174,10 @@ export function SettingsPanel({ settings, onChange, onAutofill }: Props) {
                 />
               </div>
 
-              {/* DEV CHEAT — remove this whole block before launch. */}
-              {onAutofill && (
+              {/* DEV CHEAT — dev-only. import.meta.env.DEV is true under the Vite dev
+                  server and false in the production build (`vite build`), so this block is
+                  compiled out of the bundle that ships to prod. */}
+              {import.meta.env.DEV && onAutofill && (
                 <div className="border-t border-dashed border-clade-ink/20 pt-4">
                   <p className="mb-1 text-xs uppercase tracking-wide text-clade-ink/40">
                     Cheat · dev

@@ -224,9 +224,16 @@ function Game({
   const [settings, setSettings] = useState<GameSettings>(() =>
     isDaily ? { ...DEFAULT_SETTINGS } : loadSettings(),
   );
+  // Ranked is a property of the WHOLE run, not just the settings at game-over: if a
+  // score-affecting modifier was ever non-default (infinite time, boosted clock, an
+  // extinct-inclusive pool), the run is permanently unranked — resetting to defaults at the
+  // end must NOT relaunder it back onto the leaderboard. Seeded from the starting settings
+  // (a run begun under custom settings is tainted from the first placement).
+  const [rankTainted, setRankTainted] = useState(() => !isRankedSettings(settings));
   function updateSettings(next: GameSettings) {
     setSettings(next);
     saveSettings(next);
+    if (!isRankedSettings(next)) setRankTainted(true); // one-way: never un-taints
     // Flipping infinite-time on revives a finished run so you can keep exploring.
     if (next.infiniteTime && !running) setRunning(true);
   }
@@ -291,6 +298,7 @@ function Game({
     setCount(saved.count);
     setSeconds(settings.infiniteTime ? saved.seconds : secs);
     setRunning(settings.infiniteTime ? true : secs > 0);
+    if (saved.tainted) setRankTainted(true); // a restored run keeps its unranked status
     setRev((n) => n + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -311,12 +319,13 @@ function Game({
         count,
         seconds,
         infiniteTime: settings.infiniteTime,
+        tainted: rankTainted,
         savedAt: Date.now(),
       });
     } else {
       clearRun();
     }
-  }, [rev, score, count, seconds, running, settings.infiniteTime, mode, persistScope, difficulty, asset.raw.version]);
+  }, [rev, score, count, seconds, running, settings.infiniteTime, rankTainted, mode, persistScope, difficulty, asset.raw.version]);
 
   // Keep typing flowing into the search no matter where focus is, and — crucially — stop
   // Backspace from triggering the browser's "back" navigation when the input isn't focused,
@@ -436,6 +445,10 @@ function Game({
   // individual scope assets, not the union — so it plays locally and isn't submitted/ranked.
   const scopeId = asset.scope ?? scopeKey ?? "";
   const mixedScopes = scopeId.includes("+") || scopeId.includes(",");
+  // Run-level ranked: tainted-once-custom (not just the settings at game-over) and never on
+  // a mixed-scope run. Drives both the live badge and what's actually submitted, so they
+  // can't disagree.
+  const runRanked = !rankTainted && !mixedScopes;
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-clade-bg">
@@ -459,7 +472,12 @@ function Game({
       </div>
       {/* No tuning panel on the daily — it's fixed and ranked. */}
       {!isDaily && (
-        <SettingsPanel settings={settings} onChange={updateSettings} onAutofill={autofill} />
+        <SettingsPanel
+          settings={settings}
+          onChange={updateSettings}
+          onAutofill={autofill}
+          runRanked={runRanked}
+        />
       )}
       {/* End-the-run control sits just left of the settings gear; only while playing. */}
       {running && <EndGameButton onEnd={() => setRunning(false)} />}
@@ -537,7 +555,7 @@ function Game({
             }
             difficulty={difficulty}
             assetVersion={asset.raw.version}
-            ranked={isRankedSettings(settings) && !mixedScopes}
+            ranked={runRanked}
             submittable={!mixedScopes}
             allowReplay={!isDaily}
             transcript={transcriptRef.current}
@@ -551,6 +569,9 @@ function Game({
               setFlash(null);
               setPulse(null);
               setRev((n) => n + 1);
+              // Fresh run: ranked again iff the current settings are default (a new run
+              // started under custom settings stays tainted from the start).
+              setRankTainted(!isRankedSettings(settings));
               setRunning(true);
             }}
           />

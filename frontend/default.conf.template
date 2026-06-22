@@ -57,8 +57,12 @@ server {
     proxy_set_header X-Forwarded-Proto $client_proto;
   }
 
-  # SPA client-side routing: everything else falls back to index.html.
+  # SPA client-side routing: everything else falls back to index.html. The HTML entry must
+  # NOT be cached — it references the content-hashed /assets bundles, so a browser holding a
+  # stale index.html would keep loading an old (possibly 404'd) bundle after a deploy.
+  # no-cache = always revalidate the entry; the hashed assets it points at stay immutable.
   location / {
+    add_header Cache-Control "no-cache";
     try_files $uri $uri/ /index.html;
   }
 }

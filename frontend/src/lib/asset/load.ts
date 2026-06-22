@@ -5,6 +5,7 @@
 
 import type { AssetNode, AssetTip, GameAsset, InternedAsset } from "./types";
 import { mergeAssets } from "./merge";
+import { readCachedAsset, writeCachedAsset } from "./cache";
 
 // Primary source is the DB-backed API (served by Django, blob from Postgres) — same
 // path as prod. Vite proxies /api -> :8000 in dev (see vite.config.ts). Fallbacks keep
@@ -13,18 +14,45 @@ import { mergeAssets } from "./merge";
 const PRIMARY = import.meta.env.VITE_GAMEDATA_URL ?? "/api/gamedata/current/";
 const FALLBACKS = ["/mammalia.json", "/sample_asset.json"];
 
+// Local cache (#43): when the caller knows the scope's current `version` (from the cheap
+// scopes metadata the app fetches before any asset), we check IndexedDB first and skip the
+// multi-MB download on a hit; on a miss we fetch and re-cache. Version-keyed, so a rebuild
+// invalidates it automatically — see lib/asset/cache.ts.
+async function cacheFirst(
+  url: string,
+  scope: string | undefined,
+  version: number | undefined,
+): Promise<GameAsset | null> {
+  if (scope && version != null) {
+    const hit = await readCachedAsset(scope, version);
+    if (hit) return hit;
+  }
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const asset = (await res.json()) as GameAsset;
+    // Cache under the asset's OWN version (authoritative), keyed by the scope we asked for.
+    if (scope) void writeCachedAsset(scope, asset.version, asset);
+    return asset;
+  } catch {
+    return null; // network error — caller decides whether to fall back
+  }
+}
+
 /** Fetch one scope's raw asset, with dev fallbacks (used for the single-scope path). */
-async function fetchRawAsset(scope?: string): Promise<GameAsset> {
+async function fetchRawAsset(scope?: string, version?: number): Promise<GameAsset> {
   const primary = scope ? `${PRIMARY}?scope=${encodeURIComponent(scope)}` : PRIMARY;
-  const sources = [primary, ...FALLBACKS];
+  const cached = await cacheFirst(primary, scope, version);
+  if (cached) return cached;
+  // Primary missed (non-ok or network error); try the static dev fallbacks in order.
   let lastStatus = 0;
-  for (const src of sources) {
+  for (const src of FALLBACKS) {
     try {
       const res = await fetch(src);
       if (res.ok) return (await res.json()) as GameAsset;
       lastStatus = res.status;
     } catch {
-      // network error (e.g. backend down) — try the next source
+      // try the next source
     }
   }
   throw new Error(`Failed to load game asset (last status ${lastStatus})`);
@@ -32,30 +60,29 @@ async function fetchRawAsset(scope?: string): Promise<GameAsset> {
 
 /** Fetch one specific scope from the API only (no generic dev fallback — a fallback would
  *  pollute a multi-scope merge). Returns null on failure so the merge can skip it. */
-async function fetchScopeAsset(scope: string): Promise<GameAsset | null> {
-  try {
-    const res = await fetch(`${PRIMARY}?scope=${encodeURIComponent(scope)}`);
-    if (res.ok) return (await res.json()) as GameAsset;
-  } catch {
-    /* skip a scope that fails to load */
-  }
-  return null;
+async function fetchScopeAsset(scope: string, version?: number): Promise<GameAsset | null> {
+  return cacheFirst(`${PRIMARY}?scope=${encodeURIComponent(scope)}`, scope, version);
 }
 
 /** Load + intern a blob-mode asset. `scope` selects which current build to fetch
- *  (?scope=key); omitted = the server's default current. Dev fallbacks keep the app
- *  booting when the backend is down. */
-export async function loadAsset(scope?: string): Promise<InternedAsset> {
-  return intern(await fetchRawAsset(scope));
+ *  (?scope=key); omitted = the server's default current. `version` (from the scopes
+ *  metadata) enables the local cache. Dev fallbacks keep the app booting when the backend
+ *  is down. */
+export async function loadAsset(scope?: string, version?: number): Promise<InternedAsset> {
+  return intern(await fetchRawAsset(scope, version));
 }
 
 /** Load + merge several blob scopes into one playable asset (scope mixing). One scope
  *  delegates to loadAsset (keeps the dev fallback); many are fetched in parallel, the
- *  ones that load are merged. */
-export async function loadAssets(scopes: string[]): Promise<InternedAsset> {
+ *  ones that load are merged. `versions` (scope → current version) enables the per-scope
+ *  local cache. */
+export async function loadAssets(
+  scopes: string[],
+  versions?: Record<string, number>,
+): Promise<InternedAsset> {
   const uniq = [...new Set(scopes.filter(Boolean))];
-  if (uniq.length <= 1) return loadAsset(uniq[0]);
-  const raws = (await Promise.all(uniq.map(fetchScopeAsset))).filter(
+  if (uniq.length <= 1) return loadAsset(uniq[0], uniq[0] ? versions?.[uniq[0]] : undefined);
+  const raws = (await Promise.all(uniq.map((s) => fetchScopeAsset(s, versions?.[s])))).filter(
     (a): a is GameAsset => a !== null,
   );
   if (raws.length === 0) throw new Error("Failed to load any selected scope");

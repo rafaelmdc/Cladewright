@@ -80,8 +80,20 @@ _TERMINAL_RANKS = frozenset(
 _LINEAGE_RANK_SET = frozenset(LINEAGE_RANKS)
 
 
+_ENGLISH_LANGS = frozenset({"en", "eng", "english", ""})
+
+
 def _load_vernacular(coldp_dir: Path) -> dict[str, str]:
-    """taxonID -> a preferred common name (English first), if VernacularName.tsv exists."""
+    """taxonID -> an ENGLISH common name, if VernacularName.tsv has one.
+
+    ENGLISH-ONLY by design. CoL's vernacular coverage is multilingual and, for some
+    groups, heavily non-English (Japanese is dominant for fish). A non-English name here
+    becomes BOTH the displayed common name AND a search alias — that's why
+    "Gadus chalcogrammus" showed as "スケトウダラ" and searching "alaska pollock" missed.
+    So we keep only English-tagged rows (untagged counts as English — CoL's English rows
+    are often blank-language); the Braidworks weaver supplies real English names for the
+    rest. First English name per taxon wins.
+    """
     path = coldp_dir / "VernacularName.tsv"
     if not path.exists():
         return {}
@@ -91,10 +103,9 @@ def _load_vernacular(coldp_dir: Path) -> dict[str, str]:
         name = get(row, "name")
         if not taxon_id or not name:
             continue
-        lang = get(row, "language").lower()
-        # First name seen wins; an English name upgrades a non-English one.
-        if taxon_id not in chosen or lang in ("en", "eng"):
-            chosen[taxon_id] = name
+        if get(row, "language").strip().lower() not in _ENGLISH_LANGS:
+            continue  # drop non-English vernaculars entirely
+        chosen.setdefault(taxon_id, name)
     return chosen
 
 

@@ -106,6 +106,22 @@ def test_common_name_precedence_and_aliases(coldp_dir: Path):
     assert doc["aliases"]["ursus arctos"] == ["tip:Ursus_arctos"]
 
 
+def test_load_vernacular_is_english_only(tmp_path: Path):
+    # CoL is Japanese-heavy for fish; a non-English vernacular here would become both the
+    # displayed name and a search alias (the "スケトウダラ" bug). Keep English only.
+    (tmp_path / "VernacularName.tsv").write_text(
+        "col:taxonID\tcol:name\tcol:language\n"
+        "G1\tスケトウダラ\tjpn\n"        # Japanese, listed first — must be ignored
+        "G1\tAlaska pollock\teng\n"      # English — this is the one kept
+        "G2\tクロマグロ\tjpn\n"          # Japanese-only — taxon gets NO CoL name (weaver fills)
+        "G3\tWalleye\t\n"                # untagged — treated as English
+    )
+    v = ingest._load_vernacular(tmp_path)
+    assert v["G1"] == "Alaska pollock"   # English wins over the earlier Japanese row
+    assert "G2" not in v                 # no English → no CoL vernacular at all
+    assert v["G3"] == "Walleye"
+
+
 def test_clade_floor_guarantees_minimum_per_group(coldp_dir: Path):
     # size=1 but floor=1 at order level -> each order keeps at least one tip.
     doc = build(coldp_dir, size=1, clade_floor=1, floor_rank="order")

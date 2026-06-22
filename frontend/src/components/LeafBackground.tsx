@@ -10,6 +10,8 @@
 
 import { useEffect, useRef } from "react";
 
+import { useLeafFlee } from "../lib/leafEgg";
+
 interface Leaf {
   x: number;
   y: number;
@@ -38,6 +40,9 @@ const GRAB_RADIUS = 22; // px slop around a leaf so it's easy to grab
 const GRAVITY = 900; // px/s² on a flung leaf
 const MAX_FLING = 2200; // clamp fling speed so a fast whip doesn't rocket off instantly
 const SETTLE_SPEED = 7; // below this a knocked leaf relaxes back into the gentle drift
+// "Spooked leaves" easter egg (hold the logo 5s): the cursor repels nearby leaves.
+const REPEL_RADIUS = 84;
+const REPEL_ACCEL = 2800;
 
 /** A press on real UI (or inside it) should never grab a leaf. */
 function onInteractiveEl(t: EventTarget | null): boolean {
@@ -65,6 +70,14 @@ export function LeafBackground({
     gustRef.current = gust;
   }, [gust]);
 
+  // Easter egg: when on, the cursor repels leaves (read via a ref so the loop sees changes
+  // without being recreated).
+  const flee = useLeafFlee();
+  const fleeRef = useRef(flee);
+  useEffect(() => {
+    fleeRef.current = flee;
+  }, [flee]);
+
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -81,6 +94,7 @@ export function LeafBackground({
     let held: Leaf | null = null;
     let px = 0;
     let py = 0;
+    let pointerInside = false; // gates the easter-egg repel until we have a real position
 
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -157,6 +171,19 @@ export function LeafBackground({
       }
 
       for (const l of leaves) {
+        // Easter egg: the cursor's wake shoves nearby leaves away — the closer, the harder.
+        if (fleeRef.current && pointerInside && l !== held && !l.free) {
+          const dx = l.x - px;
+          const dy = l.y - py;
+          const d = Math.hypot(dx, dy);
+          if (d > 0.001 && d < REPEL_RADIUS) {
+            const f = (1 - d / REPEL_RADIUS) * REPEL_ACCEL * dt;
+            l.vx += (dx / d) * f;
+            l.vy += (dy / d) * f;
+            l.awake = true;
+          }
+        }
+
         if (l === held) {
           // Spring to the cursor; velocity is derived from the move so a release flings it.
           const safe = Math.max(dt, 1 / 120);
@@ -280,7 +307,12 @@ export function LeafBackground({
     };
 
     const onMove = (e: PointerEvent) => {
-      if (held) pointAt(e);
+      pointAt(e); // track the cursor always so the easter-egg repel has a target
+      pointerInside = true;
+    };
+
+    const onLeave = () => {
+      pointerInside = false;
     };
 
     const onUp = () => {
@@ -302,6 +334,7 @@ export function LeafBackground({
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
       window.addEventListener("pointercancel", onUp);
+      document.addEventListener("mouseleave", onLeave);
     }
     return () => {
       cancelAnimationFrame(raf);
@@ -310,6 +343,7 @@ export function LeafBackground({
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
+      document.removeEventListener("mouseleave", onLeave);
     };
   }, [density, interactive]);
 

@@ -9,6 +9,7 @@ name: build-images
 on:
   push:
     branches: [main, phase-1-pipeline]
+    tags: ["v*"]  # a release tag (v0.1.0) builds an image stamped with that version
   workflow_dispatch:
 
 jobs:

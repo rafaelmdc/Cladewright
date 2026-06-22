@@ -9,6 +9,7 @@ Re-scoring reads the asset's denormalized lineages from the relational mirror
 from __future__ import annotations
 
 import datetime as dt
+import re
 
 from django.db import transaction
 from rest_framework.permissions import IsAuthenticated
@@ -32,6 +33,28 @@ from .models import (
 from .scoring import rescore
 
 LEADERBOARD_LIMIT = 50
+
+
+def _canonical_scope(scope: str) -> str:
+    """Normalize a (possibly mixed) scope key to a stable form: components sorted and
+    '+'-joined, so 'aves+mammalia' and 'mammalia+aves' are the SAME board. Mirrors the
+    client's merge (frontend/src/lib/asset/merge.ts), which also sorts before joining.
+
+    Splits on '+' OR whitespace: a literal '+' in a query string decodes to a space, so a
+    board stays reachable whether the client sends %2B or a bare '+' (scope keys have no
+    spaces, so this is unambiguous)."""
+    parts = [p for p in re.split(r"[+\s]+", scope or "") if p]
+    return "+".join(sorted(set(parts)))
+
+
+def _scope_label(scope: str) -> str:
+    """Display label for a (possibly mixed) scope: each component's current-build label,
+    joined with ' + '. Falls back to the raw key for any component without a build."""
+    parts = scope.split("+")
+    labels = dict(
+        AssetVersion.objects.filter(scope__in=parts, is_current=True).values_list("scope", "label")
+    )
+    return " + ".join(labels.get(p) or p for p in parts)
 
 
 class GamesView(APIView):
@@ -158,7 +181,9 @@ class SubmitRunView(APIView):
         if not GameModeConfig.objects.filter(mode=mode, enabled=True).exists():
             return Response({"error": "mode not enabled"}, status=400)
 
-        scope = (data.get("scope") or "").strip()
+        # Scope may be a single key or a mix ("aves+mammalia"); canonicalize so order never
+        # fragments a board (matches the client's sorted merge).
+        scope = _canonical_scope(data.get("scope") or "")
         # For the daily, the scope is server-decided (today's rotation) — pin it so every
         # daily run lands on the same board regardless of what the client posts.
         is_daily = mode in (GameMode.MARATHON_DAILY, GameMode.CLASSIC)
@@ -183,21 +208,30 @@ class SubmitRunView(APIView):
         # records + counts toward stats, but never appears on the board.
         ranked = bool(data.get("ranked", True))
 
+        # A mix re-scores against the UNION of each component scope's current build; the
+        # shared backbone node ids are deterministic across scopes, so the merged lineage
+        # maps reproduce the same induced tree the client merged client-side. A single
+        # explicit asset_version only applies to a single scope (a mix always uses current).
+        components = scope.split("+")
         version = data.get("asset_version")
-        av = _asset_for(scope, int(version) if version else None)
-        if av is None:
-            return Response({"error": f"no asset for scope {scope!r}"}, status=400)
+        pin_version = int(version) if (version and len(components) == 1) else None
+        assets = []
+        for comp in components:
+            av = _asset_for(comp, pin_version)
+            if av is None:
+                return Response({"error": f"no asset for scope {comp!r}"}, status=400)
+            assets.append(av)
 
-        # Pull only the lineages we need (the placed ids) from the relational mirror.
+        # Pull only the lineages we need (the placed ids) from the relational mirror, across
+        # every component asset.
         ids = [t for t in transcript if isinstance(t, str)]
-        tip_lineages = {
-            r["key"]: r["lineage"]
-            for r in TaxonTip.objects.filter(asset=av, key__in=ids).values("key", "lineage")
-        }
-        node_lineages = {
-            r["key"]: r["lineage"]
-            for r in TaxonNode.objects.filter(asset=av, key__in=ids).values("key", "lineage")
-        }
+        tip_lineages: dict[str, list[str]] = {}
+        node_lineages: dict[str, list[str]] = {}
+        for av in assets:
+            for r in TaxonTip.objects.filter(asset=av, key__in=ids).values("key", "lineage"):
+                tip_lineages[r["key"]] = r["lineage"]
+            for r in TaxonNode.objects.filter(asset=av, key__in=ids).values("key", "lineage"):
+                node_lineages[r["key"]] = r["lineage"]
         result = rescore(ids, tip_lineages, node_lineages)
 
         is_daily = mode in (GameMode.MARATHON_DAILY, GameMode.CLASSIC)
@@ -210,7 +244,7 @@ class SubmitRunView(APIView):
                 scope=scope,
                 difficulty=difficulty,
                 score=result.score,
-                asset_version=av.version,
+                asset_version=max(a.version for a in assets),
                 puzzle_date=puzzle_date,
                 transcript=ids,
                 ranked=ranked,
@@ -250,17 +284,20 @@ class LeaderboardView(APIView):
         mode = request.query_params.get("mode", GameMode.MARATHON_FREE)
         if mode not in GameMode.values:
             return Response({"error": "invalid mode"}, status=400)
-        scope = (request.query_params.get("scope") or "").strip()
+        # Canonicalize so a mix matches its stored board regardless of the order the client
+        # lists the clades in.
+        scope = _canonical_scope(request.query_params.get("scope") or "")
         difficulty = request.query_params.get("difficulty", Difficulty.COMMON)
         if difficulty not in Difficulty.values:
             return Response({"error": "invalid difficulty"}, status=400)
 
         # Daily boards are date-indexed (history is kept): the scope is DERIVED from that
         # day's daily plan, not the client — and free-play boards are a single all-time
-        # board per (scope, difficulty). See docs/games-model.md.
+        # board per (scope, difficulty); a scope may be a mix ("aves+mammalia"). See
+        # docs/games-model.md.
         is_daily = mode in (GameMode.MARATHON_DAILY, GameMode.CLASSIC)
         day = None
-        scope_label = scope
+        scope_label = _scope_label(scope) if scope else ""
         if is_daily:
             day = _parse_date(request.query_params.get("date")) or dt.date.today()
             plan = _daily_plan(day)

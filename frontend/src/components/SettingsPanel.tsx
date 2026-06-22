@@ -15,11 +15,15 @@ import {
 interface Props {
   settings: GameSettings;
   onChange: (next: GameSettings) => void;
+  /** Run-level ranked status (tainted-once-custom), so the badge reflects whether THIS run
+   *  still counts — not just whether the current settings happen to be default. Falls back
+   *  to the current settings when omitted. */
+  runRanked?: boolean;
   /** DEV CHEAT (remove before launch): auto-place N random organisms onto the tree. */
   onAutofill?: (n: number) => void;
 }
 
-export function SettingsPanel({ settings, onChange, onAutofill }: Props) {
+export function SettingsPanel({ settings, onChange, runRanked, onAutofill }: Props) {
   const [open, setOpen] = useState(false);
   const set = <K extends keyof GameSettings>(key: K, value: GameSettings[K]) =>
     onChange({ ...settings, [key]: value });
@@ -61,16 +65,20 @@ export function SettingsPanel({ settings, onChange, onAutofill }: Props) {
                 </button>
               </div>
 
-              {/* Ranked status + one-tap reset. Default settings are leaderboard-ranked;
-                  any change drops to "custom" (still counts toward your stats). */}
+              {/* Ranked status + one-tap reset. Default settings are leaderboard-ranked; any
+                  score-affecting change drops the run to "custom" — and it STAYS custom for
+                  the rest of the run even if you reset (the badge reflects the run, not just
+                  the current dials, so it never falsely promises a place). */}
               <div className="-mt-2 flex items-center justify-between">
-                {isRankedSettings(settings) ? (
+                {(runRanked ?? isRankedSettings(settings)) ? (
                   <span className="font-mono text-[11px] uppercase tracking-wide text-clade-accent">
                     ● Ranked
                   </span>
                 ) : (
                   <span className="font-mono text-[11px] uppercase tracking-wide text-clade-ink/45">
-                    ○ Custom · not ranked
+                    {isRankedSettings(settings)
+                      ? "○ Not ranked · settings changed this run"
+                      : "○ Custom · not ranked"}
                   </span>
                 )}
                 <button
@@ -174,8 +182,10 @@ export function SettingsPanel({ settings, onChange, onAutofill }: Props) {
                 />
               </div>
 
-              {/* DEV CHEAT — remove this whole block before launch. */}
-              {onAutofill && (
+              {/* DEV CHEAT — dev-only. import.meta.env.DEV is true under the Vite dev
+                  server and false in the production build (`vite build`), so this block is
+                  compiled out of the bundle that ships to prod. */}
+              {import.meta.env.DEV && onAutofill && (
                 <div className="border-t border-dashed border-clade-ink/20 pt-4">
                   <p className="mb-1 text-xs uppercase tracking-wide text-clade-ink/40">
                     Cheat · dev

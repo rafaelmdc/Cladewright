@@ -1,6 +1,8 @@
 // The end-of-run screen: final tally, score submission (server re-scored), the
 // leaderboard for this scope, and a sign-in prompt when the player isn't logged in.
-// All network side-effects live here so Marathon's render stays about gameplay.
+// All network side-effects live here so Marathon's render stays about gameplay. A scope
+// MIX ("aves+mammalia") is a normal scope here — the server re-scores it against each
+// component build and ranks it on its own combined board.
 
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
@@ -17,7 +19,6 @@ export function GameOverCard({
   difficulty,
   assetVersion,
   ranked,
-  submittable = true,
   allowReplay = true,
   transcript,
   onPlayAgain,
@@ -30,9 +31,6 @@ export function GameOverCard({
   difficulty: Difficulty;
   assetVersion: number;
   ranked: boolean;
-  /** false for a mixed-scope run: the server can't re-score a merged asset, so don't submit
-   *  or show a leaderboard — the run is local-only. */
-  submittable?: boolean;
   allowReplay?: boolean;
   transcript: string[];
   onPlayAgain: () => void;
@@ -47,9 +45,6 @@ export function GameOverCard({
       const who = await fetchMe();
       if (!live) return;
       setMe(who);
-      // A mixed-scope run is local-only (the server has no merged asset to re-score against),
-      // so skip the submit + leaderboard entirely.
-      if (!submittable) return;
       // EVERY finished run is submitted so it counts toward the player's stats; the
       // `ranked` flag tells the server whether it's also eligible for the leaderboard.
       if (who.authenticated && transcript.length > 0) {
@@ -76,22 +71,9 @@ export function GameOverCard({
         {count} placed · {score} points · {scopeLabel}
       </p>
 
-      <div className="mt-4 w-full">
-        {submittable ? (
-          renderSubmitStatus(me, submit, ranked)
-        ) : (
-          <p className="font-hand text-xl text-clade-ink/70">
-            Mixed scopes — practice run
-            <span className="mt-0.5 block font-mono text-[11px] text-clade-ink/45">
-              Not saved or ranked. Pick a single clade for the leaderboard.
-            </span>
-          </p>
-        )}
-      </div>
+      <div className="mt-4 w-full">{renderSubmitStatus(me, submit, ranked)}</div>
 
-      {submittable && (
-        <Leaderboard board={board} label={`${scopeLabel} · ${difficulty}`} me={me} />
-      )}
+      <Leaderboard board={board} label={`${scopeLabel} · ${difficulty}`} me={me} />
 
       <div className="mt-6 flex items-center gap-3">
         {allowReplay && (

@@ -300,21 +300,27 @@ export function TreeRenderer({
   }
 
   // Zoom must be a NON-passive native listener: React's onWheel is passive, so its
-  // preventDefault is ignored and the browser still runs its default wheel action — which
-  // for ctrl+wheel / trackpad pinch is to zoom the WHOLE PAGE (every object), not our
-  // canvas (#31). Attaching with { passive: false } lets us preventDefault and keep the
-  // zoom inside the SVG. (ctrl+wheel is exactly how a trackpad pinch is delivered, so this
-  // covers pinch-zoom too.)
+  // preventDefault is ignored and the browser runs its default wheel action — which for
+  // ctrl+wheel / trackpad pinch is to zoom the WHOLE PAGE (#31, #45). We listen on WINDOW,
+  // not the SVG, for two reasons:
+  //   * the SVG doesn't exist on a fresh (empty) tree, so an svg-scoped listener with []
+  //     deps could never attach;
+  //   * a zoom GESTURE (ctrl+wheel / pinch) over the HUD, search bar, or settings — not
+  //     just over the canvas — must still be caught, or the browser zooms the page and the
+  //     overlays scale + shift. The UI must stay fixed in both scale AND position (#45).
+  // So: a zoom gesture anywhere zooms the canvas (UI untouched); a plain wheel only zooms
+  // when actually over the tree, leaving scrollable UI (the settings panel) free to scroll.
   useEffect(() => {
-    const el = svgRef.current;
-    if (!el) return;
     const onWheel = (e: WheelEvent) => {
+      const svg = svgRef.current;
+      const overCanvas = !!svg && svg.contains(e.target as Node);
+      if (!e.ctrlKey && !overCanvas) return;
       e.preventDefault();
       const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
       setView((v) => ({ ...v, scale: Math.min(6, Math.max(0.3, v.scale * factor)) }));
     };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
   }, []);
   function onPointerDown(e: React.PointerEvent) {
     if (e.button !== 0) return; // left-drag only

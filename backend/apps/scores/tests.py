@@ -269,6 +269,32 @@ class SubmitAndLeaderboardTests(TestCase):
         self.assertEqual(board.status_code, 200)
         self.assertEqual([e["score"] for e in board.data["entries"]], [2])
 
+    def test_daily_runs_feed_global_free_board(self):
+        # A daily run on "test" must appear on the all-time global (marathon_free) board for
+        # that scope, alongside free runs — so daily-only players still rank globally (#46).
+        a = User.objects.create_user("alice", password="x")  # daily-only player
+        b = User.objects.create_user("bob", password="x")     # free-play player
+        Run.objects.create(user=a, mode=GameMode.MARATHON_DAILY, scope="test", difficulty="common",
+                            score=12, asset_version=1, puzzle_date=__import__("datetime").date(2026, 6, 1))
+        Run.objects.create(user=b, mode=GameMode.MARATHON_FREE, scope="test", difficulty="common",
+                            score=7, asset_version=1)
+        res = self.client.get("/api/scores/leaderboard/?mode=marathon_free&scope=test&difficulty=common")
+        self.assertEqual(res.status_code, 200)
+        # Alice's daily (12) outranks Bob's free run (7) on the SAME global board.
+        self.assertEqual([(e["user"], e["score"]) for e in res.data["entries"]],
+                         [("alice", 12), ("bob", 7)])
+
+    def test_daily_board_excludes_free_runs(self):
+        # The daily board itself stays date-indexed + daily-only (the union is one-way).
+        import datetime as _dt
+        a = User.objects.create_user("alice", password="x")
+        Run.objects.create(user=a, mode=GameMode.MARATHON_FREE, scope="test", difficulty="common",
+                            score=99, asset_version=1)  # a free run must NOT leak onto the daily board
+        board = self.client.get("/api/scores/leaderboard/?mode=marathon_daily"
+                                f"&date={_dt.date.today().isoformat()}")
+        self.assertEqual(board.status_code, 200)
+        self.assertEqual(board.data["entries"], [])
+
     def test_submit_to_disabled_mode_rejected(self):
         user = User.objects.create_user("alice", password="x")
         self.client.force_authenticate(user)

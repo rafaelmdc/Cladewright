@@ -1,5 +1,6 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 
+import { DisplayNamePrompt } from "./components/DisplayNamePrompt";
 import { Account } from "./pages/Account";
 import { Hub } from "./pages/Hub";
 import { Leaderboard } from "./pages/Leaderboard";
@@ -17,6 +18,7 @@ export function App() {
         <Route path="/leaderboard" element={<Leaderboard />} />
         <Route path="/login" element={<Login />} />
       </Routes>
+      <DisplayNamePrompt />
     </BrowserRouter>
   );
 }

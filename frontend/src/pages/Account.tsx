@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { Wordmark } from "../components/Brand";
+import { DisplayNameField } from "../components/DisplayNameField";
 import { LeafBackground } from "../components/LeafBackground";
 import {
   fetchAccountStats,
@@ -19,6 +20,7 @@ import { useTitle } from "../lib/useTitle";
 
 export function Account() {
   const [stats, setStats] = useState<AccountStats | null>(null);
+  const [displayName, setDisplayName] = useState("");
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState(false);
   const navigate = useNavigate();
@@ -27,6 +29,7 @@ export function Account() {
   useEffect(() => {
     fetchAccountStats().then((s) => {
       setStats(s);
+      if (s) setDisplayName(s.user.display_name);
       setLoading(false);
     });
   }, []);
@@ -70,7 +73,9 @@ export function Account() {
         ) : (
           <>
             <section className="ink-card bg-clade-paper px-6 py-5">
-              <h1 className="font-hand text-4xl font-bold text-clade-ink">{stats.user.username}</h1>
+              <h1 className="font-hand text-4xl font-bold text-clade-ink">
+                {displayName || stats.user.username}
+              </h1>
               <p className="mt-0.5 font-mono text-xs text-clade-ink/50">
                 {stats.user.email} · naturalist since {stats.user.joined}
               </p>
@@ -111,6 +116,18 @@ export function Account() {
                 />
               </section>
             )}
+
+            <section className="ink-card bg-clade-paper px-6 py-5">
+              <h2 className="font-hand text-2xl text-clade-ink">Display name</h2>
+              <p className="mb-3 mt-1 font-mono text-xs text-clade-ink/55">
+                This is the name on leaderboards and your profile. Change it any time.
+              </p>
+              <DisplayNameField
+                initial={displayName}
+                max={stats.display_name_rules.max}
+                onSaved={setDisplayName}
+              />
+            </section>
 
             <section className="rounded-[20px] border-2 border-red-700/30 bg-red-50/40 px-6 py-5">
               <h2 className="font-hand text-2xl text-red-800">Danger zone</h2>

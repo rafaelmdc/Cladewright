@@ -30,7 +30,8 @@ export interface DayActivity {
 }
 
 export interface AccountStats {
-  user: { username: string; email: string; joined: string };
+  user: { username: string; display_name: string; email: string; joined: string };
+  display_name_rules: { min: number; max: number };
   modes: ModeStat[];
   totals: { games_played: number; total_named: number; unique_named: number };
   recent_runs: RecentRun[];

@@ -4,31 +4,30 @@ How a Catalogue of Life dump becomes the game-data asset the app ships. Output
 schema is the separate contract in [`game-asset-format.md`](game-asset-format.md);
 this doc is the *process*.
 
-The pipeline is offline and deterministic. It is driven by a Django management
-command (`manage.py build_gamedata`) that imports BICHO and Braidworks as Python
-dependencies. Normal request handling never runs it.
+The pipeline is offline and deterministic. It lives in the in-repo `backend/pipeline/`
+package (`ingest` → `backbone` → `pool` → `enrich` → `asset` → `validate`) and is driven by
+a Django management command (`manage.py build_gamedata`). Enrichment imports **Braidworks**;
+nothing else is an external pipeline dependency. Normal request handling never runs it.
 
 ```
-ColDP dump ──▶ [1] BICHO ingest ──▶ [2] backbone build ──▶ [3] pool select
+ColDP dump ──▶ [1] ColDP ingest ──▶ [2] backbone build ──▶ [3] pool select
                                                                   │
               [5] asset build ◀── [4] Braidworks enrich ◀────────┘
 ```
 
 ## Inputs
 
-- A **Catalogue of Life Data Package (ColDP)** directory — the same input BICHO
-  already consumes. At minimum `NameUsage.tsv`; `Distribution.tsv` (biomes/ranges,
-  ~100% coverage on Animalia) and `TypeMaterial.tsv` (type-locality, sparse) are
-  used when present.
-- Pinned versions of BICHO and Braidworks, and a record of the ColDP release date
-  — all three go into the asset's provenance so a build is reproducible.
+- A **Catalogue of Life Data Package (ColDP)** directory. At minimum `NameUsage.tsv`;
+  `Distribution.tsv` (biomes/ranges, ~100% coverage on Animalia) and `TypeMaterial.tsv`
+  (type-locality, sparse) are used when present.
+- The pinned **Braidworks** version and the ColDP release date — both go into the asset's
+  provenance so a build is reproducible.
 
-## Stage 1 — BICHO ingest (tips, lineage, metadata)
+## Stage 1 — ColDP ingest (tips, lineage, metadata)
 
-Reuse BICHO's `taxa ingest` over the ColDP dump, scoped to `kingdom=Animalia` for
-v1. Why ColDP rather than NCBI: ColDP is a curated Linnaean checklist, where NCBI
-carries 10–30% placeholder sequencing names ("'Axial Seamount' polynoid
-polychaete") that make worthless tips — see `BICHOv2/docs/inputs.md`.
+`pipeline/ingest.py` reads the ColDP dump directly, scoped to `kingdom=Animalia` for v1. Why
+ColDP rather than NCBI: ColDP is a curated Linnaean checklist, where NCBI carries 10–30%
+placeholder sequencing names ("'Axial Seamount' polynoid polychaete") that make worthless tips.
 
 What each accepted species row gives us, denormalized, with no tree-walk:
 
@@ -42,8 +41,7 @@ What each accepted species row gives us, denormalized, with no tree-walk:
 - From `VernacularName.tsv` (ColDP side table): **common names**, where present.
   This is a free first pass — CoL has scientific names always, but vernacular
   coverage is **patchy and English-skewed** (famous animals yes, the long tail
-  often not). Read it here; fill the gaps in Stage 4. BICHO doesn't currently ingest
-  this file, so either extend its `taxa ingest` or read the side table directly.
+  often not). Read it here; fill the gaps in Stage 4.
 
 ### Getting the ColDP dump (bulk, not the API)
 
@@ -181,8 +179,8 @@ needs so play is O(lineage length):
   biome/trait flags. (No fame/time_weight — the Marathon time bonus is novelty-only,
   computed live; the pageview-based weighting is post-MVP.)
 - The alias/autocomplete index.
-- A **provenance block**: ColDP release, BICHO/Braidworks versions, pool config,
-  build timestamp, asset `version`.
+- A **provenance block**: ColDP release, Braidworks version, pool config, build
+  timestamp, asset `version`.
 
 ## Stage 6 — load into Postgres (serving)
 
@@ -211,6 +209,5 @@ from the asset's parent pointers at load time.
 - The asset carries a monotonic `version`; the client caches by it and the backend
   serves the current one. Bumping the pool size or refreshing ColDP = new version,
   not an in-place edit.
-- Never commit ColDP dumps or intermediate multi-GB artifacts (mirror BICHO's
-  "never commit data artifacts" rule). The shipped *asset* is small and may be
-  committed or stored as a release artifact — decide once it has a real size.
+- Never commit ColDP dumps or intermediate multi-GB artifacts — they're git-ignored. The
+  built asset lives in Postgres (loaded by `load_gamedata`), not the repo.

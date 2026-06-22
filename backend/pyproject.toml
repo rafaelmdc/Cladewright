@@ -15,16 +15,13 @@ dependencies = [
     "whitenoise>=6.6",        # static (admin CSS) behind gunicorn, no nginx
 ]
 
-# The data pipeline (backend/pipeline/) additionally imports BICHO and Braidworks
-# from the sibling repos. They are NOT needed to serve requests, only to run
-# `manage.py build_gamedata`. Wire them in Phase 1, e.g. as editable/path installs:
-#   pip install -e ../../BICHOv2-as-package  # (BICHO currently runs via PYTHONPATH=src)
-#   pip install -e ../../braidworks/braidworks-core ../../braidworks/weavers/*
+# ColDP ingest lives in the in-repo backend/pipeline/ package (no external ingest dep).
+# The pipeline's only external dependency is Braidworks (enrichment), pinned from GitHub in
+# requirements-pipeline.txt and installed only on the worker — NOT needed to serve requests.
 # See backend/pipeline/README.md.
 [project.optional-dependencies]
 pipeline = [
-    # "bicho",       # TODO(phase-1): pin the BICHO ingest package
-    # "braidworks-core",
+    # braidworks-core + the weavers — pinned in requirements-pipeline.txt (GitHub tag).
 ]
 dev = [
     "ruff>=0.6",

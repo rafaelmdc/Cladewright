@@ -1,8 +1,7 @@
 # Development
 
-How the repo is laid out and how to run it. The data pipeline, Marathon, the
-TreeRenderer, the NodeCard learn-cards, and the Postgres-backed backend are all
-implemented; build order and what's left live in [`roadmap.md`](roadmap.md).
+How the repo is laid out and how to run it. The whole app is implemented and live;
+forward work is tracked in [GitHub issues](https://github.com/rafaelmdc/Cladewright/issues).
 
 ## Layout
 

@@ -70,6 +70,24 @@ it survives game rotation. Earned only by doing the daily; free-play replays nev
   One heatmap, filterable — never N heatmaps. A new game = a new chip + a new score card,
   never a new heatmap.
 
+## Leaderboards
+
+Boards are keyed by **`(mode, scope, difficulty)`** and show the **best run per user**. Only
+**ranked** runs appear: a run is ranked only under default, score-affecting settings — change
+one (infinite time, boosted clock, extinct-inclusive pool) and the run is *tainted-unranked*
+for the rest of its life, even if you reset (custom runs still feed stats, never the board).
+
+Two behaviours follow from `scope` being a board axis:
+
+- **Scope mixing.** A `scope` may be a single clade *or* a sorted `+`-joined mix
+  (`aves+mammalia`) — the mix is a first-class board of its own. The server re-scores a mixed
+  run against the union of each component scope's current build (shared backbone ids are
+  deterministic), so mixed runs are submitted + ranked like single ones. Canonicalize the key
+  (sorted) so order never fragments a board.
+- **Dailies feed the global board.** A daily run also counts on the all-time global
+  (`marathon_free`) board for its scope — so daily-only players still rank globally. The daily
+  board itself stays date-indexed and daily-only (the union is one-way).
+
 ## Why this scales
 
 Adding a game (`guess`, …) is data: a `GameModeConfig` row + its `(mode, difficulty)` boards.

@@ -1,6 +1,6 @@
-# Runtime deps to SERVE the app (mirrors pyproject [project.dependencies]). The data
-# pipeline (BICHO/Braidworks) is NOT here — it isn't needed to serve or to load a built
-# asset; see pyproject [project.optional-dependencies].
+# Runtime deps to SERVE the app (mirrors pyproject [project.dependencies]). The pipeline's
+# enrichment dep (Braidworks) is NOT here — it's only needed to build an asset, not to serve
+# or load one; it's pinned in requirements-pipeline.txt (worker image only).
 django>=6.0,<6.1
 djangorestframework>=3.15
 django-allauth[socialaccount]>=0.63

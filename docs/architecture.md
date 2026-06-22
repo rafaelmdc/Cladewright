@@ -1,13 +1,9 @@
 # Architecture
 
-How Cladewright is put together and *why*. This is the design rationale; the
-build order lives in [`roadmap.md`](roadmap.md).
+How Cladewright is put together and *why*. This is the design rationale; forward work
+is tracked in [GitHub issues](https://github.com/rafaelmdc/Cladewright/issues).
 
-> **Doc map:** [`games-model.md`](games-model.md) (games/difficulty/daily/streak model) ·
-> [`admin.md`](admin.md) (the admin surface) · [`pipeline-jobs.md`](pipeline-jobs.md)
-> (standard build jobs) · [`data-pipeline.md`](data-pipeline.md) · [`development.md`](development.md)
-> · [`deployment.md`](deployment.md) (k8s/Argo) · [`game-asset-format.md`](game-asset-format.md)
-> · [`marathon-design.md`](marathon-design.md) · [`performance.md`](performance.md).
+> See [`README.md`](README.md) for the full doc index and routing.
 
 ## The one big idea: gameplay is client-side, data is precomputed
 
@@ -33,7 +29,7 @@ you want for a game.
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  DATA PIPELINE (offline, Python)                                  │
-│    ColDP ──BICHO ingest──▶ tips + ranked lineage + biomes         │
+│    ColDP ──ingest────────▶ tips + ranked lineage + biomes         │
 │         ──Braidworks──────▶ common names (Wikidata + enwiki)      │
 │         ──build──────────▶ game-data asset (versioned JSON)       │
 │         ──load_gamedata──▶ Postgres (blob + relational mirror)    │
@@ -96,8 +92,8 @@ you want for a game.
 ## Backend (Django + DRF)
 
 Python is chosen on both ends on purpose: the data pipeline is heavily
-Python-shaped (BICHO and Braidworks are Python), so the backend that *regenerates*
-the dataset shares that language and can import them directly.
+Python-shaped (the in-repo `pipeline` package + Braidworks are Python), so the backend
+that *regenerates* the dataset shares that language and can import it directly.
 
 **Postgres is the store of record** (prod and dev — the dev stack runs the same
 Postgres in Docker, see [`development.md`](development.md)). A built asset is loaded
@@ -129,9 +125,10 @@ Responsibilities, and nothing more:
   run must be server-authoritative (deterministic per date, not guessable from the
   client) so the daily is fair and scores are comparable. Marathon also offers
   unlimited free play; see [`marathon-design.md`](marathon-design.md#decisions).
-- **Dataset regeneration.** `manage.py build_gamedata` imports BICHO + Braidworks,
-  runs the pipeline, and writes a versioned asset JSON; `manage.py load_gamedata`
-  then ingests that JSON into Postgres. The two are **decoupled on purpose** —
+- **Dataset regeneration.** `manage.py build_gamedata` runs the in-repo `pipeline`
+  package (importing Braidworks for enrichment) and writes a versioned asset JSON;
+  `manage.py load_gamedata` then ingests that JSON into Postgres. The two are
+  **decoupled on purpose** —
   loading needs no pipeline deps, so a built asset can be promoted to any
   environment by shipping the JSON. Pipeline deps are the *one* place the heavy
   Python is touched; normal request serving never imports them.
@@ -161,15 +158,16 @@ autocomplete quality/latency ever demands it.
 ## Data pipeline (offline / management command)
 
 Covered in full in [`data-pipeline.md`](data-pipeline.md). The key architectural
-point: **BICHO and Braidworks stay independent tools** with their own contracts,
-and Cladewright depends on their *outputs*, not their internals. New enrichment
-(common names; pageviews are post-MVP) is added as **Braidworks weavers**, built through that
-project's Spec→Scaffold→Implement→Verify loop — not as throwaway scripts here.
+point: **Braidworks stays an independent tool** with its own contract, and Cladewright
+depends on its *outputs*, not its internals. New enrichment (common names; pageviews are
+post-MVP) is added as **Braidworks weavers**, built through that project's
+Spec→Scaffold→Implement→Verify loop — not as throwaway scripts here. (ColDP ingest itself
+lives in the in-repo `pipeline` package, not an external dependency.)
 
 ## Why not the alternatives
 
 - **Next.js full-stack** — one language/deploy and great DX, but the ETL is Python
-  regardless (BICHO/Braidworks), so a JS backend would still shell out to Python.
+  regardless (the pipeline package + Braidworks), so a JS backend would still shell out to Python.
   Django keeps one language across pipeline + server and gives a free admin for
   pool curation.
 - **Server-side game logic** — would add latency to every guess for no gain; the

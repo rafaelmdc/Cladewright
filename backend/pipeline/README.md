@@ -9,23 +9,22 @@ Stages (one module each):
 
 | Module | Stage | Uses |
 |---|---|---|
-| `ingest.py`   | ColDP → tips + ranked lineage + biomes + CoL vernacular | **BICHO** (+ read `VernacularName.tsv`) |
+| `ingest.py`   | ColDP → tips + ranked lineage + biomes + CoL vernacular | in-repo (reads `NameUsage` + `VernacularName.tsv` directly) |
 | `backbone.py` | denormalized lineages → one rooted tree | — |
 | `pool.py`     | select playable tips (all non-extinct by default; capped mode optional) | — |
 | `enrich.py`   | fill common-name gaps (Wikidata label/altLabel/vernacular, enwiki title, P13176) | **Braidworks** weaver |
 | `asset.py`    | precompute induced backbone, counts, lineages, aliases → emit | — |
 | `validate.py` | structural conformance checks before write | — |
 
-Phase 0: every function is a stub raising `NotImplementedError`. Phase 1 implements
-them. Keep builds reproducible — pure function of (dump, pinned dep versions, pool
-config); no unseeded randomness, no wall-clock ordering.
+Keep builds reproducible — a pure function of (dump, pinned dep versions, pool config);
+no unseeded randomness, no wall-clock ordering.
 
-## Wiring BICHO and Braidworks
+## The only external dependency: Braidworks
 
-Both are sibling repos imported as deps (see `backend/pyproject.toml [pipeline]`).
-BICHO's `taxa ingest` does not currently read `VernacularName.tsv` — either extend
-it or read that side table directly here. The common-name enrichment is added as a
-**Braidworks weaver** (`wikidata_weaver`) in the Braidworks repo via its
-Spec→Scaffold→Implement→Verify loop, then consumed here. (The popularity/obscurity
-"fame" system — Wikipedia pageviews — is post-MVP; the pool is all species, so nothing
-gates inclusion on fame.)
+ColDP ingest is in-repo (`ingest.py` reads the dump directly — there is no external ingest
+package). The pipeline's one external dependency is **Braidworks** (enrichment), pinned from
+GitHub in `requirements-pipeline.txt` and installed only on the worker. The common-name
+enrichment is a **Braidworks weaver** (`wikidata_weaver`) built in the Braidworks repo via
+its Spec→Scaffold→Implement→Verify loop, then consumed here. (The popularity/obscurity "fame"
+system — Wikipedia pageviews — is post-MVP; the pool is all species, so nothing gates
+inclusion on fame.)

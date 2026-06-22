@@ -3,7 +3,7 @@
 // (exact alias lookup), routes onto the induced tree, and — when it places a NEW node —
 // adds time + score. Full design: docs/marathon-design.md.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Wordmark } from "../components/Brand";
@@ -19,6 +19,7 @@ import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import type { InternedAsset, Target } from "../lib/asset/types";
 import { fetchDaily, type DailyInfo } from "../lib/daily";
 import { RemainingTracker } from "../lib/game/remaining";
+import { clearRun, loadRun, saveRun, secondsAfterAway } from "../lib/game/persist";
 import type { Difficulty } from "../lib/scores";
 import { resolveTarget } from "../lib/game/resolveTarget";
 import {
@@ -235,6 +236,7 @@ function Game({
   const [count, setCount] = useState(0);
   const [seconds, setSeconds] = useState(settings.startSeconds);
   const [running, setRunning] = useState(true);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
   // A brief "ping" on the node a typed organism resolves to — confirms it landed (or
   // shows where the duplicate already lives). The nonce re-triggers the animation even
@@ -262,6 +264,81 @@ function Game({
     }, 1000);
     return () => clearInterval(id);
   }, [running, settings.infiniteTime]);
+
+  // The persist key: this exact game (a restore only applies to a matching mode/scope/
+  // difficulty/asset). asset.scope is set for blob/merged assets; fall back to scopeKey.
+  const persistScope = asset.scope ?? scopeKey ?? "";
+
+  // --- crash/refresh recovery (#33) ---
+  // On mount, replay any saved transcript for THIS game so an accidental refresh (or the
+  // browser's Backspace-navigates-back) doesn't wipe a run. Layout effect → rebuilt before
+  // paint, so there's no flash of an empty tree. Runs once.
+  const restoredRef = useRef(false);
+  useLayoutEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    const saved = loadRun(mode, persistScope, difficulty, asset.raw.version);
+    if (!saved) return;
+    for (const id of saved.transcript) {
+      const target = targetFromId(asset, id);
+      if (!target) continue;
+      const p = place(asset, treeRef.current, target);
+      if (target.kind === "tip" && p.kind !== "duplicate") tracker.name(target.id);
+    }
+    transcriptRef.current = [...saved.transcript];
+    const secs = secondsAfterAway(saved);
+    setScore(saved.score);
+    setCount(saved.count);
+    setSeconds(settings.infiniteTime ? saved.seconds : secs);
+    setRunning(settings.infiniteTime ? true : secs > 0);
+    setRev((n) => n + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist after every change while playing; clear the slot the instant the run ends so a
+  // finished run can never be restored (and re-submitted). Saving each tick also refreshes
+  // savedAt, keeping the away-time deduction accurate.
+  useEffect(() => {
+    if (!restoredRef.current) return; // don't overwrite a saved run before we've read it
+    if (running) {
+      saveRun({
+        mode,
+        scope: persistScope,
+        difficulty,
+        assetVersion: asset.raw.version,
+        transcript: transcriptRef.current,
+        score,
+        count,
+        seconds,
+        infiniteTime: settings.infiniteTime,
+        savedAt: Date.now(),
+      });
+    } else {
+      clearRun();
+    }
+  }, [rev, score, count, seconds, running, settings.infiniteTime, mode, persistScope, difficulty, asset.raw.version]);
+
+  // Keep typing flowing into the search no matter where focus is, and — crucially — stop
+  // Backspace from triggering the browser's "back" navigation when the input isn't focused,
+  // which would drop the player out of the game entirely (#33). Only while a run is live;
+  // modifier combos (browser shortcuts) are left alone.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!running || e.ctrlKey || e.metaKey || e.altKey) return;
+      const el = inputRef.current;
+      if (!el || document.activeElement === el) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable)) {
+        return; // a real field (e.g. the scope search) has focus — don't steal it
+      }
+      if (e.key.length === 1 || e.key === "Backspace") {
+        if (e.key === "Backspace") e.preventDefault(); // never let it navigate away
+        el.focus();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [running]);
 
   function rewardFor(p: Placement): { time: number; points: number } {
     if (p.kind === "duplicate") return { time: 0, points: 0 };
@@ -413,6 +490,7 @@ function Game({
       <div className="pointer-events-none absolute left-1/2 top-16 z-20 flex w-full max-w-md -translate-x-1/2 flex-col items-center gap-2 px-4 sm:top-10">
         <form onSubmit={submit} className="pointer-events-auto w-full">
           <input
+            ref={inputRef}
             autoFocus
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -487,6 +565,16 @@ function Game({
 function fmtTime(s: number): string {
   const m = Math.floor(s / 60);
   return `${m}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** Reconstruct a placement Target from a stored transcript id (a tip or node id). Returns
+ *  null if the id isn't in this asset (e.g. the asset was rebuilt) so replay can skip it. */
+function targetFromId(asset: InternedAsset, id: string): Target | null {
+  const tip = asset.tipById.get(id);
+  if (tip) return { kind: "tip", id, tip };
+  const node = asset.nodeById.get(id);
+  if (node) return { kind: "node", id, node };
+  return null;
 }
 
 /** Rank-depth of a node = how far below the root it sits (via parent chain). */

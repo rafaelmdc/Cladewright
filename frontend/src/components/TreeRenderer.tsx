@@ -299,10 +299,23 @@ export function TreeRenderer({
     return VIEW / Math.min(r.width, r.height);
   }
 
-  function onWheel(e: React.WheelEvent) {
-    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-    setView((v) => ({ ...v, scale: Math.min(6, Math.max(0.3, v.scale * factor)) }));
-  }
+  // Zoom must be a NON-passive native listener: React's onWheel is passive, so its
+  // preventDefault is ignored and the browser still runs its default wheel action — which
+  // for ctrl+wheel / trackpad pinch is to zoom the WHOLE PAGE (every object), not our
+  // canvas (#31). Attaching with { passive: false } lets us preventDefault and keep the
+  // zoom inside the SVG. (ctrl+wheel is exactly how a trackpad pinch is delivered, so this
+  // covers pinch-zoom too.)
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      setView((v) => ({ ...v, scale: Math.min(6, Math.max(0.3, v.scale * factor)) }));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
   function onPointerDown(e: React.PointerEvent) {
     if (e.button !== 0) return; // left-drag only
     setCards(onlyPinned); // grabbing empty canvas dismisses the hover peek, keeps pins
@@ -368,7 +381,6 @@ export function TreeRenderer({
         ref={svgRef}
         viewBox={`${-VIEW / 2} ${-VIEW / 2} ${VIEW} ${VIEW}`}
         className="h-full w-full touch-none select-none"
-        onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

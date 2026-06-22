@@ -168,7 +168,15 @@ export function Hub() {
         </div>
 
         <p className="text-center font-mono text-[11px] uppercase tracking-wider text-clade-ink/35">
-          data: Catalogue of Life · common + scientific
+          data: Catalogue of Life · common + scientific ·{" "}
+          <a
+            href="https://github.com/rafaelmdc/Cladewright/issues/new"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline decoration-clade-ink/25 underline-offset-2 transition hover:text-clade-ink/70 hover:decoration-clade-ink/50"
+          >
+            report a bug ↗
+          </a>
         </p>
       </div>
     </div>

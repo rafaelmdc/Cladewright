@@ -234,3 +234,29 @@ CELERY_TASK_ACKS_LATE = True  # a build is long; redeliver if a worker dies mid-
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # one heavy build at a time per worker process
 CELERY_TASK_TIME_LIMIT = int(os.environ.get("CELERY_TASK_TIME_LIMIT", str(6 * 60 * 60)))
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+# Broker resilience. Redis here is tiny + ephemeral (no persistence, no maxmemory policy),
+# so it can be OOM-killed/restarted or blip. The failure we hit: the worker sits in a
+# blocking BRPOP, Redis restarts under it, the TCP connection goes half-open, and with NO
+# socket timeout / keepalive / health check the worker stays parked on that dead socket
+# forever — alive and "ready" but consuming nothing, so every newly-queued job starves.
+# These options let the transport notice a dead/idle connection and reconnect instead:
+#   * socket_timeout / socket_connect_timeout — a hung read/connect raises instead of
+#     blocking indefinitely, which surfaces as a reconnect.
+#   * socket_keepalive — TCP keepalives so a silently-dropped peer is detected.
+#   * health_check_interval — redis-py pings idle connections and recycles dead ones.
+#   * retry_on_timeout — transient timeouts retry rather than bubble up as hard errors.
+# visibility_timeout: with acks_late, a task still running when the (default 3600s) timeout
+# elapses is REDELIVERED and re-run; a long build could loop forever and (with prefetch=1)
+# starve newer jobs. Keep it safely above the task time limit. (Not the cause of the
+# 4-minute incident above, but the right ceiling for future long builds.)
+_BROKER_TRANSPORT_OPTIONS = {
+    "visibility_timeout": CELERY_TASK_TIME_LIMIT + 3600,
+    "socket_timeout": 60,
+    "socket_connect_timeout": 30,
+    "socket_keepalive": True,
+    "health_check_interval": 30,
+    "retry_on_timeout": True,
+}
+CELERY_BROKER_TRANSPORT_OPTIONS = _BROKER_TRANSPORT_OPTIONS
+# The result backend is the same Redis; give it the same self-healing connection options.
+CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = _BROKER_TRANSPORT_OPTIONS

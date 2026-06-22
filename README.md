@@ -32,7 +32,7 @@ Full mechanic: [`docs/marathon-design.md`](docs/marathon-design.md). Wireframes:
 | Backend | Django + Django REST Framework; `django-allauth` (Google OAuth); Postgres |
 | Data pipeline | In-repo `backend/pipeline/` (ColDP ingest → backbone → pool → asset), enriched via [Braidworks](../braidworks) weavers; run from a Django management command |
 | Delivery | One versioned game-data asset per scope, served from Postgres, cached client-side (IndexedDB); a Celery/Redis worker builds assets |
-| Infra | Kubernetes + Argo CD, CNPG Postgres, Gateway API, Cloudflare tunnel (homelab) |
+| Infra | Kubernetes + Argo CD, CNPG Postgres, Gateway API, Cloudflare tunnel |
 
 ## Where the data comes from
 

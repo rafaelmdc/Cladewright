@@ -11,11 +11,13 @@ admin static under gunicorn; "View site" points at `ADMIN_SITE_URL` (env).
 Players sign in with Google and have no usable password. Promote one to a superuser:
 
 ```
-python manage.py make_admin you@example.com --password 's3cret'   # grant + set a password
+python manage.py make_admin you@example.com --password '<choose-one>'   # grant + set a password
 python manage.py make_admin you@example.com --revoke              # demote
 ```
 
-(`backend/apps/accounts/management/commands/make_admin.py`.) Dev superuser: `admin`/`admin`.
+(`backend/apps/accounts/management/commands/make_admin.py`.) For a fresh local DB, the web
+process can bootstrap a one-time superuser from the `DJANGO_BOOTSTRAP_ADMIN_PASSWORD` env (see
+[`deployment.md`](deployment.md#bootstrap-admin)) — change it on first login.
 
 ## What you can do
 

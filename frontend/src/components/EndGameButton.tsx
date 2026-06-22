@@ -10,7 +10,7 @@ export function EndGameButton({ onEnd }: { onEnd: () => void }) {
   const [confirming, setConfirming] = useState(false);
 
   return (
-    <div className="pointer-events-auto absolute right-16 top-4 z-30">
+    <div data-tour="end" className="pointer-events-auto absolute right-16 top-4 z-30">
       <button
         type="button"
         aria-label="End game"

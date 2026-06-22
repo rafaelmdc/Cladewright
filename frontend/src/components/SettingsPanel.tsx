@@ -111,6 +111,14 @@ export function SettingsPanel({ settings, onChange, runRanked, onAutofill }: Pro
                     onChange={(v) => set("showScientific", v)}
                   />
                 </div>
+                <div className="mt-4">
+                  <Toggle
+                    label="Falling leaves"
+                    hint="Ambient leaves behind the board, flung about by combo explosions."
+                    checked={settings.fallingLeaves}
+                    onChange={(v) => set("fallingLeaves", v)}
+                  />
+                </div>
               </div>
 
               <div className="border-t border-clade-ink/10 pt-4">

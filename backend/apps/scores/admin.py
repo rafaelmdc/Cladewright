@@ -7,12 +7,37 @@ from django.contrib import admin
 from .models import (
     DailyPin,
     DailyRotationEntry,
+    GameDefaults,
     GameModeConfig,
     NamedSpecies,
     PlayerStat,
     Run,
     Streak,
 )
+
+
+@admin.register(GameDefaults)
+class GameDefaultsAdmin(admin.ModelAdmin):
+    """The default tuning values a fresh run starts from (start clock, time-per-organism,
+    combo feel, visuals). Singleton: edit the one row; the SPA reads it from
+    /api/scores/game-defaults/. Per-player tweaks still ride on top in localStorage."""
+
+    fieldsets = (
+        ("Visual (don't affect ranked)", {
+            "fields": ("tree_layout", "show_scientific", "falling_leaves", "flash_fade_seconds"),
+        }),
+        ("Time + pool (changing off-default un-ranks a run)", {
+            "fields": ("start_seconds", "infinite_time", "time_per_new", "novelty_bonus",
+                       "time_per_refinement", "extant_only"),
+        }),
+        ("Combos", {"fields": ("combo_window_seconds", "combo_time_multiplier")}),
+    )
+
+    def has_add_permission(self, request) -> bool:
+        return not GameDefaults.objects.exists()  # singleton — only ever one row
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return False
 
 
 @admin.register(DailyRotationEntry)

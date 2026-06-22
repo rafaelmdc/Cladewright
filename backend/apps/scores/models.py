@@ -52,6 +52,70 @@ class GameModeConfig(models.Model):
         return f"{self.label} ({self.mode}){'' if self.enabled else ' — disabled'}"
 
 
+class GameDefaults(models.Model):
+    """Singleton: the default tuning values a fresh run starts from. The SPA fetches these
+    from ``GET /api/scores/game-defaults/`` and overlays them on its hardcoded fallbacks, so an
+    admin can retune the game (start clock, time-per-organism, combo feel, …) without a deploy.
+    Per-player tweaks in the in-game panel still ride on top, in localStorage. Mirrors the
+    frontend GameSettings shape (see frontend/src/lib/game/settings.ts)."""
+
+    LAYOUT_CHOICES = [("radial", "Radial"), ("rectangular", "Phylogram")]
+
+    # Visual (never affects ranked status).
+    tree_layout = models.CharField(max_length=16, choices=LAYOUT_CHOICES, default="radial")
+    show_scientific = models.BooleanField(default=True)
+    falling_leaves = models.BooleanField(default=True)
+    flash_fade_seconds = models.FloatField(
+        default=2, help_text="How long a '+seconds' / 'no match' card lingers before fading."
+    )
+    # Score-affecting (changing these off-default un-ranks a run).
+    extant_only = models.BooleanField(default=True)
+    infinite_time = models.BooleanField(default=False)
+    start_seconds = models.IntegerField(default=60)
+    time_per_new = models.IntegerField(default=10)
+    novelty_bonus = models.IntegerField(default=8)
+    time_per_refinement = models.IntegerField(default=5)
+    combo_window_seconds = models.FloatField(
+        default=6, help_text="Max gap (seconds) between placements to keep a combo alive."
+    )
+    combo_time_multiplier = models.FloatField(
+        default=1.5, help_text="Bonus seconds per combo step (× the combo level)."
+    )
+
+    class Meta:
+        verbose_name = "Game defaults"
+        verbose_name_plural = "Game defaults"
+
+    def __str__(self) -> str:
+        return "Game defaults"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1  # singleton — there is only ever one row
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls) -> "GameDefaults":
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def as_settings(self) -> dict:
+        """camelCase payload matching the frontend GameSettings."""
+        return {
+            "treeLayout": self.tree_layout,
+            "showScientific": self.show_scientific,
+            "fallingLeaves": self.falling_leaves,
+            "flashFadeSeconds": self.flash_fade_seconds,
+            "extantOnly": self.extant_only,
+            "infiniteTime": self.infinite_time,
+            "startSeconds": self.start_seconds,
+            "timePerNew": self.time_per_new,
+            "noveltyBonus": self.novelty_bonus,
+            "timePerRefinement": self.time_per_refinement,
+            "comboWindowSeconds": self.combo_window_seconds,
+            "comboTimeMultiplier": self.combo_time_multiplier,
+        }
+
+
 class DailyRotationEntry(models.Model):
     """One (game, clade) entry in the daily rotation pool. The daily for a date with no
     manual pin cycles deterministically through the ACTIVE entries by date — so the admin

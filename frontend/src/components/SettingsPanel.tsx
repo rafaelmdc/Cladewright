@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
 
 import {
-  DEFAULT_SETTINGS,
+  gameDefaults,
   isRankedSettings,
   type GameSettings,
   type TreeLayout,
@@ -84,7 +84,7 @@ export function SettingsPanel({ settings, onChange, runRanked, onAutofill }: Pro
                 )}
                 <button
                   type="button"
-                  onClick={() => onChange({ ...DEFAULT_SETTINGS })}
+                  onClick={() => onChange({ ...gameDefaults() })}
                   disabled={isRankedSettings(settings)}
                   className="rounded-lg border border-clade-ink/15 px-2.5 py-1 font-mono text-[11px] text-clade-ink/70 transition hover:border-clade-ink/40 hover:text-clade-ink disabled:cursor-default disabled:opacity-40 disabled:hover:border-clade-ink/15"
                 >
@@ -117,6 +117,18 @@ export function SettingsPanel({ settings, onChange, runRanked, onAutofill }: Pro
                     hint="Ambient leaves behind the board, flung about by combo explosions."
                     checked={settings.fallingLeaves}
                     onChange={(v) => set("fallingLeaves", v)}
+                  />
+                </div>
+                <div className="mt-4">
+                  <Slider
+                    label="Notification fade"
+                    hint="How long a '+seconds' / 'no match' card lingers before fading."
+                    unit="s"
+                    min={0.5}
+                    max={5}
+                    step={0.5}
+                    value={settings.flashFadeSeconds}
+                    onChange={(v) => set("flashFadeSeconds", v)}
                   />
                 </div>
               </div>
@@ -191,6 +203,32 @@ export function SettingsPanel({ settings, onChange, runRanked, onAutofill }: Pro
                 />
               </div>
 
+              <div className="border-t border-clade-ink/10 pt-4">
+                <p className="mb-3 text-xs uppercase tracking-wide text-clade-ink/40">Combos</p>
+                <Slider
+                  label="Combo window"
+                  hint="Max gap between placements to keep a streak alive."
+                  unit="s"
+                  min={2}
+                  max={12}
+                  step={0.5}
+                  value={settings.comboWindowSeconds}
+                  disabled={settings.infiniteTime}
+                  onChange={(v) => set("comboWindowSeconds", v)}
+                />
+                <Slider
+                  label="Combo time bonus"
+                  hint="Bonus seconds per combo step (× the combo level)."
+                  unit="×"
+                  min={0}
+                  max={4}
+                  step={0.5}
+                  value={settings.comboTimeMultiplier}
+                  disabled={settings.infiniteTime}
+                  onChange={(v) => set("comboTimeMultiplier", v)}
+                />
+              </div>
+
               {/* DEV CHEAT — dev-only. import.meta.env.DEV is true under the Vite dev
                   server and false in the production build (`vite build`), so this block is
                   compiled out of the bundle that ships to prod. */}
@@ -218,7 +256,7 @@ export function SettingsPanel({ settings, onChange, runRanked, onAutofill }: Pro
               )}
 
               <button
-                onClick={() => onChange({ ...DEFAULT_SETTINGS })}
+                onClick={() => onChange({ ...gameDefaults() })}
                 className="mt-auto rounded-lg border border-clade-ink/15 px-3 py-2 text-sm text-clade-ink/60 transition hover:border-clade-ink/40"
               >
                 Reset to defaults

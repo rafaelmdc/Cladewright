@@ -3,6 +3,7 @@
 // (exact alias lookup), routes onto the induced tree, and — when it places a NEW node —
 // adds time + score. Full design: docs/marathon-design.md.
 
+import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -27,7 +28,8 @@ import { clearRun, loadRun, saveRun, secondsAfterAway } from "../lib/game/persis
 import type { Difficulty } from "../lib/scores";
 import { resolveTarget } from "../lib/game/resolveTarget";
 import {
-  DEFAULT_SETTINGS,
+  fetchGameDefaults,
+  gameDefaults,
   isRankedSettings,
   loadSettings,
   saveSettings,
@@ -36,10 +38,13 @@ import {
 import { useTitle } from "../lib/useTitle";
 import { createInducedTree, place, type InducedTree, type Placement } from "../lib/tree/induced";
 
-interface Flash {
+type FlashTone = "good" | "small" | "none";
+interface FlashItem {
+  id: number;
   text: string;
-  tone: "good" | "small" | "none";
+  tone: FlashTone;
 }
+const MAX_FLASHES = 6; // cap the stack so rapid-fire doesn't pile up without bound
 
 const SCOPE_KEY = "cladewright.scope";
 
@@ -47,17 +52,26 @@ const SCOPE_KEY = "cladewright.scope";
 // window, and a wrong/duplicate guess never breaks the streak — only a pause does. Rewards
 // are bonus SECONDS (more time → more placements → a legitimately higher score), never
 // untrusted points. All knobs live here so the feel is one place to dial.
-const COMBO_WINDOW_MS = 4000; // max gap between placements to keep the combo alive
 const CLADE_BANNER_MS = 1800; // how long the "clade complete" toast lingers before fading
 const CLADE_MIN_SIZE = 3; // don't celebrate finishing a 1–2 species "clade"
+const COMBO_BONUS_CAP = 12; // ceiling on a single placement's combo time bonus (seconds)
 
-/** Bonus seconds for a placement at this combo length (0 below ×2; gentle, capped). */
-function comboBonusSeconds(combo: number): number {
-  return combo >= 2 ? Math.min(combo - 1, 6) : 0;
+/** Bonus seconds for a placement at this combo length, scaled by the tunable multiplier
+ *  (0 below ×2; capped). The combo window itself is a setting too. */
+function comboBonusSeconds(combo: number, multiplier: number): number {
+  return combo >= 2 ? Math.min(Math.round((combo - 1) * multiplier), COMBO_BONUS_CAP) : 0;
 }
 /** Bonus seconds for finishing a clade of this size (scales with size, capped). */
 function cladeBonusSeconds(size: number): number {
   return Math.min(4 + Math.floor(size / 4), 15);
+}
+
+function flashToneClass(tone: FlashTone): string {
+  return tone === "good"
+    ? "text-clade-accent"
+    : tone === "small"
+      ? "text-clade-ink/70"
+      : "text-clade-ink/40";
 }
 
 export function Marathon() {
@@ -69,6 +83,12 @@ export function Marathon() {
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
   const [scopeKey, setScopeKey] = useState<string | null>(null);
   const [asset, setAsset] = useState<InternedAsset | null>(null);
+  // Pull the admin-configured game defaults before the game inits its settings, so a fresh
+  // run starts from them. Falls through (ready=true) even if the fetch fails — fallbacks apply.
+  const [defaultsReady, setDefaultsReady] = useState(false);
+  useEffect(() => {
+    fetchGameDefaults().finally(() => setDefaultsReady(true));
+  }, []);
   // undefined = still fetching, null = backend down, object = loaded (daily only).
   const [daily, setDaily] = useState<DailyInfo | null | undefined>(isDaily ? undefined : null);
 
@@ -175,7 +195,7 @@ export function Marathon() {
       );
   }
 
-  if (!asset) return <Loading />;
+  if (!asset || !defaultsReady) return <Loading />;
   const mode = isDaily ? daily!.mode : "marathon_free";
   // Key by mode+scope+difficulty so switching any fully resets the game.
   return (
@@ -246,7 +266,7 @@ function Game({
 
   // The daily is fixed/ranked: default settings, no tuning panel.
   const [settings, setSettings] = useState<GameSettings>(() =>
-    isDaily ? { ...DEFAULT_SETTINGS } : loadSettings(),
+    isDaily ? { ...gameDefaults() } : loadSettings(),
   );
   // Ranked is a property of the WHOLE run, not just the settings at game-over: if a
   // score-affecting modifier was ever non-default (infinite time, boosted clock, an
@@ -274,7 +294,19 @@ function Game({
   // read the empty board / pick a scope. Flips true on the first placement and on restore.
   const [started, setStarted] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [flash, setFlash] = useState<Flash | null>(null);
+  // Flash cards STACK: each "+seconds" / "no match" card is pushed onto the stack and fades
+  // out over `flashFadeSeconds`, so rapid fire reads as a little cascade instead of one card
+  // flickering. Newest sits closest to the search bar.
+  const [flashes, setFlashes] = useState<FlashItem[]>([]);
+  const flashIdRef = useRef(0);
+  function pushFlash(text: string, tone: FlashTone) {
+    const id = ++flashIdRef.current;
+    setFlashes((f) => [{ id, text, tone }, ...f].slice(0, MAX_FLASHES));
+    window.setTimeout(
+      () => setFlashes((f) => f.filter((x) => x.id !== id)),
+      settings.flashFadeSeconds * 1000,
+    );
+  }
   // A brief "ping" on the node a typed organism resolves to — confirms it landed (or
   // shows where the duplicate already lives). The nonce re-triggers the animation even
   // when the same node is named twice.
@@ -427,12 +459,12 @@ function Game({
     // the actual scientific name (no common-name aliases).
     const target = await resolveTarget(asset, query, difficulty === "scientific");
     if (!target) {
-      setFlash({ text: `"${query}" — no match`, tone: "none" });
+      pushFlash(`"${query}" — no match`, "none");
       return;
     }
     // Living-only mode: an extinct species isn't in play (and isn't in the denominator).
     if (settings.extantOnly && target.kind === "tip" && target.tip.traits.extinct) {
-      setFlash({ text: `${target.tip.common} — extinct (living-only mode)`, tone: "none" });
+      pushFlash(`${target.tip.common} — extinct (living-only mode)`, "none");
       return;
     }
     const p = place(asset, treeRef.current, target);
@@ -442,7 +474,7 @@ function Game({
 
     const label = target.kind === "tip" ? target.tip.common : target.node.sci;
     if (p.kind === "duplicate") {
-      setFlash({ text: `${label} — already on the tree`, tone: "none" });
+      pushFlash(`${label} — already on the tree`, "none");
     } else {
       setStarted(true); // first organism landed → the clock starts now (#50)
       transcriptRef.current.push(target.id); // record for server re-scoring
@@ -450,19 +482,20 @@ function Game({
 
       // --- combo (#60): extend the streak if this placement landed within the window. A
       // wrong/duplicate guess returns earlier and never reaches here, so it can't break it.
+      const comboWindowMs = settings.comboWindowSeconds * 1000;
       const now = performance.now();
       const nextCombo = now <= comboEndsAtRef.current ? comboRef.current + 1 : 1;
       comboRef.current = nextCombo;
-      comboEndsAtRef.current = now + COMBO_WINDOW_MS;
+      comboEndsAtRef.current = now + comboWindowMs;
       setCombo(nextCombo);
       setComboNonce((n) => n + 1);
       window.clearTimeout(comboTimer.current);
       comboTimer.current = window.setTimeout(() => {
         comboRef.current = 0;
         setCombo(0);
-      }, COMBO_WINDOW_MS);
+      }, comboWindowMs);
       if (nextCombo >= 3) setGustNonce((n) => n + 1); // the explosion blows the leaves about
-      const comboBonus = comboBonusSeconds(nextCombo);
+      const comboBonus = comboBonusSeconds(nextCombo, settings.comboTimeMultiplier);
 
       // --- clade completion (#60): naming this tip may have driven an ancestor clade to
       // zero-remaining. Celebrate the biggest one newly finished (once per clade per run).
@@ -496,10 +529,10 @@ function Game({
       setScore((v) => v + points);
       setCount((v) => v + 1);
       setSeconds((s) => Math.min(9999, s + totalTime));
-      setFlash({
-        text: `${label} +${totalTime}s${p.kind === "refinement" ? " (refined)" : ""}`,
-        tone: p.kind === "refinement" ? "small" : "good",
-      });
+      pushFlash(
+        `${label} +${totalTime}s${p.kind === "refinement" ? " (refined)" : ""}`,
+        p.kind === "refinement" ? "small" : "good",
+      );
     }
     setRev((n) => n + 1);
   }
@@ -530,17 +563,10 @@ function Game({
     }
     if (added > 0) {
       setCount((v) => v + added);
-      setFlash({ text: `cheat: +${added} placed`, tone: "small" });
+      pushFlash(`cheat: +${added} placed`, "small");
       setRev((v) => v + 1);
     }
   }
-
-  const flashColor =
-    flash?.tone === "good"
-      ? "text-clade-accent"
-      : flash?.tone === "small"
-        ? "text-clade-ink/70"
-        : "text-clade-ink/40";
 
   const lowTime = !settings.infiniteTime && seconds <= 10;
 
@@ -647,13 +673,27 @@ function Game({
             className="w-full rounded-2xl border-2 border-clade-ink/80 bg-clade-paper/90 px-4 py-2.5 text-center font-hand text-2xl text-clade-ink shadow-sm outline-none backdrop-blur placeholder:text-clade-ink/35 focus:border-clade-accent"
           />
         </form>
-        {flash && (
-          <span
-            className={`rounded-full border border-clade-ink/10 bg-clade-paper/95 px-4 py-1 font-hand text-xl shadow-sm ${flashColor}`}
-          >
-            {flash.text}
-          </span>
-        )}
+        {/* Stacked notification cards — each fades out over flashFadeSeconds (newest on top). */}
+        <div className="flex w-full flex-col items-center gap-1">
+          <AnimatePresence>
+            {flashes.map((fl) => (
+              <motion.span
+                key={fl.id}
+                layout
+                initial={{ opacity: 0, y: -6, scale: 0.96 }}
+                animate={{ opacity: [1, 1, 0], y: 0, scale: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{
+                  opacity: { duration: settings.flashFadeSeconds, times: [0, 0.5, 1], ease: "easeIn" },
+                  default: { duration: 0.18 },
+                }}
+                className={`rounded-full border border-clade-ink/10 bg-clade-paper/95 px-4 py-1 font-hand text-xl shadow-sm ${flashToneClass(fl.tone)}`}
+              >
+                {fl.text}
+              </motion.span>
+            ))}
+          </AnimatePresence>
+        </div>
       </div>
 
       {running && (
@@ -661,7 +701,7 @@ function Game({
           combo={combo}
           intensity={comboIntensity}
           comboNonce={comboNonce}
-          windowMs={COMBO_WINDOW_MS}
+          windowMs={settings.comboWindowSeconds * 1000}
           cladeEvent={cladeEvent}
         />
       )}
@@ -707,7 +747,7 @@ function Game({
               setCount(0);
               setSeconds(settings.startSeconds);
               setStarted(false); // clock waits for the first word again (#50)
-              setFlash(null);
+              setFlashes([]);
               setPulse(null);
               resetCombo();
               setRev((n) => n + 1);

@@ -303,6 +303,8 @@ export function LeafBackground({
       if (best) {
         held = best;
         best.free = false; // pin it to the cursor until release
+        e.preventDefault(); // dragging a leaf shouldn't start a text selection…
+        document.body.style.userSelect = "none"; // …and nothing highlights while we hold it
       }
     };
 
@@ -319,6 +321,7 @@ export function LeafBackground({
       if (held) {
         held.free = true; // keep its last velocity → it flies off and resumes drifting
         held = null;
+        document.body.style.userSelect = ""; // restore normal text selection
       }
     };
 
@@ -344,6 +347,7 @@ export function LeafBackground({
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
       document.removeEventListener("mouseleave", onLeave);
+      document.body.style.userSelect = ""; // never leave selection disabled
     };
   }, [density, interactive]);
 

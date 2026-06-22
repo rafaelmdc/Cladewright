@@ -24,6 +24,7 @@ from .models import (
     GameMode,
     DailyPin,
     DailyRotationEntry,
+    GameDefaults,
     GameModeConfig,
     NamedSpecies,
     PlayerStat,
@@ -88,6 +89,17 @@ class GamesView(APIView):
             for g in GameModeConfig.objects.filter(enabled=True)
         ]
         return Response({"games": games})
+
+
+class GameDefaultsView(APIView):
+    """GET /api/scores/game-defaults/ -> the admin-configured default tuning values, in the
+    frontend GameSettings shape. Public; the SPA overlays them on its hardcoded fallbacks so
+    a fresh run starts from whatever the admin set (see docs/admin.md)."""
+
+    permission_classes: list = []
+
+    def get(self, request: Request) -> Response:
+        return Response(GameDefaults.load().as_settings())
 
 
 DAILY_MODE = GameMode.MARATHON_DAILY

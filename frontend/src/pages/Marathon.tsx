@@ -43,7 +43,7 @@ export function Marathon() {
   // The daily reuses this exact game — only the "metadata" differs: a server-decided scope
   // (locked), default/ranked settings, mode marathon_daily, and a one-shot lock.
   const isDaily = new URLSearchParams(window.location.search).get("daily") === "1";
-  useTitle(isDaily ? "Daily" : "Marathon");
+  useTitle(isDaily ? "Daily" : "Time attack");
 
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
   const [scopeKey, setScopeKey] = useState<string | null>(null);
@@ -246,6 +246,9 @@ function Game({
   const [count, setCount] = useState(0);
   const [seconds, setSeconds] = useState(settings.startSeconds);
   const [running, setRunning] = useState(true);
+  // The clock doesn't tick until the first organism lands (#50) — no pressure while you
+  // read the empty board / pick a scope. Flips true on the first placement and on restore.
+  const [started, setStarted] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
   // A brief "ping" on the node a typed organism resolves to — confirms it landed (or
@@ -262,7 +265,7 @@ function Game({
   }, [settings.extantOnly, tracker]);
 
   useEffect(() => {
-    if (!running || settings.infiniteTime) return;
+    if (!running || !started || settings.infiniteTime) return;
     const id = setInterval(() => {
       setSeconds((s) => {
         if (s <= 1) {
@@ -273,7 +276,7 @@ function Game({
       });
     }, 1000);
     return () => clearInterval(id);
-  }, [running, settings.infiniteTime]);
+  }, [running, started, settings.infiniteTime]);
 
   // The persist key: this exact game (a restore only applies to a matching mode/scope/
   // difficulty/asset). asset.scope is set for blob/merged assets; fall back to scopeKey.
@@ -301,6 +304,7 @@ function Game({
     setCount(saved.count);
     setSeconds(settings.infiniteTime ? saved.seconds : secs);
     setRunning(settings.infiniteTime ? true : secs > 0);
+    setStarted(true); // a restored run was already underway — keep the clock live
     if (saved.tainted) setRankTainted(true); // a restored run keeps its unranked status
     setRev((n) => n + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -391,6 +395,7 @@ function Game({
     if (p.kind === "duplicate") {
       setFlash({ text: `${label} — already on the tree`, tone: "none" });
     } else {
+      setStarted(true); // first organism landed → the clock starts now (#50)
       transcriptRef.current.push(target.id); // record for server re-scoring
       const { time, points } = rewardFor(p);
       setScore((v) => v + points);
@@ -567,6 +572,7 @@ function Game({
               setScore(0);
               setCount(0);
               setSeconds(settings.startSeconds);
+              setStarted(false); // clock waits for the first word again (#50)
               setFlash(null);
               setPulse(null);
               setRev((n) => n + 1);

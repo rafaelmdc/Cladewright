@@ -5,8 +5,11 @@ in `../Rafael-Homelab/kubernetes/deployments/` (use the **`portfolio`** deployme
 reference — it's the closest analog: Django + React + CNPG Postgres). This doc is the plan +
 the contract (env, secrets, hosts); the manifests live in the homelab repo, not here.
 
-> Status: not yet deployed. Everything in the app is already **env-driven** (see
-> `backend/cladewright/settings.py`), so deployment is config + manifests, not code.
+> Status: **live** at `cladewright.duarte-correia.pt`. The manifests live in the homelab repo
+> under `kubernetes/deployments/cladewright/`. Everything app-side is **env-driven** (see
+> `backend/cladewright/settings.py`), so changes are config + manifests, not code. CI builds
+> the three images on push to `main` and on `v*` tags (`.github/workflows/build-images.yml`);
+> argocd-image-updater rolls the cluster.
 
 ## Topology
 
@@ -124,9 +127,38 @@ running `manage.py fetch_col_dump`. The dump stays out of the image.
   env. Consider login throttling (e.g. django-axes) as a follow-up.
 - The heavy pipeline build runs only on the worker; the web tier has no Braidworks/dump.
 
-## Still to build before deploy
+## Releasing
 
-- `frontend/Dockerfile` (nginx static build + `/api` `/accounts` proxy) — doesn't exist yet.
-- The homelab manifests (Deployments, Services, CNPG, Gateway/HTTPRoute, Certificate,
-  TunnelBinding, ExternalSecrets, PVC) under `kubernetes/deployments/cladewright/`.
-- CI to build/push the three images to Docker Hub.
+Push to `main` builds images stamped with the commit SHA; **`git tag vX.Y.Z && git push
+origin vX.Y.Z`** builds images stamped with that version. The version is baked into all three
+images at build (`APP_VERSION` build-arg) and surfaced so you can confirm a deploy landed:
+
+- **Site footer** — the frontend build; shows the API build in amber if they differ (a
+  half-applied deploy).
+- **Admin header** — the web build.
+- **`GET /api/version/`** → `{version, built}`.
+
+After Argo syncs, glance at the footer/admin: if it shows the version you just tagged, it's live.
+
+## Operational runbooks
+
+**Compression.** nginx serves **Brotli** (≈50% smaller than gzip on the JSON/JS) with a gzip
+fallback, negotiated per request. It's transport-only — stored assets are unchanged, so no
+rebuild is needed when it ships. Static assets are precompressed (`.br`/`.gz`); the proxied
+game JSON is compressed dynamically.
+
+**Pipeline worker not consuming jobs.** Jobs sit `QUEUED` and never run.
+1. The fix for the common cause (a half-open Redis `BRPOP` after a Redis blip) is the broker
+   `transport_options` in `settings.py` — the worker reconnects instead of hanging.
+2. **Restart the `cladewright-worker` pod** (Argo → Restart). The pod reconnects to Redis and
+   drains the queue. Re-queueing from the admin won't help a *deaf* worker — only a restart does.
+3. If jobs were enqueued while Redis was down, their messages are lost (Redis is ephemeral) —
+   **Re-queue** them from the admin afterward.
+
+**Cursed jobs (stuck even after a Redis reload).** The dead state is the `PipelineJob` rows.
+Admin → Pipeline jobs → select them → **⚠ PURGE** (drains the queue + deletes the job records;
+built **Asset versions are never touched**). Then restart the worker and re-create the build.
+
+**Old asset versions piling up.** Build with **delete old** ✓ (prunes the scope's superseded
+versions after the new one is current), or use the **Delete superseded** action on Asset
+versions. See [`admin.md`](admin.md).

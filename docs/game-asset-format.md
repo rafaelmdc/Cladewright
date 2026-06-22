@@ -33,7 +33,6 @@ size; the *shape* is what's contractual.
   "thresholds": { "hidden_label_max": 15 },  // default "N remaining" reveal cutoff
   "provenance": {
     "coldp_release": "2026-05",
-    "bicho_version": "2.x",
     "braidworks_version": "0.x",
     "built_at": "2026-06-20T00:00:00Z"
   },

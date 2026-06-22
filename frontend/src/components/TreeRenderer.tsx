@@ -44,53 +44,66 @@ export interface TreeRendererProps {
   scientificPrimary?: boolean;
   /** transient "ping" on a freshly-named node; nonce re-fires the same node */
   pulse?: { key: string; nonce: number } | null;
-  /** combo heat 0..1 — blooms the ping into leaves + warms it to gold (#60). */
-  pulseIntensity?: number;
+  /** combo length at the moment of the ping — drives the on-node explosion (#60). */
+  pulseCombo?: number;
   /** game-over: reveal the un-named species beneath each "N hidden" label as faded ghosts */
   reveal?: boolean;
 }
 
-const PULSE_GOLD = "#c79a3a"; // warm gold the ping charges toward at high combo
+const PULSE_ACCENT: [number, number, number] = [63, 107, 76];
+const PULSE_GOLD: [number, number, number] = [199, 154, 58];
+const EXPLODE_AT = 3; // combo at which the node explosion kicks in (it grows from here)
+
+/** Heat 0..1 → forest-green charging toward warm gold. */
+function pulseColor(t: number): string {
+  const k = Math.min(Math.max(t, 0), 1);
+  const c = PULSE_ACCENT.map((a, i) => Math.round(a + (PULSE_GOLD[i] - a) * k));
+  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+}
 
 /** A single leaf outline centred on the origin (same silhouette as the background leaves). */
 function leafPath(s: number): string {
   return `M0,${-s} Q${s * 0.72},${-s * 0.15} 0,${s} Q${-s * 0.72},${-s * 0.15} 0,${-s} Z`;
 }
 
-/** The freshly-placed-node ping. At zero combo it's the original expanding ring; as combo
- *  heat rises it warms to gold and throws off a little burst of leaves — the on-tree half of
- *  the combo juice (#60). Keyed by nonce upstream so it remounts/replays on every placement. */
-function NodePulse({ intensity, scale }: { intensity: number; scale: number }) {
-  const t = Math.min(Math.max(intensity, 0), 1);
-  const color = t > 0.5 ? PULSE_GOLD : "rgb(var(--clade-accent))";
-  const ring = (24 / scale) * (1 + t * 0.6);
-  const leaves = Math.round(t * 6); // none at zero combo → identical to the old ping
-  const ls = 5 / scale;
+/** The freshly-placed-node ping — and, from ×3 up, the combo explosion, which fires right at
+ *  the placed node (not screen centre) and gets bigger every step (#60). Keyed by nonce
+ *  upstream so it remounts/replays on every placement. */
+function NodePulse({ combo, scale }: { combo: number; scale: number }) {
+  const lvl = Math.max(0, combo - (EXPLODE_AT - 1)); // 0 below ×3, 1 at ×3, 2 at ×4, …
+  const grow = Math.min(lvl, 10);
+  const heat = Math.min(combo / 12, 1);
+  const color = pulseColor(heat);
+  const base = 24 / scale;
+  const ring = base * (1 + grow * 0.22);
+  const leaves = lvl > 0 ? Math.min(4 + (lvl - 1) * 2, 22) : 0; // grows each combo step
+  const ls = (4.5 / scale) * (1 + grow * 0.07);
+  const spread = base * (1.1 + grow * 0.42);
   return (
     <>
       <motion.circle
         fill={color}
-        initial={{ r: 3, opacity: 0.5 }}
+        initial={{ r: 3, opacity: 0.55 }}
         animate={{ r: ring, opacity: 0 }}
         transition={{ duration: 0.7, ease: "easeOut" }}
       />
       {Array.from({ length: leaves }).map((_, i) => {
         const ang = (i / leaves) * Math.PI * 2;
-        const R = ring * 0.95;
+        const R = spread * (0.8 + (i % 3) * 0.18); // a little radial variety → organic
         return (
           <motion.path
             key={i}
             d={leafPath(ls)}
             fill={color}
-            initial={{ x: 0, y: 0, scale: 0.2, opacity: 0.75, rotate: 0 }}
+            initial={{ x: 0, y: 0, scale: 0.2, opacity: 0.85, rotate: 0 }}
             animate={{
               x: Math.cos(ang) * R,
               y: Math.sin(ang) * R,
               scale: 1,
               opacity: 0,
-              rotate: i % 2 ? 70 : -70,
+              rotate: i % 2 ? 90 : -90,
             }}
-            transition={{ duration: 0.75, ease: "easeOut" }}
+            transition={{ duration: 0.85, ease: "easeOut" }}
           />
         );
       })}
@@ -218,7 +231,7 @@ export function TreeRenderer({
   showScientific = true,
   scientificPrimary = false,
   pulse = null,
-  pulseIntensity = 0,
+  pulseCombo = 0,
   reveal = false,
 }: TreeRendererProps) {
   // Manual fold/unfold overrides on top of the automatic budget: `expanded` = wedges the
@@ -474,7 +487,7 @@ export function TreeRenderer({
                 onClick={() => onNodeClick(p.node)}
               >
                 {pulse && pulse.key === p.node.key && (
-                  <NodePulse key={pulse.nonce} intensity={pulseIntensity} scale={view.scale} />
+                  <NodePulse key={pulse.nonce} combo={pulseCombo} scale={view.scale} />
                 )}
                 <NodeGlyph
                   node={p.node}

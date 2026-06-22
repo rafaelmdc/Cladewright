@@ -10,6 +10,7 @@ import { Wordmark } from "../components/Brand";
 import { ComboFx } from "../components/combo/ComboFx";
 import { EndGameButton } from "../components/EndGameButton";
 import { GameOverCard } from "../components/GameOverCard";
+import { LeafBackground } from "../components/LeafBackground";
 import { LoadingTree } from "../components/LoadingTree";
 import { OnboardingTour } from "../components/onboarding/OnboardingTour";
 import { GAME_STEPS } from "../components/onboarding/tourSteps";
@@ -47,7 +48,7 @@ const SCOPE_KEY = "cladewright.scope";
 // are bonus SECONDS (more time → more placements → a legitimately higher score), never
 // untrusted points. All knobs live here so the feel is one place to dial.
 const COMBO_WINDOW_MS = 4000; // max gap between placements to keep the combo alive
-const COMBO_MILESTONE = 5; // a "burst" every N (×5, ×10, …)
+const CLADE_BANNER_MS = 1800; // how long the "clade complete" toast lingers before fading
 const CLADE_MIN_SIZE = 3; // don't celebrate finishing a 1–2 species "clade"
 
 /** Bonus seconds for a placement at this combo length (0 below ×2; gentle, capped). */
@@ -288,13 +289,16 @@ function Game({
   const comboEndsAtRef = useRef(0);
   const comboTimer = useRef<number | undefined>(undefined);
   const [comboNonce, setComboNonce] = useState(0);
-  const [milestoneNonce, setMilestoneNonce] = useState(0);
+  // Bumped on each combo explosion (×3+) to blow the ambient leaves around.
+  const [gustNonce, setGustNonce] = useState(0);
   const [cladeEvent, setCladeEvent] = useState<{ name: string; bonus: number; nonce: number } | null>(null);
+  const cladeTimer = useRef<number | undefined>(undefined);
   const completedClades = useRef<Set<number>>(new Set());
   const comboIntensity = Math.min(combo / 10, 1);
 
   function resetCombo() {
     window.clearTimeout(comboTimer.current);
+    window.clearTimeout(cladeTimer.current);
     comboRef.current = 0;
     comboEndsAtRef.current = 0;
     setCombo(0);
@@ -457,9 +461,7 @@ function Game({
         comboRef.current = 0;
         setCombo(0);
       }, COMBO_WINDOW_MS);
-      if (nextCombo >= COMBO_MILESTONE && nextCombo % COMBO_MILESTONE === 0) {
-        setMilestoneNonce((n) => n + 1);
-      }
+      if (nextCombo >= 3) setGustNonce((n) => n + 1); // the explosion blows the leaves about
       const comboBonus = comboBonusSeconds(nextCombo);
 
       // --- clade completion (#60): naming this tip may have driven an ancestor clade to
@@ -485,6 +487,8 @@ function Game({
         if (best) {
           cladeBonus = cladeBonusSeconds(best.size);
           setCladeEvent({ name: best.name, bonus: cladeBonus, nonce: ++pulseRef.current });
+          window.clearTimeout(cladeTimer.current);
+          cladeTimer.current = window.setTimeout(() => setCladeEvent(null), CLADE_BANNER_MS);
         }
       }
 
@@ -553,6 +557,17 @@ function Game({
       {/* decorative field-notebook frame around the canvas */}
       <div className="pointer-events-none absolute inset-2 z-0 rounded-[26px] border-2 border-clade-ink/15" />
 
+      {/* Ambient leaves behind the board (optional, #60 juice) — passive, so they never grab
+          pointer events from the tree's pan/zoom; combo explosions blow them about via gust. */}
+      {settings.fallingLeaves && (
+        <LeafBackground
+          density={18}
+          interactive={false}
+          gust={gustNonce}
+          className="pointer-events-none absolute inset-0 z-0 h-full w-full"
+        />
+      )}
+
       <div className="absolute left-4 top-4 z-30 flex items-center gap-3">
         <Wordmark size="text-2xl" />
         {isDaily ? (
@@ -593,7 +608,7 @@ function Game({
       <OnboardingTour
         open={helpOpen}
         onClose={() => setHelpOpen(false)}
-        // The daily is fixed/ranked with no tuning panel, so drop the "tune the run" step.
+        // The daily has no tuning panel, so drop the settings step there (the end button stays).
         steps={isDaily ? GAME_STEPS.filter((s) => s.anchor !== "settings") : GAME_STEPS}
       />
 
@@ -601,7 +616,7 @@ function Game({
           row so the picker never overlaps the timer. The search bar + notification are
           centered on the viewport independently, so the bar reads as dead-center. */}
       <div className="pointer-events-none absolute inset-x-0 top-32 z-10 flex items-start justify-between px-6 sm:top-20">
-        <div data-tour="timer" className="leading-none">
+        <div className="leading-none">
           <span className="font-mono text-[10px] uppercase tracking-widest text-clade-ink/45">
             Time
           </span>
@@ -609,7 +624,7 @@ function Game({
             {settings.infiniteTime ? "∞" : fmtTime(seconds)}
           </div>
         </div>
-        <div data-tour="tally" className="text-right leading-none">
+        <div className="text-right leading-none">
           <div className="font-hand text-4xl font-bold text-clade-ink">{count}</div>
           <span className="font-mono text-[10px] uppercase tracking-widest text-clade-ink/45">
             on the tree · {score} pts
@@ -620,10 +635,7 @@ function Game({
       {/* Search bar: dead-center on desktop (top-10). On mobile it spans the width and
           would collide with the wordmark/scope row above and the timer below, so it drops
           a row down (top-16) — the HUD timer/tally drops further (top-32) to match. */}
-      <div
-        data-tour="search"
-        className="pointer-events-none absolute left-1/2 top-16 z-20 flex w-full max-w-md -translate-x-1/2 flex-col items-center gap-2 px-4 sm:top-10"
-      >
+      <div className="pointer-events-none absolute left-1/2 top-16 z-20 flex w-full max-w-md -translate-x-1/2 flex-col items-center gap-2 px-4 sm:top-10">
         <form onSubmit={submit} className="pointer-events-auto w-full">
           <input
             ref={inputRef}
@@ -649,7 +661,7 @@ function Game({
           combo={combo}
           intensity={comboIntensity}
           comboNonce={comboNonce}
-          milestoneNonce={milestoneNonce}
+          windowMs={COMBO_WINDOW_MS}
           cladeEvent={cladeEvent}
         />
       )}
@@ -663,7 +675,7 @@ function Game({
         showScientific={settings.showScientific}
         scientificPrimary={difficulty === "scientific"}
         pulse={pulse}
-        pulseIntensity={comboIntensity}
+        pulseCombo={combo}
         reveal={!running}
       />
 

@@ -10,6 +10,9 @@ export interface GameSettings {
   treeLayout: TreeLayout;
   /** Show the scientific name (smaller) under a species' common name on the tree. */
   showScientific: boolean;
+  /** Ambient leaves drifting behind the board (and flung by combo explosions). Purely
+   *  visual — never affects scoring or ranked status. */
+  fallingLeaves: boolean;
   /** "Living only": exclude extinct species — they don't count and the "N remaining"
    *  denominator switches to the extant-only counts. Off = include extinct. */
   extantOnly: boolean;
@@ -28,6 +31,7 @@ export interface GameSettings {
 export const DEFAULT_SETTINGS: GameSettings = {
   treeLayout: "radial",
   showScientific: true,
+  fallingLeaves: true,
   extantOnly: true,
   infiniteTime: false,
   startSeconds: 60,

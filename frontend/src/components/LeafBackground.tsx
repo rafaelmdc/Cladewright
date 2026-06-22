@@ -37,17 +37,33 @@ const PALETTE = ["63,107,76", "92,122,82", "120,138,86", "150,116,66", "168,132,
 const GRAB_RADIUS = 22; // px slop around a leaf so it's easy to grab
 const GRAVITY = 900; // px/s² on a flung leaf
 const MAX_FLING = 2200; // clamp fling speed so a fast whip doesn't rocket off instantly
-const REPEL_RADIUS = 78; // the cursor's "wake" reaches this far (#57)
-const REPEL_ACCEL = 2600; // how hard the wake shoves a nearby leaf (px/s², scaled by nearness)
-const SETTLE_SPEED = 7; // below this an awake leaf relaxes back into the gentle drift
+const SETTLE_SPEED = 7; // below this a knocked leaf relaxes back into the gentle drift
 
 /** A press on real UI (or inside it) should never grab a leaf. */
 function onInteractiveEl(t: EventTarget | null): boolean {
   return !!(t instanceof Element && t.closest('button, a, input, textarea, select, label, [role="button"]'));
 }
 
-export function LeafBackground({ density = 26 }: { density?: number }) {
+export function LeafBackground({
+  density = 26,
+  className = "pointer-events-none fixed inset-0 -z-10 h-full w-full",
+  interactive = true,
+  gust = 0,
+}: {
+  density?: number;
+  /** container class — override to embed the layer (e.g. behind the game board). */
+  className?: string;
+  /** false = passive ambiance only (no grab/fling), so it won't fight other pointer UI. */
+  interactive?: boolean;
+  /** a nonce; bumping it blows every leaf outward from centre — a combo "explosion" gust. */
+  gust?: number;
+}) {
   const ref = useRef<HTMLCanvasElement>(null);
+  // Latest gust nonce, read inside the RAF loop (which is created once per `density`).
+  const gustRef = useRef(0);
+  useEffect(() => {
+    gustRef.current = gust;
+  }, [gust]);
 
   useEffect(() => {
     const canvas = ref.current;
@@ -55,6 +71,7 @@ export function LeafBackground({ density = 26 }: { density?: number }) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    let lastGust = gustRef.current; // consume only NEW gusts in the loop
 
     let w = 0;
     let h = 0;
@@ -64,7 +81,6 @@ export function LeafBackground({ density = 26 }: { density?: number }) {
     let held: Leaf | null = null;
     let px = 0;
     let py = 0;
-    let pointerInside = false; // gates the cursor wake until we actually have a position
 
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -119,21 +135,28 @@ export function LeafBackground({ density = 26 }: { density?: number }) {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       ctx.clearRect(0, 0, w, h);
-      for (const l of leaves) {
-        // The cursor's wake shoves any nearby drifting/awake leaf away from it (#57) — the
-        // closer it is, the harder the push. A held or flung leaf ignores it.
-        if (pointerInside && l !== held && !l.free) {
-          const dx = l.x - px;
-          const dy = l.y - py;
-          const d = Math.hypot(dx, dy);
-          if (d > 0.001 && d < REPEL_RADIUS) {
-            const f = (1 - d / REPEL_RADIUS) * REPEL_ACCEL * dt;
-            l.vx += (dx / d) * f;
-            l.vy += (dy / d) * f;
-            l.awake = true;
-          }
-        }
 
+      // A combo explosion (gust nonce bumped) blows every leaf outward from roughly the board
+      // centre, with an upward bias — then they glide and settle back into the drift.
+      if (gustRef.current !== lastGust) {
+        lastGust = gustRef.current;
+        const cx = w / 2;
+        const cy = h * 0.45;
+        for (const l of leaves) {
+          if (l === held) continue;
+          const dx = l.x - cx;
+          const dy = l.y - cy;
+          const d = Math.hypot(dx, dy) || 1;
+          const speed = 280 + Math.random() * 260;
+          l.vx = (dx / d) * speed + (Math.random() - 0.5) * 140;
+          l.vy = (dy / d) * speed - 160; // upward bias, like a blast
+          l.vrot = (Math.random() - 0.5) * 8;
+          l.awake = true;
+          l.free = false;
+        }
+      }
+
+      for (const l of leaves) {
         if (l === held) {
           // Spring to the cursor; velocity is derived from the move so a release flings it.
           const safe = Math.max(dt, 1 / 120);
@@ -154,8 +177,8 @@ export function LeafBackground({ density = 26 }: { density?: number }) {
           l.vrot *= Math.pow(0.5, dt);
           if (l.y > h + 40 || l.x < -40 || l.x > w + 40) Object.assign(l, spawn(false));
         } else if (l.awake) {
-          // Shoved (by the wake or a collision): glide with damped velocity, NO gravity, so
-          // the calm field isn't drained downward; relax back into drift once it slows.
+          // Knocked by a collision: glide with damped velocity, NO gravity, so the calm field
+          // isn't drained downward; relax back into the gentle drift once it slows.
           l.x += l.vx * dt;
           l.y += l.vy * dt;
           const damp = Math.pow(0.04, dt);
@@ -257,12 +280,7 @@ export function LeafBackground({ density = 26 }: { density?: number }) {
     };
 
     const onMove = (e: PointerEvent) => {
-      pointAt(e); // track the cursor always, so its wake can push leaves even when not grabbing
-      pointerInside = true;
-    };
-
-    const onLeave = () => {
-      pointerInside = false;
+      if (held) pointAt(e);
     };
 
     const onUp = () => {
@@ -277,11 +295,14 @@ export function LeafBackground({ density = 26 }: { density?: number }) {
     last = performance.now();
     raf = requestAnimationFrame(frame);
     window.addEventListener("resize", resize);
-    window.addEventListener("pointerdown", onDown);
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-    document.addEventListener("mouseleave", onLeave);
+    // Grab/fling is opt-in: passive (in-game) layers skip it so they never steal pointer
+    // events from the board's pan/zoom.
+    if (interactive) {
+      window.addEventListener("pointerdown", onDown);
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+    }
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
@@ -289,15 +310,8 @@ export function LeafBackground({ density = 26 }: { density?: number }) {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
-      document.removeEventListener("mouseleave", onLeave);
     };
-  }, [density]);
+  }, [density, interactive]);
 
-  return (
-    <canvas
-      ref={ref}
-      aria-hidden
-      className="pointer-events-none fixed inset-0 -z-10 h-full w-full"
-    />
-  );
+  return <canvas ref={ref} aria-hidden className={className} />;
 }

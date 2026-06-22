@@ -7,9 +7,12 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Wordmark } from "../components/Brand";
+import { ComboFx } from "../components/combo/ComboFx";
 import { EndGameButton } from "../components/EndGameButton";
 import { GameOverCard } from "../components/GameOverCard";
 import { LoadingTree } from "../components/LoadingTree";
+import { OnboardingTour } from "../components/onboarding/OnboardingTour";
+import { GAME_STEPS } from "../components/onboarding/tourSteps";
 import { ScopePicker } from "../components/ScopePicker";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { TreeRenderer } from "../components/TreeRenderer";
@@ -38,6 +41,23 @@ interface Flash {
 }
 
 const SCOPE_KEY = "cladewright.scope";
+
+// --- Combo / clade-completion tuning (#60). Forgiving by design: a generous keep-alive
+// window, and a wrong/duplicate guess never breaks the streak — only a pause does. Rewards
+// are bonus SECONDS (more time → more placements → a legitimately higher score), never
+// untrusted points. All knobs live here so the feel is one place to dial.
+const COMBO_WINDOW_MS = 4000; // max gap between placements to keep the combo alive
+const COMBO_MILESTONE = 5; // a "burst" every N (×5, ×10, …)
+const CLADE_MIN_SIZE = 3; // don't celebrate finishing a 1–2 species "clade"
+
+/** Bonus seconds for a placement at this combo length (0 below ×2; gentle, capped). */
+function comboBonusSeconds(combo: number): number {
+  return combo >= 2 ? Math.min(combo - 1, 6) : 0;
+}
+/** Bonus seconds for finishing a clade of this size (scales with size, capped). */
+function cladeBonusSeconds(size: number): number {
+  return Math.min(4 + Math.floor(size / 4), 15);
+}
 
 export function Marathon() {
   // The daily reuses this exact game — only the "metadata" differs: a server-decided scope
@@ -242,6 +262,9 @@ function Game({
   }
 
   const [input, setInput] = useState("");
+  // The in-game "how to play" tour (Time Attack's own help). Opening it pauses the clock so
+  // reading the help never costs time.
+  const [helpOpen, setHelpOpen] = useState(false);
   const [score, setScore] = useState(0);
   const [count, setCount] = useState(0);
   const [seconds, setSeconds] = useState(settings.startSeconds);
@@ -257,6 +280,28 @@ function Game({
   const [pulse, setPulse] = useState<{ key: string; nonce: number } | null>(null);
   const pulseRef = useRef(0);
 
+  // Combo state (#60). The count + window are the source of truth (refs, read inside submit);
+  // the mirrored state values drive the FX. A trailing timer ends the combo visually after a
+  // pause. `completedClades` remembers which clades we've already celebrated this run.
+  const [combo, setCombo] = useState(0);
+  const comboRef = useRef(0);
+  const comboEndsAtRef = useRef(0);
+  const comboTimer = useRef<number | undefined>(undefined);
+  const [comboNonce, setComboNonce] = useState(0);
+  const [milestoneNonce, setMilestoneNonce] = useState(0);
+  const [cladeEvent, setCladeEvent] = useState<{ name: string; bonus: number; nonce: number } | null>(null);
+  const completedClades = useRef<Set<number>>(new Set());
+  const comboIntensity = Math.min(combo / 10, 1);
+
+  function resetCombo() {
+    window.clearTimeout(comboTimer.current);
+    comboRef.current = 0;
+    comboEndsAtRef.current = 0;
+    setCombo(0);
+    setCladeEvent(null);
+    completedClades.current.clear();
+  }
+
   // The "living only" toggle just re-points the "N remaining" denominator; reflect it on
   // the tracker and re-render the labels when it flips.
   useEffect(() => {
@@ -265,7 +310,7 @@ function Game({
   }, [settings.extantOnly, tracker]);
 
   useEffect(() => {
-    if (!running || !started || settings.infiniteTime) return;
+    if (!running || !started || settings.infiniteTime || helpOpen) return;
     const id = setInterval(() => {
       setSeconds((s) => {
         if (s <= 1) {
@@ -276,7 +321,7 @@ function Game({
       });
     }, 1000);
     return () => clearInterval(id);
-  }, [running, started, settings.infiniteTime]);
+  }, [running, started, settings.infiniteTime, helpOpen]);
 
   // The persist key: this exact game (a restore only applies to a matching mode/scope/
   // difficulty/asset). asset.scope is set for blob/merged assets; fall back to scopeKey.
@@ -398,11 +443,57 @@ function Game({
       setStarted(true); // first organism landed → the clock starts now (#50)
       transcriptRef.current.push(target.id); // record for server re-scoring
       const { time, points } = rewardFor(p);
+
+      // --- combo (#60): extend the streak if this placement landed within the window. A
+      // wrong/duplicate guess returns earlier and never reaches here, so it can't break it.
+      const now = performance.now();
+      const nextCombo = now <= comboEndsAtRef.current ? comboRef.current + 1 : 1;
+      comboRef.current = nextCombo;
+      comboEndsAtRef.current = now + COMBO_WINDOW_MS;
+      setCombo(nextCombo);
+      setComboNonce((n) => n + 1);
+      window.clearTimeout(comboTimer.current);
+      comboTimer.current = window.setTimeout(() => {
+        comboRef.current = 0;
+        setCombo(0);
+      }, COMBO_WINDOW_MS);
+      if (nextCombo >= COMBO_MILESTONE && nextCombo % COMBO_MILESTONE === 0) {
+        setMilestoneNonce((n) => n + 1);
+      }
+      const comboBonus = comboBonusSeconds(nextCombo);
+
+      // --- clade completion (#60): naming this tip may have driven an ancestor clade to
+      // zero-remaining. Celebrate the biggest one newly finished (once per clade per run).
+      let cladeBonus = 0;
+      if (target.kind === "tip") {
+        const lineage = asset.tipLineage.get(target.id);
+        const denom = tracker.extantOnly ? asset.poolCountExtant : asset.poolCount;
+        let best: { size: number; name: string } | null = null;
+        if (lineage) {
+          for (let k = 0; k < lineage.length; k++) {
+            const idx = lineage[k];
+            if (idx < 0 || completedClades.current.has(idx)) continue;
+            if (tracker.remaining(idx) !== 0) continue;
+            completedClades.current.add(idx);
+            const size = denom[idx];
+            if (size >= CLADE_MIN_SIZE && (!best || size > best.size)) {
+              const node = asset.nodeById.get(asset.nodeIds[idx]);
+              best = { size, name: node?.common || node?.sci || "clade" };
+            }
+          }
+        }
+        if (best) {
+          cladeBonus = cladeBonusSeconds(best.size);
+          setCladeEvent({ name: best.name, bonus: cladeBonus, nonce: ++pulseRef.current });
+        }
+      }
+
+      const totalTime = time + comboBonus + cladeBonus;
       setScore((v) => v + points);
       setCount((v) => v + 1);
-      setSeconds((s) => Math.min(9999, s + time));
+      setSeconds((s) => Math.min(9999, s + totalTime));
       setFlash({
-        text: `${label} +${time}s${p.kind === "refinement" ? " (refined)" : ""}`,
+        text: `${label} +${totalTime}s${p.kind === "refinement" ? " (refined)" : ""}`,
         tone: p.kind === "refinement" ? "small" : "good",
       });
     }
@@ -489,11 +580,28 @@ function Game({
       {/* End-the-run control sits just left of the settings gear; only while playing. */}
       {running && <EndGameButton onEnd={() => setRunning(false)} />}
 
+      {/* In-game help: a quiet "?" in the corner that opens Time Attack's own tour. Opening
+          it pauses the clock (see the timer effect), so reading never costs time. */}
+      <button
+        type="button"
+        aria-label="How to play"
+        onClick={() => setHelpOpen(true)}
+        className="absolute bottom-4 left-4 z-30 grid h-9 w-9 place-items-center rounded-full border border-clade-ink/15 bg-white/70 font-hand text-xl text-clade-ink/70 backdrop-blur transition hover:border-clade-accent hover:text-clade-ink"
+      >
+        ?
+      </button>
+      <OnboardingTour
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        // The daily is fixed/ranked with no tuning panel, so drop the "tune the run" step.
+        steps={isDaily ? GAME_STEPS.filter((s) => s.anchor !== "settings") : GAME_STEPS}
+      />
+
       {/* HUD — timer (left) and tally (right) hug the corners, BELOW the wordmark/scope
           row so the picker never overlaps the timer. The search bar + notification are
           centered on the viewport independently, so the bar reads as dead-center. */}
       <div className="pointer-events-none absolute inset-x-0 top-32 z-10 flex items-start justify-between px-6 sm:top-20">
-        <div className="leading-none">
+        <div data-tour="timer" className="leading-none">
           <span className="font-mono text-[10px] uppercase tracking-widest text-clade-ink/45">
             Time
           </span>
@@ -501,7 +609,7 @@ function Game({
             {settings.infiniteTime ? "∞" : fmtTime(seconds)}
           </div>
         </div>
-        <div className="text-right leading-none">
+        <div data-tour="tally" className="text-right leading-none">
           <div className="font-hand text-4xl font-bold text-clade-ink">{count}</div>
           <span className="font-mono text-[10px] uppercase tracking-widest text-clade-ink/45">
             on the tree · {score} pts
@@ -512,7 +620,10 @@ function Game({
       {/* Search bar: dead-center on desktop (top-10). On mobile it spans the width and
           would collide with the wordmark/scope row above and the timer below, so it drops
           a row down (top-16) — the HUD timer/tally drops further (top-32) to match. */}
-      <div className="pointer-events-none absolute left-1/2 top-16 z-20 flex w-full max-w-md -translate-x-1/2 flex-col items-center gap-2 px-4 sm:top-10">
+      <div
+        data-tour="search"
+        className="pointer-events-none absolute left-1/2 top-16 z-20 flex w-full max-w-md -translate-x-1/2 flex-col items-center gap-2 px-4 sm:top-10"
+      >
         <form onSubmit={submit} className="pointer-events-auto w-full">
           <input
             ref={inputRef}
@@ -533,6 +644,16 @@ function Game({
         )}
       </div>
 
+      {running && (
+        <ComboFx
+          combo={combo}
+          intensity={comboIntensity}
+          comboNonce={comboNonce}
+          milestoneNonce={milestoneNonce}
+          cladeEvent={cladeEvent}
+        />
+      )}
+
       <TreeRenderer
         asset={asset}
         tree={treeRef.current}
@@ -542,6 +663,7 @@ function Game({
         showScientific={settings.showScientific}
         scientificPrimary={difficulty === "scientific"}
         pulse={pulse}
+        pulseIntensity={comboIntensity}
         reveal={!running}
       />
 
@@ -575,6 +697,7 @@ function Game({
               setStarted(false); // clock waits for the first word again (#50)
               setFlash(null);
               setPulse(null);
+              resetCombo();
               setRev((n) => n + 1);
               // Fresh run: ranked again iff the current settings are default (a new run
               // started under custom settings stays tainted from the start).

@@ -26,6 +26,9 @@ interface Leaf {
   // (vx/vy + gravity) instead of the gentle drift; it respawns once it leaves the canvas.
   free: boolean;
   vx: number;
+  // "Awake" leaves have been shoved — by the cursor's wake or a collision (#57) — and glide
+  // with damped velocity (no gravity), settling back into the calm drift once they slow.
+  awake: boolean;
 }
 
 // Greens of the canopy + a couple of warm autumn strays.
@@ -34,6 +37,9 @@ const PALETTE = ["63,107,76", "92,122,82", "120,138,86", "150,116,66", "168,132,
 const GRAB_RADIUS = 22; // px slop around a leaf so it's easy to grab
 const GRAVITY = 900; // px/s² on a flung leaf
 const MAX_FLING = 2200; // clamp fling speed so a fast whip doesn't rocket off instantly
+const REPEL_RADIUS = 78; // the cursor's "wake" reaches this far (#57)
+const REPEL_ACCEL = 2600; // how hard the wake shoves a nearby leaf (px/s², scaled by nearness)
+const SETTLE_SPEED = 7; // below this an awake leaf relaxes back into the gentle drift
 
 /** A press on real UI (or inside it) should never grab a leaf. */
 function onInteractiveEl(t: EventTarget | null): boolean {
@@ -58,6 +64,7 @@ export function LeafBackground({ density = 26 }: { density?: number }) {
     let held: Leaf | null = null;
     let px = 0;
     let py = 0;
+    let pointerInside = false; // gates the cursor wake until we actually have a position
 
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -82,6 +89,7 @@ export function LeafBackground({ density = 26 }: { density?: number }) {
       alpha: 0.1 + Math.random() * 0.22,
       free: false,
       vx: 0,
+      awake: false,
     });
 
     const draw = (l: Leaf, lifted: boolean) => {
@@ -112,6 +120,20 @@ export function LeafBackground({ density = 26 }: { density?: number }) {
       last = now;
       ctx.clearRect(0, 0, w, h);
       for (const l of leaves) {
+        // The cursor's wake shoves any nearby drifting/awake leaf away from it (#57) — the
+        // closer it is, the harder the push. A held or flung leaf ignores it.
+        if (pointerInside && l !== held && !l.free) {
+          const dx = l.x - px;
+          const dy = l.y - py;
+          const d = Math.hypot(dx, dy);
+          if (d > 0.001 && d < REPEL_RADIUS) {
+            const f = (1 - d / REPEL_RADIUS) * REPEL_ACCEL * dt;
+            l.vx += (dx / d) * f;
+            l.vy += (dy / d) * f;
+            l.awake = true;
+          }
+        }
+
         if (l === held) {
           // Spring to the cursor; velocity is derived from the move so a release flings it.
           const safe = Math.max(dt, 1 / 120);
@@ -131,6 +153,22 @@ export function LeafBackground({ density = 26 }: { density?: number }) {
           l.rot += l.vrot * dt;
           l.vrot *= Math.pow(0.5, dt);
           if (l.y > h + 40 || l.x < -40 || l.x > w + 40) Object.assign(l, spawn(false));
+        } else if (l.awake) {
+          // Shoved (by the wake or a collision): glide with damped velocity, NO gravity, so
+          // the calm field isn't drained downward; relax back into drift once it slows.
+          l.x += l.vx * dt;
+          l.y += l.vy * dt;
+          const damp = Math.pow(0.04, dt);
+          l.vx *= damp;
+          l.vy *= damp;
+          l.rot += l.vrot * dt;
+          l.vrot = l.vx * 0.02;
+          if (Math.hypot(l.vx, l.vy) < SETTLE_SPEED) {
+            l.awake = false;
+            l.vx = 0;
+            l.phase = Math.random() * Math.PI * 2; // rejoin the sway cleanly
+          }
+          if (l.y > h + 30 || l.x < -40 || l.x > w + 40) Object.assign(l, spawn(false));
         } else {
           // Gentle drift (the default mood).
           l.y += l.vy * dt;
@@ -139,8 +177,56 @@ export function LeafBackground({ density = 26 }: { density?: number }) {
           l.rot += l.vrot * dt;
           if (l.y > h + 30) Object.assign(l, spawn(false));
         }
-        draw(l, l === held);
       }
+
+      // Collisions: a MOVING leaf (held/flung/awake) bumps the ones it runs into and wakes
+      // them, so a flick scatters the canopy like ragdolls. Drifting pairs pass through, so
+      // the resting field stays calm. O(n²) over a small leaf count — cheap.
+      for (let i = 0; i < leaves.length; i++) {
+        const a = leaves[i];
+        const aMoving = a === held || a.free || a.awake;
+        for (let j = i + 1; j < leaves.length; j++) {
+          const b = leaves[j];
+          if (!aMoving && !(b === held || b.free || b.awake)) continue;
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const d = Math.hypot(dx, dy) || 0.001;
+          const min = (a.size + b.size) * 0.7;
+          if (d >= min) continue;
+          const nx = dx / d;
+          const ny = dy / d;
+          const overlap = min - d;
+          const aPinned = a === held;
+          const bPinned = b === held;
+          // Separate along the contact normal (a pinned/held leaf doesn't get pushed).
+          if (!aPinned && !bPinned) {
+            a.x -= nx * overlap * 0.5;
+            a.y -= ny * overlap * 0.5;
+            b.x += nx * overlap * 0.5;
+            b.y += ny * overlap * 0.5;
+          } else if (aPinned) {
+            b.x += nx * overlap;
+            b.y += ny * overlap;
+          } else {
+            a.x -= nx * overlap;
+            a.y -= ny * overlap;
+          }
+          // Trade a little push along the normal and wake both into the glide state.
+          const kick = 60 + overlap * 6;
+          if (!aPinned) {
+            a.vx -= nx * kick;
+            a.vy -= ny * kick;
+            a.awake = a.awake || !a.free;
+          }
+          if (!bPinned) {
+            b.vx += nx * kick;
+            b.vy += ny * kick;
+            b.awake = b.awake || !b.free;
+          }
+        }
+      }
+
+      for (const l of leaves) draw(l, l === held);
       raf = requestAnimationFrame(frame);
     };
 
@@ -171,7 +257,12 @@ export function LeafBackground({ density = 26 }: { density?: number }) {
     };
 
     const onMove = (e: PointerEvent) => {
-      if (held) pointAt(e);
+      pointAt(e); // track the cursor always, so its wake can push leaves even when not grabbing
+      pointerInside = true;
+    };
+
+    const onLeave = () => {
+      pointerInside = false;
     };
 
     const onUp = () => {
@@ -190,6 +281,7 @@ export function LeafBackground({ density = 26 }: { density?: number }) {
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);
+    document.addEventListener("mouseleave", onLeave);
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
@@ -197,6 +289,7 @@ export function LeafBackground({ density = 26 }: { density?: number }) {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
+      document.removeEventListener("mouseleave", onLeave);
     };
   }, [density]);
 

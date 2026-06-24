@@ -621,15 +621,19 @@ function Game({
       {/* End-the-run control sits just left of the settings gear; only while playing. */}
       {running && <EndGameButton onEnd={() => setRunning(false)} />}
 
-      {/* In-game help: a quiet "?" in the corner that opens Time Attack's own tour. Opening
-          it pauses the clock (see the timer effect), so reading never costs time. */}
+      {/* In-game help: a labelled "? How to play" pill in the corner that opens Time Attack's
+          own tour. Accent-tinted + labelled so it's easy to find (#70 — the old bare "?" was
+          too quiet). Opening it pauses the clock (see the timer effect), so reading is free. */}
       <button
         type="button"
         aria-label="How to play"
         onClick={() => setHelpOpen(true)}
-        className="absolute bottom-4 left-4 z-30 grid h-9 w-9 place-items-center rounded-full border border-clade-ink/15 bg-white/70 font-hand text-xl text-clade-ink/70 backdrop-blur transition hover:border-clade-accent hover:text-clade-ink"
+        className="absolute bottom-4 left-4 z-30 flex items-center gap-2 rounded-full border-2 border-clade-accent/50 bg-white/85 py-1.5 pl-1.5 pr-3.5 font-hand text-lg text-clade-accent shadow-sm backdrop-blur transition hover:border-clade-accent hover:bg-clade-accent hover:text-clade-paper"
       >
-        ?
+        <span className="grid h-6 w-6 place-items-center rounded-full border-2 border-current font-bold leading-none">
+          ?
+        </span>
+        How to play
       </button>
       <OnboardingTour
         open={helpOpen}

@@ -48,7 +48,7 @@ export const GAME_STEPS: TourStep[] = [
   {
     variant: "welcome",
     title: "Time Attack",
-    body: "Name as many living things as you can before the clock runs out — the rarer the branch, the better. The timer only starts on your first placement, so take a beat.",
+    body: "Name as many living things as you can before the clock runs out — every species and clade you place is worth a point. The timer only starts on your first placement, so take a beat.",
   },
   {
     variant: "place",

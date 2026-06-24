@@ -4,7 +4,6 @@ Drives the pipeline directly (bypasses Django settings, which need corsheaders).
 Harvests names for ALL nodes — species AND every clade node — exactly like the
 animalist reference, so clade names ("anteater", "bear", "sloth") resolve.
 """
-import json
 import time
 from pathlib import Path
 

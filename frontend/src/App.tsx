@@ -1,11 +1,13 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 
 import { DisplayNamePrompt } from "./components/DisplayNamePrompt";
+import { PendingRunFlusher } from "./components/PendingRunFlusher";
 import { Account } from "./pages/Account";
 import { Hub } from "./pages/Hub";
 import { Leaderboard } from "./pages/Leaderboard";
 import { Login } from "./pages/Login";
 import { Marathon } from "./pages/Marathon";
+import { Result } from "./pages/Result";
 
 // Classic mode is deferred — v1 ships Marathon only (Classic.tsx kept for later).
 export function App() {
@@ -17,8 +19,10 @@ export function App() {
         <Route path="/account" element={<Account />} />
         <Route path="/leaderboard" element={<Leaderboard />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/r/:id" element={<Result />} />
       </Routes>
       <DisplayNamePrompt />
+      <PendingRunFlusher />
     </BrowserRouter>
   );
 }

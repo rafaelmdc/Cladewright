@@ -126,6 +126,35 @@ class AssetVersionView(APIView):
         return Response({"version": asset.get("version"), "schema": asset.get("schema")})
 
 
+class ResolveNameView(APIView):
+    """GET /api/gamedata/resolve-name/?scope=&q= -> the EXACT alias match for ``q`` in a
+    scope's current asset: ``{key, kind, sci, common}`` or 404. Blob clients call this as a
+    FALLBACK when a typed name isn't in their baked index — e.g. an admin-added manual alias
+    that hasn't been baked into a rebuild yet (the target tip is already in the client's blob,
+    so it only needs the key). Exact match only; no fuzzy search."""
+
+    permission_classes: list = []
+
+    def get(self, request: Request) -> Response:
+        q = _normalize(request.query_params.get("q", ""))
+        if not q:
+            return Response({"error": "empty query"}, status=400)
+        av = _current(request.query_params.get("scope") or None)
+        if av is None:
+            return Response({"error": "no current asset"}, status=404)
+        row = (
+            Alias.objects.filter(asset=av, norm=q)
+            .values("target_key", "target_kind", "sci", "common")
+            .first()
+        )
+        if not row:
+            return Response({"error": "no match"}, status=404)
+        return Response(
+            {"key": row["target_key"], "kind": row["target_kind"],
+             "sci": row["sci"], "common": row["common"]}
+        )
+
+
 class SearchView(APIView):
     """GET /api/gamedata/search/?q=&scope=&limit= -> autocomplete candidates.
 

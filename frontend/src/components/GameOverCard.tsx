@@ -8,7 +8,17 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { fetchMe, type Me } from "../lib/auth";
-import { fetchLeaderboard, submitRun, type Difficulty, type LeaderEntry, type SubmitOutcome } from "../lib/scores";
+import {
+  fetchLeaderboard,
+  stashPendingRun,
+  submitRun,
+  type Difficulty,
+  type LeaderEntry,
+  type SubmitOutcome,
+  type SubmitResult,
+} from "../lib/scores";
+import type { ShareData } from "../lib/share";
+import { ShareResult } from "./ShareResult";
 
 export function GameOverCard({
   mode = "marathon_free",
@@ -21,6 +31,9 @@ export function GameOverCard({
   ranked,
   allowReplay = true,
   transcript,
+  timings,
+  runToken,
+  extantOnly,
   onPlayAgain,
 }: {
   mode?: string;
@@ -33,11 +46,19 @@ export function GameOverCard({
   ranked: boolean;
   allowReplay?: boolean;
   transcript: string[];
+  /** Combo timings + signed session token + living-only flag (#77) — threaded through so the
+   *  server can re-derive the combo/clade score and verify the run. */
+  timings?: number[];
+  runToken?: string | null;
+  extantOnly?: boolean;
   onPlayAgain: () => void;
 }) {
   const [me, setMe] = useState<Me | null>(null);
   const [submit, setSubmit] = useState<SubmitOutcome | null>(null);
   const [board, setBoard] = useState<LeaderEntry[]>([]);
+  // Self-contained share payload, built from this run's own data once it's saved — drives the
+  // share/save-image controls. No server round-trip: the result lives in the share URL (#74).
+  const [shared, setShared] = useState<ShareData | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -50,9 +71,20 @@ export function GameOverCard({
       if (who.authenticated && transcript.length > 0) {
         const outcome = await submitRun({
           mode, scope, difficulty, asset_version: assetVersion, transcript, ranked,
+          timings, run_token: runToken, extant_only: extantOnly,
         });
         if (!live) return;
         setSubmit(outcome);
+        if (outcome.ok) {
+          setShared({
+            user: who.display_name || who.username || "a naturalist",
+            score: outcome.result.score, // canonical server score
+            animals: new Set(transcript.filter((id) => id.startsWith("tip:"))).size,
+            scope: scopeLabel,
+            difficulty,
+            rank: outcome.result.rank,
+          });
+        }
       }
       const result = await fetchLeaderboard(mode, scope, difficulty);
       if (live) setBoard(result.entries);
@@ -71,9 +103,28 @@ export function GameOverCard({
         {count} placed · {score} points · {scopeLabel}
       </p>
 
-      <div className="mt-4 w-full">{renderSubmitStatus(me, submit, ranked)}</div>
+      <div className="mt-4 w-full">
+        {renderSubmitStatus(me, submit, ranked, () =>
+          // Stash the run so it survives the OAuth redirect and auto-saves on return (#78).
+          stashPendingRun({
+            payload: {
+              mode, scope, difficulty, asset_version: assetVersion, transcript, ranked,
+              timings, run_token: runToken, extant_only: extantOnly,
+            },
+            count,
+            score,
+            scopeLabel,
+          }),
+        )}
+      </div>
 
       <Leaderboard board={board} label={`${scopeLabel} · ${difficulty}`} me={me} />
+
+      {shared && (
+        <div className="mt-4 w-full">
+          <ShareResult result={shared} />
+        </div>
+      )}
 
       <div className="mt-6 flex items-center gap-3">
         {allowReplay && (
@@ -96,13 +147,19 @@ export function GameOverCard({
   );
 }
 
-function renderSubmitStatus(me: Me | null, submit: SubmitOutcome | null, ranked: boolean) {
+function renderSubmitStatus(
+  me: Me | null,
+  submit: SubmitOutcome | null,
+  ranked: boolean,
+  onSignIn: () => void,
+) {
   if (me === null) return <p className="font-mono text-xs text-clade-ink/40">Checking…</p>;
 
   if (!me.authenticated) {
     return (
       <Link
         to="/login"
+        onClick={onSignIn}
         className="inline-flex items-center gap-2 rounded-full border-2 border-clade-ink/80 bg-clade-paper px-4 py-1.5 font-hand text-xl text-clade-ink transition hover:border-clade-accent"
       >
         Sign in to save your score
@@ -115,12 +172,14 @@ function renderSubmitStatus(me: Me | null, submit: SubmitOutcome | null, ranked:
       return (
         <p className="font-hand text-2xl text-clade-accent">
           Saved — rank #{submit.result.rank}
+          {scoreBreakdown(submit.result)}
         </p>
       );
     }
     return (
       <p className="font-hand text-xl text-clade-ink/70">
         Saved to your stats
+        {scoreBreakdown(submit.result)}
         <span className="mt-0.5 block font-mono text-[11px] text-clade-ink/45">
           Custom settings — not ranked on the leaderboard.
         </span>
@@ -131,6 +190,23 @@ function renderSubmitStatus(me: Me | null, submit: SubmitOutcome | null, ranked:
     return <p className="font-mono text-xs text-clade-ink/50">Couldn't save this run.</p>;
   }
   return <p className="font-mono text-xs text-clade-ink/40">Saving…</p>;
+}
+
+/** A subtle "base +combo +clade" line under the saved message, shown only when a bonus was
+ *  earned — so the combo/clade scoring (#77) is visible without cluttering a plain run. */
+function scoreBreakdown(r: SubmitResult) {
+  const combo = r.combo_bonus ?? 0;
+  const clade = r.clade_bonus ?? 0;
+  if (combo <= 0 && clade <= 0) return null;
+  return (
+    <span className="mt-0.5 block font-mono text-[11px] font-normal text-clade-ink/45">
+      {r.base ?? r.score} base
+      {combo > 0 ? ` · +${combo} combo` : ""}
+      {clade > 0 ? ` · +${clade} clade` : ""}
+      {" = "}
+      {r.score}
+    </span>
+  );
 }
 
 function Leaderboard({ board, label, me }: { board: LeaderEntry[]; label: string; me: Me | null }) {

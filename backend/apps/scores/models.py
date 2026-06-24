@@ -81,6 +81,16 @@ class GameDefaults(models.Model):
     combo_time_multiplier = models.FloatField(
         default=1.5, help_text="Bonus seconds per combo step (× the combo level)."
     )
+    combo_score_multiplier = models.FloatField(
+        default=1.0, help_text="Bonus points per combo step (× the combo level); capped per placement."
+    )
+    clade_score_multiplier = models.FloatField(
+        default=2.0,
+        help_text="Clade-completion bonus strength: points ≈ this × √(clade size). 0 disables.",
+    )
+    clade_min_size = models.IntegerField(
+        default=3, help_text="Smallest clade size that earns a completion bonus."
+    )
 
     class Meta:
         verbose_name = "Game defaults"
@@ -113,6 +123,9 @@ class GameDefaults(models.Model):
             "timePerRefinement": self.time_per_refinement,
             "comboWindowSeconds": self.combo_window_seconds,
             "comboTimeMultiplier": self.combo_time_multiplier,
+            "comboScoreMultiplier": self.combo_score_multiplier,
+            "cladeScoreMultiplier": self.clade_score_multiplier,
+            "cladeMinSize": self.clade_min_size,
         }
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+import time
 
 from django.db import transaction
 from rest_framework.permissions import IsAuthenticated
@@ -32,8 +33,17 @@ from .models import (
     Streak,
 )
 from .scoring import rescore
+from .sessions import issue_run_token, verify_run_token
 
 LEADERBOARD_LIMIT = 50
+
+# Anti-cheat bound on a ranked run: the most placements a human could plausibly make per
+# second of real wall-clock. A fast typist sustains ~2/s; 5 leaves generous headroom while
+# still rejecting an "instant" dump-the-whole-tree submission. See #77 / sessions.py.
+MAX_PLACEMENTS_PER_SECOND = 5
+# Slack (seconds) added to the measured elapsed when checking timings/placement rate, to
+# absorb clock skew and the request's own latency.
+RATE_SLACK_SECONDS = 3
 
 
 def _canonical_scope(scope: str) -> str:
@@ -187,6 +197,55 @@ def _asset_for(scope: str, version: int | None) -> AssetVersion | None:
     return qs.filter(is_current=True).first()
 
 
+class StartRunView(APIView):
+    """POST /api/scores/runs/start/ -> a signed run-session token (see sessions.py). The
+    client fetches one when a run begins and returns it at submit; it anchors the run's
+    timings to a real server start time so the combo score can't be forged (#77). Auth
+    required (a token is bound to the user)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request) -> Response:
+        return Response({"token": issue_run_token(request.user.id)}, status=201)
+
+
+def _combo_bonus_args(timings, transcript, token_payload, defaults) -> dict:
+    """Decide whether a run's client-supplied ``timings`` are trustworthy enough to score
+    combos from, and return the kwargs for ``rescore`` (combo params only when they are).
+
+    Trust requires a valid signed run session AND timings that are internally consistent
+    (right length, monotonic, non-negative) AND bounded by the real wall-clock elapsed since
+    the session started — both the latest timing and the overall placement rate. Anything
+    off → no combo bonus (base placements still score). Returns ``{}`` (no combo) or the
+    combo kwargs; ranking plausibility is judged separately by the caller."""
+    if token_payload is None or not isinstance(timings, list) or len(timings) != len(transcript):
+        return {}
+    if any(not isinstance(t, (int, float)) for t in timings):
+        return {}
+    # Monotonic non-decreasing, starting at/after 0.
+    if timings and (timings[0] < 0 or any(b < a for a, b in zip(timings, timings[1:]))):
+        return {}
+    elapsed = time.time() - token_payload["t"] + RATE_SLACK_SECONDS
+    # The last placement can't be after the run's real elapsed time.
+    if timings and timings[-1] / 1000 > elapsed:
+        return {}
+    return {
+        "timings": timings,
+        "combo_window_seconds": defaults.combo_window_seconds,
+        "combo_multiplier": defaults.combo_score_multiplier,
+    }
+
+
+def _rate_plausible(token_payload, placements: int) -> bool:
+    """A ranked run must not claim more placements than a human could make in the real
+    elapsed wall-clock (catches an instant dump-the-whole-tree submission). Without a valid
+    session we can't measure elapsed, so the run can't be ranked."""
+    if token_payload is None:
+        return False
+    elapsed = time.time() - token_payload["t"] + RATE_SLACK_SECONDS
+    return placements <= elapsed * MAX_PLACEMENTS_PER_SECOND
+
+
 class SubmitRunView(APIView):
     """POST /api/scores/runs/ -> re-score a transcript, persist the run, return the
     canonical score + the player's rank. Auth required."""
@@ -230,6 +289,14 @@ class SubmitRunView(APIView):
         # records + counts toward stats, but never appears on the board.
         ranked = bool(data.get("ranked", True))
 
+        # Signed run session (#77): verifies this run was started via the server and gives a
+        # trusted start time. Combos only score from timings when the session is valid AND
+        # the timings are consistent + within the real elapsed wall-clock; a ranked run also
+        # has to pass the placement-rate sanity check, else it drops to unranked (still
+        # recorded to stats, just off the board).
+        token_payload = verify_run_token(data.get("run_token"), request.user.id)
+        timings = data.get("timings")
+
         # A mix re-scores against the UNION of each component scope's current build; the
         # shared backbone node ids are deterministic across scopes, so the merged lineage
         # maps reproduce the same induced tree the client merged client-side. A single
@@ -254,7 +321,36 @@ class SubmitRunView(APIView):
                 tip_lineages[r["key"]] = r["lineage"]
             for r in TaxonNode.objects.filter(asset=av, key__in=ids).values("key", "lineage"):
                 node_lineages[r["key"]] = r["lineage"]
-        result = rescore(ids, tip_lineages, node_lineages)
+
+        defaults = GameDefaults.load()
+        combo_kwargs = _combo_bonus_args(timings, ids, token_payload, defaults)
+
+        # Clade-completion bonus: pull the species denominator for every ANCESTOR clade of a
+        # placed tip (not just the named ids), so the server can detect a clade going fully
+        # named. A ranked run is default settings → use the admin's extant_only; a custom run
+        # may differ, so honour its claim (it's off-board anyway, this only matches the HUD).
+        extant_only = defaults.extant_only if ranked else bool(data.get("extant_only", defaults.extant_only))
+        ancestor_ids = {a for lin in tip_lineages.values() for a in lin}
+        node_pool_counts: dict[str, int] = {}
+        if ancestor_ids and defaults.clade_score_multiplier > 0:
+            count_field = "pool_count_extant" if extant_only else "pool_count"
+            for av in assets:
+                for r in TaxonNode.objects.filter(asset=av, key__in=ancestor_ids).values("key", count_field):
+                    # Across a mix, a shared backbone node's denominator is the union pool;
+                    # sum the components (disjoint species sets) so completion needs them all.
+                    node_pool_counts[r["key"]] = node_pool_counts.get(r["key"], 0) + r[count_field]
+        result = rescore(
+            ids, tip_lineages, node_lineages,
+            node_pool_counts=node_pool_counts,
+            clade_multiplier=defaults.clade_score_multiplier,
+            clade_min_size=defaults.clade_min_size,
+            **combo_kwargs,
+        )
+
+        # A ranked run must come from a valid session at a humanly-plausible pace; otherwise
+        # it still records (stats) but doesn't reach the leaderboard.
+        if ranked and not _rate_plausible(token_payload, result.base):
+            ranked = False
 
         is_daily = mode in (GameMode.MARATHON_DAILY, GameMode.CLASSIC)
         puzzle_date = dt.date.today() if is_daily else None

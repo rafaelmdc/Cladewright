@@ -9,4 +9,6 @@ urlpatterns = [
     # Huge-scope incremental serving (all-Animalia): autocomplete + lazy lineage fetch.
     path("search/", views.SearchView.as_view(), name="gamedata-search"),
     path("resolve/", views.ResolveView.as_view(), name="gamedata-resolve"),
+    # Exact alias resolution — the blob client's fallback for admin-added manual aliases.
+    path("resolve-name/", views.ResolveNameView.as_view(), name="gamedata-resolve-name"),
 ]

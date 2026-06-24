@@ -33,6 +33,13 @@ export interface GameSettings {
   comboWindowSeconds: number;
   /** Combo reward: bonus seconds added per combo step (× the combo level). */
   comboTimeMultiplier: number;
+  /** Combo reward: bonus POINTS added per combo step (× the combo level); capped per
+   *  placement. The server re-derives this from the run's timings, so it can't be forged. */
+  comboScoreMultiplier: number;
+  /** Clade-completion reward strength: bonus points ≈ this × √(clade size). 0 disables. */
+  cladeScoreMultiplier: number;
+  /** Smallest clade size that earns a completion bonus. */
+  cladeMinSize: number;
 }
 
 /** Hardcoded fallbacks — used until the admin-configured defaults load (and if they can't). */
@@ -51,6 +58,9 @@ export const DEFAULT_SETTINGS: GameSettings = {
   timePerRefinement: 5,
   comboWindowSeconds: 6,
   comboTimeMultiplier: 1.5,
+  comboScoreMultiplier: 1.0,
+  cladeScoreMultiplier: 2.0,
+  cladeMinSize: 3,
 };
 
 // A run only counts for the leaderboard when its score-affecting modifiers are at their
@@ -66,6 +76,9 @@ const RANKED_FIELDS: (keyof GameSettings)[] = [
   "extantOnly",
   "comboWindowSeconds",
   "comboTimeMultiplier",
+  "comboScoreMultiplier",
+  "cladeScoreMultiplier",
+  "cladeMinSize",
 ];
 
 // The effective defaults: the hardcoded fallbacks, overlaid by whatever the admin configured

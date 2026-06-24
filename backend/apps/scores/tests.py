@@ -40,6 +40,63 @@ class RescoreTests(TestCase):
         r = rescore(["tip:1", "tip:bogus", "nope"], self.tips, self.nodes)
         self.assertEqual((r.score, r.unknown), (1, 2))
 
+    def test_combo_bonus_from_timings(self):
+        # Three placements within the window → combo 1,2,3 → bonus 0+1+2 on top of base 3.
+        r = rescore(
+            ["tip:1", "tip:2", "tip:3"], self.tips, self.nodes,
+            timings=[0, 1000, 2000], combo_window_seconds=6, combo_multiplier=1.0,
+        )
+        self.assertEqual((r.base, r.combo_bonus, r.score), (3, 3, 6))
+
+    def test_combo_breaks_outside_window(self):
+        # A gap longer than the window resets the combo, so no placement reaches ×2.
+        r = rescore(
+            ["tip:1", "tip:2"], self.tips, self.nodes,
+            timings=[0, 99000], combo_window_seconds=6, combo_multiplier=1.0,
+        )
+        self.assertEqual((r.combo_bonus, r.score), (0, 2))
+
+    def test_combo_ignored_without_timings(self):
+        r = rescore(["tip:1", "tip:2"], self.tips, self.nodes, combo_multiplier=1.0)
+        self.assertEqual((r.combo_bonus, r.score), (0, 2))
+
+    def test_clade_completion_bonus(self):
+        # Naming both species under gen:G (size 2) completes it → sqrt-scaled bonus once.
+        pools = {"gen:G": 2, "gen:H": 1, "kng:A": 3}
+        r = rescore(
+            ["tip:1", "tip:2"], self.tips, self.nodes,
+            node_pool_counts=pools, clade_multiplier=2.0, clade_min_size=2,
+        )
+        self.assertEqual((r.base, r.clade_bonus, r.score), (2, round(2 * 2**0.5), 5))
+
+    def test_clade_bonus_respects_min_size(self):
+        # gen:H has one species; with min size 2 a single-species clade earns nothing.
+        pools = {"gen:H": 1, "kng:A": 3}
+        r = rescore(
+            ["tip:3"], self.tips, self.nodes,
+            node_pool_counts=pools, clade_multiplier=2.0, clade_min_size=2,
+        )
+        self.assertEqual((r.clade_bonus, r.score), (0, 1))
+
+
+class RunSessionTests(TestCase):
+    """The signed run token (anti-forge plumbing for combo scoring)."""
+
+    def test_roundtrip_valid(self):
+        from .sessions import issue_run_token, verify_run_token
+        tok = issue_run_token(42)
+        payload = verify_run_token(tok, 42)
+        self.assertEqual(payload["u"], 42)
+
+    def test_rejects_other_user(self):
+        from .sessions import issue_run_token, verify_run_token
+        self.assertIsNone(verify_run_token(issue_run_token(1), 2))
+
+    def test_rejects_tampered_and_missing(self):
+        from .sessions import issue_run_token, verify_run_token
+        self.assertIsNone(verify_run_token(None, 1))
+        self.assertIsNone(verify_run_token(issue_run_token(1) + "x", 1))
+
 
 class SubmitAndLeaderboardTests(TestCase):
     def setUp(self):
@@ -63,6 +120,33 @@ class SubmitAndLeaderboardTests(TestCase):
         res = self.client.post("/api/scores/runs/", {"mode": "marathon_free", "scope": "test",
                                                      "transcript": ["tip:1"]}, format="json")
         self.assertIn(res.status_code, (401, 403))
+
+    def test_ranked_run_without_session_is_downgraded(self):
+        # A ranked submit with no signed session token still records (stats) but is dropped
+        # to unranked, so a hand-crafted POST can't reach the board (#77).
+        user = User.objects.create_user("alice", password="x")
+        self.client.force_authenticate(user)
+        res = self.client.post(
+            "/api/scores/runs/",
+            {"mode": "marathon_free", "scope": "test", "transcript": ["tip:1", "tip:2"]},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201)
+        self.assertFalse(res.data["ranked"])
+        self.assertFalse(Run.objects.get(user=user).ranked)
+
+    def test_rate_plausibility_bound(self):
+        # The placement-rate guard rejects more placements than humanly possible in the real
+        # elapsed wall-clock (a dump-the-whole-tree submit), and accepts a normal pace. A
+        # missing session can't be measured, so it's never plausible.
+        import time as _time
+
+        from .views import MAX_PLACEMENTS_PER_SECOND, RATE_SLACK_SECONDS, _rate_plausible
+        fresh = {"u": 1, "t": int(_time.time())}  # started "now": only the slack has elapsed
+        budget = RATE_SLACK_SECONDS * MAX_PLACEMENTS_PER_SECOND
+        self.assertTrue(_rate_plausible(fresh, budget))
+        self.assertFalse(_rate_plausible(fresh, budget + 50))
+        self.assertFalse(_rate_plausible(None, 1))
 
     def test_submit_rescore_ignores_posted_score(self):
         user = User.objects.create_user("alice", password="x")
@@ -248,14 +332,16 @@ class SubmitAndLeaderboardTests(TestCase):
         TaxonTip.objects.create(asset=av2, key="tip:9", sci="tip:9", common="tip:9",
                                 parent_key="gen:Z", lineage=["kng:A", "gen:Z"])
 
+        from .sessions import issue_run_token
         user = User.objects.create_user("alice", password="x")
         self.client.force_authenticate(user)
         # Mix posted in non-canonical order; the run should re-score across BOTH assets
-        # (tip:1 from "test", tip:9 from "test2") and store the canonical scope.
+        # (tip:1 from "test", tip:9 from "test2") and store the canonical scope. A ranked run
+        # needs a valid signed session token (#77), else it drops off the board.
         res = self.client.post(
             "/api/scores/runs/",
             {"mode": "marathon_free", "scope": "test2+test",
-             "transcript": ["tip:1", "tip:9"]},
+             "transcript": ["tip:1", "tip:9"], "run_token": issue_run_token(user.id)},
             format="json",
         )
         self.assertEqual(res.status_code, 201)

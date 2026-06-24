@@ -122,8 +122,10 @@ class OfflineProvider:
         return despace(taxon.vernacular) if taxon.vernacular else None
 
     def names(self, taxon: Taxon) -> list[str]:
-        """All name strings for the alias index (offline: just the CoL vernacular)."""
-        return [despace(taxon.vernacular)] if taxon.vernacular else []
+        """All name strings for the alias index (offline: CoL vernacular + subspecies names)."""
+        out = [taxon.vernacular] if taxon.vernacular else []
+        out.extend(taxon.extra_aliases)
+        return [despace(n) for n in out]
 
 
 class BraidworksProvider:
@@ -250,11 +252,12 @@ class BraidworksProvider:
         return self.display_for(taxon.scientific_name, taxon.vernacular)
 
     def names(self, taxon: Taxon) -> list[str]:
-        """Every harvested name + CoL vernacular, despaced — the colloquial aliases
-        that make resolution feel right."""
+        """Every harvested name + CoL vernacular + subspecies vernaculars, despaced — the
+        colloquial aliases that make resolution feel right."""
         names = list(self._cache.get(taxon.scientific_name, []))
         if taxon.vernacular:
             names.append(taxon.vernacular)
+        names.extend(taxon.extra_aliases)
         return [despace(n) for n in names]
 
 

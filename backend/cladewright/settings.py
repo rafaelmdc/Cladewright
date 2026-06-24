@@ -79,7 +79,7 @@ TEMPLATES = [
 # discrete POSTGRES_* vars for local Postgres. Falls back to sqlite ONLY when nothing is
 # configured, so a fresh clone still boots — but Postgres is the supported path and the
 # pg_trgm autocomplete index (huge-scope search) only exists there.
-import dj_database_url
+import dj_database_url  # noqa: E402  (deliberately late — DB config is its own section)
 
 if os.environ.get("DATABASE_URL"):
     DATABASES = {

@@ -45,6 +45,54 @@ export async function submitRun(payload: {
   }
 }
 
+// ── Pending run across the sign-in redirect ──────────────────────────────────────
+// Signing in is a top-level OAuth redirect, so the in-memory run is lost. When a
+// logged-out player taps "sign in to save", we stash the run here first; after they
+// land back authenticated, PendingRunFlusher submits it. See GitHub issue #78.
+
+const PENDING_KEY = "cw.pendingRun";
+// Drop a stash older than this — a run is only worth auto-saving right after the redirect,
+// not days later from a forgotten tab. Generous enough to cover the OAuth round-trip.
+const PENDING_TTL_MS = 60 * 60 * 1000; // 1h
+
+export interface PendingRun {
+  payload: Parameters<typeof submitRun>[0];
+  // For the confirmation toast, so we don't re-derive labels post-redirect.
+  count: number;
+  score: number;
+  scopeLabel: string;
+  at: number; // epoch ms when stashed
+}
+
+/** Persist a just-finished run before the sign-in redirect so it survives the round-trip. */
+export function stashPendingRun(run: Omit<PendingRun, "at">): void {
+  try {
+    localStorage.setItem(PENDING_KEY, JSON.stringify({ ...run, at: Date.now() }));
+  } catch {
+    /* storage unavailable — the run just won't auto-save */
+  }
+}
+
+/** Read and CLEAR the stashed run, or null if absent/expired/corrupt. */
+export function takePendingRun(): PendingRun | null {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(PENDING_KEY);
+    if (raw) localStorage.removeItem(PENDING_KEY);
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  try {
+    const run = JSON.parse(raw) as PendingRun;
+    if (!run?.payload?.transcript?.length) return null;
+    if (Date.now() - (run.at ?? 0) > PENDING_TTL_MS) return null;
+    return run;
+  } catch {
+    return null;
+  }
+}
+
 export interface LeaderEntry {
   rank: number;
   user: string;

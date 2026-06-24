@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 
 import { DisplayNamePrompt } from "./components/DisplayNamePrompt";
+import { PendingRunFlusher } from "./components/PendingRunFlusher";
 import { Account } from "./pages/Account";
 import { Hub } from "./pages/Hub";
 import { Leaderboard } from "./pages/Leaderboard";
@@ -19,6 +20,7 @@ export function App() {
         <Route path="/login" element={<Login />} />
       </Routes>
       <DisplayNamePrompt />
+      <PendingRunFlusher />
     </BrowserRouter>
   );
 }

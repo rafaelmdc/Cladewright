@@ -8,7 +8,14 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { fetchMe, type Me } from "../lib/auth";
-import { fetchLeaderboard, submitRun, type Difficulty, type LeaderEntry, type SubmitOutcome } from "../lib/scores";
+import {
+  fetchLeaderboard,
+  stashPendingRun,
+  submitRun,
+  type Difficulty,
+  type LeaderEntry,
+  type SubmitOutcome,
+} from "../lib/scores";
 
 export function GameOverCard({
   mode = "marathon_free",
@@ -71,7 +78,17 @@ export function GameOverCard({
         {count} placed · {score} points · {scopeLabel}
       </p>
 
-      <div className="mt-4 w-full">{renderSubmitStatus(me, submit, ranked)}</div>
+      <div className="mt-4 w-full">
+        {renderSubmitStatus(me, submit, ranked, () =>
+          // Stash the run so it survives the OAuth redirect and auto-saves on return (#78).
+          stashPendingRun({
+            payload: { mode, scope, difficulty, asset_version: assetVersion, transcript, ranked },
+            count,
+            score,
+            scopeLabel,
+          }),
+        )}
+      </div>
 
       <Leaderboard board={board} label={`${scopeLabel} · ${difficulty}`} me={me} />
 
@@ -96,13 +113,19 @@ export function GameOverCard({
   );
 }
 
-function renderSubmitStatus(me: Me | null, submit: SubmitOutcome | null, ranked: boolean) {
+function renderSubmitStatus(
+  me: Me | null,
+  submit: SubmitOutcome | null,
+  ranked: boolean,
+  onSignIn: () => void,
+) {
   if (me === null) return <p className="font-mono text-xs text-clade-ink/40">Checking…</p>;
 
   if (!me.authenticated) {
     return (
       <Link
         to="/login"
+        onClick={onSignIn}
         className="inline-flex items-center gap-2 rounded-full border-2 border-clade-ink/80 bg-clade-paper px-4 py-1.5 font-hand text-xl text-clade-ink transition hover:border-clade-accent"
       >
         Sign in to save your score

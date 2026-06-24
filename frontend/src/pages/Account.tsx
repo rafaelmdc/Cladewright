@@ -510,6 +510,15 @@ function SelectionSummary({
   vmax: number;
   single: boolean;
 }) {
+  // Hooks must run before any early return — keep them at the top (react-hooks/rules-of-hooks).
+  // With many days the bars overflow the card — make the strip scroll, pinned to the most
+  // recent (right) end on selection change.
+  const barsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = barsRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [items.length]);
+
   if (items.length === 0) return null;
   const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   const showLabels = items.length <= 16;
@@ -524,14 +533,6 @@ function SelectionSummary({
     ? Math.round(active.reduce((s, it) => s + it.v.best, 0) / active.length)
     : 0;
   const busiest = items.reduce((m, it) => Math.max(m, it.v.plays), 0);
-
-  // With many days the bars overflow the card — make the strip scroll, pinned to the most
-  // recent (right) end on selection change.
-  const barsRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = barsRef.current;
-    if (el) el.scrollLeft = el.scrollWidth;
-  }, [items.length]);
 
   return (
     <div className="mt-4 rounded-xl border border-clade-ink/10 bg-clade-bg/40 p-4">

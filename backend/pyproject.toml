@@ -33,6 +33,10 @@ dev = [
 line-length = 100
 target-version = "py312"
 
+[tool.ruff.lint.per-file-ignores]
+# One-off data-exploration scripts intentionally interleave imports with top-level code.
+"scripts/*" = ["E402"]
+
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "cladewright.settings"
 python_files = "test_*.py"

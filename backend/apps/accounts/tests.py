@@ -13,7 +13,6 @@ from apps.scores.models import GameMode, Run
 from .models import (
     Profile,
     _default_display_name,
-    get_or_create_profile,
     validate_display_name,
 )
 

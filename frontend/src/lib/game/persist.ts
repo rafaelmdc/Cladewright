@@ -18,6 +18,12 @@ export interface SavedRun {
   assetVersion: number;
   /** Ordered placement ids — replayed to rebuild the tree + remaining tracker. */
   transcript: string[];
+  /** Per-placement timestamps (ms since `runStartedAt`), parallel to `transcript`, the
+   *  timeline base, and the signed run-session token — persisted so a refresh keeps the run's
+   *  combo timings monotonic and the run rankable (#77). */
+  timings?: number[];
+  runStartedAt?: number;
+  runToken?: string | null;
   score: number;
   count: number;
   /** Seconds left at savedAt; restore deducts the wall-clock time the tab was away, so a

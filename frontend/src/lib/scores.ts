@@ -8,6 +8,10 @@ export type Difficulty = "common" | "scientific";
 
 export interface SubmitResult {
   score: number;
+  /** Base placements (pre-bonus), plus the two bonus components that make up `score`. */
+  base?: number;
+  combo_bonus?: number;
+  clade_bonus?: number;
   new: number;
   refinements: number;
   duplicates: number;
@@ -22,6 +26,23 @@ export type SubmitOutcome =
   | { ok: true; result: SubmitResult }
   | { ok: false; reason: "auth" | "error" };
 
+/** Open a signed run session (#77). The token anchors the run's combo timings to a real
+ *  server start time so the combo/clade score can't be forged; returned to the server at
+ *  submit. Null if the player isn't signed in or the call fails — the run just won't rank. */
+export async function startRun(): Promise<string | null> {
+  try {
+    const res = await fetch("/api/scores/runs/start/", {
+      method: "POST",
+      credentials: "include",
+      headers: { "X-CSRFToken": csrfToken() },
+    });
+    if (!res.ok) return null;
+    return ((await res.json()) as { token?: string }).token ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function submitRun(payload: {
   mode: string;
   scope: string;
@@ -29,6 +50,14 @@ export async function submitRun(payload: {
   asset_version: number;
   transcript: string[];
   ranked: boolean;
+  /** Per-placement timestamps (ms since the first placement), parallel to `transcript` —
+   *  the server re-derives the combo bonus from these. */
+  timings?: number[];
+  /** Signed run-session token from `startRun`. */
+  run_token?: string | null;
+  /** Whether the run was played living-only — picks the clade-completion denominator for an
+   *  unranked custom run (ranked runs always use the server default). */
+  extant_only?: boolean;
 }): Promise<SubmitOutcome> {
   try {
     const res = await fetch("/api/scores/runs/", {

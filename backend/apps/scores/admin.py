@@ -30,7 +30,12 @@ class GameDefaultsAdmin(admin.ModelAdmin):
             "fields": ("start_seconds", "infinite_time", "time_per_new", "novelty_bonus",
                        "time_per_refinement", "extant_only"),
         }),
-        ("Combos", {"fields": ("combo_window_seconds", "combo_time_multiplier")}),
+        ("Combos", {
+            "fields": ("combo_window_seconds", "combo_time_multiplier", "combo_score_multiplier"),
+        }),
+        ("Clade-completion bonus", {
+            "fields": ("clade_score_multiplier", "clade_min_size"),
+        }),
     )
 
     def has_add_permission(self, request) -> bool:

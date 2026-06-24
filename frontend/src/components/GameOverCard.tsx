@@ -15,6 +15,7 @@ import {
   type Difficulty,
   type LeaderEntry,
   type SubmitOutcome,
+  type SubmitResult,
 } from "../lib/scores";
 
 export function GameOverCard({
@@ -28,6 +29,9 @@ export function GameOverCard({
   ranked,
   allowReplay = true,
   transcript,
+  timings,
+  runToken,
+  extantOnly,
   onPlayAgain,
 }: {
   mode?: string;
@@ -40,6 +44,11 @@ export function GameOverCard({
   ranked: boolean;
   allowReplay?: boolean;
   transcript: string[];
+  /** Combo timings + signed session token + living-only flag (#77) — threaded through so the
+   *  server can re-derive the combo/clade score and verify the run. */
+  timings?: number[];
+  runToken?: string | null;
+  extantOnly?: boolean;
   onPlayAgain: () => void;
 }) {
   const [me, setMe] = useState<Me | null>(null);
@@ -57,6 +66,7 @@ export function GameOverCard({
       if (who.authenticated && transcript.length > 0) {
         const outcome = await submitRun({
           mode, scope, difficulty, asset_version: assetVersion, transcript, ranked,
+          timings, run_token: runToken, extant_only: extantOnly,
         });
         if (!live) return;
         setSubmit(outcome);
@@ -82,7 +92,10 @@ export function GameOverCard({
         {renderSubmitStatus(me, submit, ranked, () =>
           // Stash the run so it survives the OAuth redirect and auto-saves on return (#78).
           stashPendingRun({
-            payload: { mode, scope, difficulty, asset_version: assetVersion, transcript, ranked },
+            payload: {
+              mode, scope, difficulty, asset_version: assetVersion, transcript, ranked,
+              timings, run_token: runToken, extant_only: extantOnly,
+            },
             count,
             score,
             scopeLabel,
@@ -138,12 +151,14 @@ function renderSubmitStatus(
       return (
         <p className="font-hand text-2xl text-clade-accent">
           Saved — rank #{submit.result.rank}
+          {scoreBreakdown(submit.result)}
         </p>
       );
     }
     return (
       <p className="font-hand text-xl text-clade-ink/70">
         Saved to your stats
+        {scoreBreakdown(submit.result)}
         <span className="mt-0.5 block font-mono text-[11px] text-clade-ink/45">
           Custom settings — not ranked on the leaderboard.
         </span>
@@ -154,6 +169,23 @@ function renderSubmitStatus(
     return <p className="font-mono text-xs text-clade-ink/50">Couldn't save this run.</p>;
   }
   return <p className="font-mono text-xs text-clade-ink/40">Saving…</p>;
+}
+
+/** A subtle "base +combo +clade" line under the saved message, shown only when a bonus was
+ *  earned — so the combo/clade scoring (#77) is visible without cluttering a plain run. */
+function scoreBreakdown(r: SubmitResult) {
+  const combo = r.combo_bonus ?? 0;
+  const clade = r.clade_bonus ?? 0;
+  if (combo <= 0 && clade <= 0) return null;
+  return (
+    <span className="mt-0.5 block font-mono text-[11px] font-normal text-clade-ink/45">
+      {r.base ?? r.score} base
+      {combo > 0 ? ` · +${combo} combo` : ""}
+      {clade > 0 ? ` · +${clade} clade` : ""}
+      {" = "}
+      {r.score}
+    </span>
+  );
 }
 
 function Leaderboard({ board, label, me }: { board: LeaderEntry[]; label: string; me: Me | null }) {

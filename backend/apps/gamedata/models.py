@@ -134,6 +134,9 @@ class TaxonNode(models.Model):
     common = models.CharField(max_length=255, null=True, blank=True)
     parent_key = models.CharField(max_length=128, null=True, blank=True)  # parent node id
     pool_count = models.IntegerField(default=0)  # denominator of "N remaining"
+    # Living-only denominator — used to detect clade completion in extant-only runs, so the
+    # server re-scores the completion bonus the same way the client shows it (#77).
+    pool_count_extant = models.IntegerField(default=0)
     depth = models.IntegerField(default=0)  # distance from root
     # Denormalized root→parent ancestor ids, so resolving a placement is a single-row
     # read — never a recursive parent walk at request time.

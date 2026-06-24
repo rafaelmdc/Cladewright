@@ -25,7 +25,7 @@ import type { InternedAsset, Target } from "../lib/asset/types";
 import { fetchDaily, type DailyInfo } from "../lib/daily";
 import { RemainingTracker } from "../lib/game/remaining";
 import { clearRun, loadRun, saveRun, secondsAfterAway } from "../lib/game/persist";
-import type { Difficulty } from "../lib/scores";
+import { startRun, type Difficulty } from "../lib/scores";
 import { resolveTarget } from "../lib/game/resolveTarget";
 import {
   fetchGameDefaults,
@@ -48,22 +48,33 @@ const MAX_FLASHES = 6; // cap the stack so rapid-fire doesn't pile up without bo
 
 const SCOPE_KEY = "cladewright.scope";
 
-// --- Combo / clade-completion tuning (#60). Forgiving by design: a generous keep-alive
-// window, and a wrong/duplicate guess never breaks the streak — only a pause does. Rewards
-// are bonus SECONDS (more time → more placements → a legitimately higher score), never
-// untrusted points. All knobs live here so the feel is one place to dial.
+// --- Combo / clade-completion tuning (#60, #77). Forgiving by design: a generous keep-alive
+// window, and a wrong/duplicate guess never breaks the streak — only a pause does. Combos +
+// clade completions add both bonus SECONDS and bonus POINTS; the points are re-derived
+// server-side from the run's timings (anchored to a signed session), so the HUD score the
+// player sees is exactly what ranks them — never a forgeable client number. All knobs live
+// here (and in GameSettings, admin-tunable) so the feel is one place to dial.
 const CLADE_BANNER_MS = 1800; // how long the "clade complete" toast lingers before fading
-const CLADE_MIN_SIZE = 3; // don't celebrate finishing a 1–2 species "clade"
 const COMBO_BONUS_CAP = 12; // ceiling on a single placement's combo time bonus (seconds)
+const COMBO_SCORE_CAP = 10; // ceiling on a single placement's combo POINT bonus (mirrors server)
 
 /** Bonus seconds for a placement at this combo length, scaled by the tunable multiplier
  *  (0 below ×2; capped). The combo window itself is a setting too. */
 function comboBonusSeconds(combo: number, multiplier: number): number {
   return combo >= 2 ? Math.min(Math.round((combo - 1) * multiplier), COMBO_BONUS_CAP) : 0;
 }
+/** Bonus POINTS for a placement at this combo length (mirrors the server's combo_bonus_points). */
+function comboBonusPoints(combo: number, multiplier: number): number {
+  return combo >= 2 ? Math.min(Math.round((combo - 1) * multiplier), COMBO_SCORE_CAP) : 0;
+}
 /** Bonus seconds for finishing a clade of this size (scales with size, capped). */
 function cladeBonusSeconds(size: number): number {
   return Math.min(4 + Math.floor(size / 4), 15);
+}
+/** Bonus POINTS for completing a clade of this size — sqrt-scaled (mirrors the server's
+ *  clade_bonus_points) so big clades are prestigious but never dominate. */
+function cladeBonusPoints(size: number, multiplier: number): number {
+  return Math.round(multiplier * Math.sqrt(size));
 }
 
 function flashToneClass(tone: FlashTone): string {
@@ -263,6 +274,13 @@ function Game({
   const [rev, setRev] = useState(0);
   // Ordered ids of placements this run — submitted at game-over for server re-scoring.
   const transcriptRef = useRef<string[]>([]);
+  // Per-placement timestamps (ms since the run's client start), parallel to transcriptRef —
+  // the server re-derives the combo bonus from these. Based on Date.now() (not
+  // performance.now, which resets on reload) and anchored to runStartedAtRef so the timeline
+  // stays monotonic across a refresh/restore. runTokenRef holds the signed run session (#77).
+  const timingsRef = useRef<number[]>([]);
+  const runStartedAtRef = useRef<number>(Date.now());
+  const runTokenRef = useRef<string | null>(null);
 
   // The daily is fixed/ranked: default settings, no tuning panel.
   const [settings, setSettings] = useState<GameSettings>(() =>
@@ -380,6 +398,12 @@ function Game({
       if (target.kind === "tip" && p.kind !== "duplicate") tracker.name(target.id);
     }
     transcriptRef.current = [...saved.transcript];
+    // Restore the session timeline + token so a refreshed run keeps its combo timings
+    // monotonic and stays rankable (#77). A restored run keeps its original token; we never
+    // re-issue (a fresh token's start time wouldn't match the past timings).
+    timingsRef.current = saved.timings ?? [];
+    runStartedAtRef.current = saved.runStartedAt ?? Date.now();
+    runTokenRef.current = saved.runToken ?? null;
     const secs = secondsAfterAway(saved);
     setScore(saved.score);
     setCount(saved.count);
@@ -389,6 +413,22 @@ function Game({
     if (saved.tainted) setRankTainted(true); // a restored run keeps its unranked status
     setRev((n) => n + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Open a signed run session for a FRESH run (not a restore — that keeps its saved token).
+  // Anonymous players get null (startRun needs auth); their run still saves to stats via the
+  // post-game sign-in flow (#78), just not ranked. Re-run on play-again via beginSession().
+  function beginSession() {
+    runStartedAtRef.current = Date.now();
+    timingsRef.current = [];
+    runTokenRef.current = null;
+    void startRun().then((tok) => {
+      runTokenRef.current = tok;
+    });
+  }
+  useEffect(() => {
+    if (!restoredRef.current) return; // restore effect runs first (layout) — token kept there
+    if (runTokenRef.current === null && timingsRef.current.length === 0) beginSession();
   }, []);
 
   // Persist after every change while playing; clear the slot the instant the run ends so a
@@ -403,6 +443,9 @@ function Game({
         difficulty,
         assetVersion: asset.raw.version,
         transcript: transcriptRef.current,
+        timings: timingsRef.current,
+        runStartedAt: runStartedAtRef.current,
+        runToken: runTokenRef.current,
         score,
         count,
         seconds,
@@ -439,13 +482,15 @@ function Game({
 
   function rewardFor(p: Placement): { time: number; points: number } {
     if (p.kind === "duplicate") return { time: 0, points: 0 };
+    // Every counted placement (new or refinement) is one base POINT — matching the server's
+    // canonical base (combo/clade bonuses add on top). Novelty still pays in TIME only.
     if (p.kind === "refinement") return { time: settings.timePerRefinement, points: 1 };
     // Novelty: a shallow MRCA (little overlap with the existing tree) opens more
     // backbone → bigger bonus. depth 0 (root-ish) earns the full novelty bonus,
     // tapering to 0 by depth 6.
     const depth = p.mrcaIdx < 0 ? 0 : lineageDepth(asset, p.mrcaIdx);
     const novelty = Math.round(settings.noveltyBonus * Math.max(0, 1 - depth / 6));
-    return { time: settings.timePerNew + novelty, points: 10 };
+    return { time: settings.timePerNew + novelty, points: 1 };
   }
 
   async function submit(e: React.FormEvent) {
@@ -478,6 +523,7 @@ function Game({
     } else {
       setStarted(true); // first organism landed → the clock starts now (#50)
       transcriptRef.current.push(target.id); // record for server re-scoring
+      timingsRef.current.push(Date.now() - runStartedAtRef.current); // parallel — drives combo
       const { time, points } = rewardFor(p);
 
       // --- combo (#60): extend the streak if this placement landed within the window. A
@@ -496,10 +542,12 @@ function Game({
       }, comboWindowMs);
       if (nextCombo >= 3) setGustNonce((n) => n + 1); // the explosion blows the leaves about
       const comboBonus = comboBonusSeconds(nextCombo, settings.comboTimeMultiplier);
+      const comboScore = comboBonusPoints(nextCombo, settings.comboScoreMultiplier);
 
       // --- clade completion (#60): naming this tip may have driven an ancestor clade to
       // zero-remaining. Celebrate the biggest one newly finished (once per clade per run).
       let cladeBonus = 0;
+      let cladeScore = 0;
       if (target.kind === "tip") {
         const lineage = asset.tipLineage.get(target.id);
         const denom = tracker.extantOnly ? asset.poolCountExtant : asset.poolCount;
@@ -511,7 +559,7 @@ function Game({
             if (tracker.remaining(idx) !== 0) continue;
             completedClades.current.add(idx);
             const size = denom[idx];
-            if (size >= CLADE_MIN_SIZE && (!best || size > best.size)) {
+            if (size >= settings.cladeMinSize && (!best || size > best.size)) {
               const node = asset.nodeById.get(asset.nodeIds[idx]);
               best = { size, name: node?.common || node?.sci || "clade" };
             }
@@ -519,6 +567,7 @@ function Game({
         }
         if (best) {
           cladeBonus = cladeBonusSeconds(best.size);
+          cladeScore = cladeBonusPoints(best.size, settings.cladeScoreMultiplier);
           setCladeEvent({ name: best.name, bonus: cladeBonus, nonce: ++pulseRef.current });
           window.clearTimeout(cladeTimer.current);
           cladeTimer.current = window.setTimeout(() => setCladeEvent(null), CLADE_BANNER_MS);
@@ -526,7 +575,9 @@ function Game({
       }
 
       const totalTime = time + comboBonus + cladeBonus;
-      setScore((v) => v + points);
+      // Base placement point + the combo/clade bonuses; the server re-derives the same total
+      // from the run's timings, so the HUD score is exactly what ranks the player (#77).
+      setScore((v) => v + points + comboScore + cladeScore);
       setCount((v) => v + 1);
       setSeconds((s) => Math.min(9999, s + totalTime));
       pushFlash(
@@ -558,6 +609,7 @@ function Game({
       if (p.kind !== "duplicate") {
         tracker.name(tip.id);
         transcriptRef.current.push(tip.id);
+        timingsRef.current.push(Date.now() - runStartedAtRef.current); // keep arrays parallel
         added += 1;
       }
     }
@@ -743,10 +795,14 @@ function Game({
             ranked={runRanked}
             allowReplay={!isDaily}
             transcript={transcriptRef.current}
+            timings={timingsRef.current}
+            runToken={runTokenRef.current}
+            extantOnly={settings.extantOnly}
             onPlayAgain={() => {
               treeRef.current = createInducedTree();
               tracker.reset();
               transcriptRef.current = [];
+              beginSession(); // a fresh run gets a fresh signed session + timing baseline (#77)
               setScore(0);
               setCount(0);
               setSeconds(settings.startSeconds);

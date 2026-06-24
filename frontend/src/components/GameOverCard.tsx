@@ -17,6 +17,8 @@ import {
   type SubmitOutcome,
   type SubmitResult,
 } from "../lib/scores";
+import type { ShareData } from "../lib/share";
+import { ShareResult } from "./ShareResult";
 
 export function GameOverCard({
   mode = "marathon_free",
@@ -54,6 +56,9 @@ export function GameOverCard({
   const [me, setMe] = useState<Me | null>(null);
   const [submit, setSubmit] = useState<SubmitOutcome | null>(null);
   const [board, setBoard] = useState<LeaderEntry[]>([]);
+  // Self-contained share payload, built from this run's own data once it's saved — drives the
+  // share/save-image controls. No server round-trip: the result lives in the share URL (#74).
+  const [shared, setShared] = useState<ShareData | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -70,6 +75,16 @@ export function GameOverCard({
         });
         if (!live) return;
         setSubmit(outcome);
+        if (outcome.ok) {
+          setShared({
+            user: who.display_name || who.username || "a naturalist",
+            score: outcome.result.score, // canonical server score
+            animals: new Set(transcript.filter((id) => id.startsWith("tip:"))).size,
+            scope: scopeLabel,
+            difficulty,
+            rank: outcome.result.rank,
+          });
+        }
       }
       const result = await fetchLeaderboard(mode, scope, difficulty);
       if (live) setBoard(result.entries);
@@ -104,6 +119,12 @@ export function GameOverCard({
       </div>
 
       <Leaderboard board={board} label={`${scopeLabel} · ${difficulty}`} me={me} />
+
+      {shared && (
+        <div className="mt-4 w-full">
+          <ShareResult result={shared} />
+        </div>
+      )}
 
       <div className="mt-6 flex items-center gap-3">
         {allowReplay && (

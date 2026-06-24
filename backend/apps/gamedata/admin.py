@@ -3,7 +3,78 @@ from __future__ import annotations
 
 from django.contrib import admin
 
-from .models import AssetVersion, PipelineJob
+from .models import Alias, AssetVersion, ManualAlias, PipelineJob, TaxonNode, TaxonTip
+
+
+@admin.register(TaxonTip)
+class TaxonTipAdmin(admin.ModelAdmin):
+    """Browse an asset's playable species — search a name to find the id to alias. Read-only
+    (the asset is pipeline output); aliasing is done via Manual aliases."""
+
+    list_display = ("common", "sci", "key", "asset")
+    list_filter = ("asset",)
+    search_fields = ("sci", "common", "key")
+    list_select_related = ("asset",)
+
+    def has_add_permission(self, request) -> bool:
+        return False
+
+    def has_change_permission(self, request, obj=None) -> bool:
+        return False  # view-only
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return False
+
+
+@admin.register(TaxonNode)
+class TaxonNodeAdmin(admin.ModelAdmin):
+    """Browse an asset's clade nodes (read-only)."""
+
+    list_display = ("sci", "common", "rank", "key", "asset")
+    list_filter = ("asset", "rank")
+    search_fields = ("sci", "common", "key")
+    list_select_related = ("asset",)
+
+    def has_add_permission(self, request) -> bool:
+        return False
+
+    def has_change_permission(self, request, obj=None) -> bool:
+        return False
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return False
+
+
+@admin.register(ManualAlias)
+class ManualAliasAdmin(admin.ModelAdmin):
+    """Curate extra aliases CoL/enrichment miss (e.g. 'chicken' → tip:Gallus_gallus). Saved
+    aliases apply immediately to the scope's current asset and survive rebuilds. Find the
+    target id under Taxon tips / Taxon nodes."""
+
+    list_display = ("name", "norm", "scope", "target_kind", "target_key", "note", "created_at")
+    list_filter = ("scope", "target_kind")
+    search_fields = ("name", "norm", "target_key")
+    readonly_fields = ("norm", "created_at")
+
+
+@admin.register(Alias)
+class AliasAdmin(admin.ModelAdmin):
+    """The live (baked + mirrored) alias index — read-only; handy to confirm a manual alias
+    landed on the current asset."""
+
+    list_display = ("norm", "target_kind", "target_key", "sci", "asset")
+    list_filter = ("asset", "target_kind")
+    search_fields = ("norm", "target_key", "sci")
+    list_select_related = ("asset",)
+
+    def has_add_permission(self, request) -> bool:
+        return False
+
+    def has_change_permission(self, request, obj=None) -> bool:
+        return False
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return False
 
 
 @admin.register(AssetVersion)

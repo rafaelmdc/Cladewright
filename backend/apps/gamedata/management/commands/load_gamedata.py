@@ -93,6 +93,12 @@ class Command(BaseCommand):
                 self._load_nodes(asset, nodes, node_lineage)
                 self._load_tips(asset, tips)
                 self._load_aliases(asset, aliases, by_id, tips)
+                # Re-apply admin-curated manual aliases for this scope onto the new build, so
+                # they survive a rebuild (they're scope-keyed, not version-keyed).
+                from apps.gamedata.models import ManualAlias
+
+                for ma in ManualAlias.objects.filter(scope=scope):
+                    ma.apply_to_asset(asset)
 
         kind = "current" if opts["current"] else "stored"
         self.stdout.write(self.style.SUCCESS(

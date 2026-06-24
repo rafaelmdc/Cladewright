@@ -14,8 +14,19 @@ Two representations of the SAME build, populated together by ``load_gamedata``:
 """
 from __future__ import annotations
 
+import re
+
 from django.conf import settings
 from django.db import models
+
+
+def normalize_alias(name: str) -> str:
+    """Normalized alias key — mirrors the pipeline/frontend/resolver normalize so a typed
+    query matches. Lowercase, fold underscores, drop punctuation, collapse whitespace."""
+    s = name.lower().replace("_", " ")
+    s = re.sub(r"[^\w\s]", "", s)
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
 
 
 class PipelineJob(models.Model):
@@ -184,3 +195,80 @@ class Alias(models.Model):
 
     def __str__(self) -> str:
         return f"{self.norm} → {self.target_key}"
+
+
+class ManualAlias(models.Model):
+    """Admin-curated alias → target, keyed by SCOPE so it survives asset rebuilds. It's
+    mirrored into the live ``Alias`` table of the scope's current asset on save (so it
+    resolves immediately) and re-applied by ``load_gamedata`` to every new build (so it
+    sticks). Use for names CoL/enrichment miss entirely — e.g. "chicken" → Gallus gallus,
+    which isn't in CoL at all (the domestic chicken is an unlisted subspecies)."""
+
+    scope = models.CharField(max_length=128, help_text="Scope key the target lives in, e.g. 'aves'.")
+    name = models.CharField(max_length=255, help_text="What a player types, e.g. 'chicken'.")
+    norm = models.CharField(max_length=255, editable=False, db_index=True)
+    target_key = models.CharField(
+        max_length=128, help_text="Target id, e.g. 'tip:Gallus_gallus' (browse Taxon tips to find it)."
+    )
+    target_kind = models.CharField(
+        max_length=8, choices=[("tip", "tip"), ("node", "node")], default="tip"
+    )
+    note = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name_plural = "Manual aliases"
+        constraints = [
+            models.UniqueConstraint(fields=["scope", "norm"], name="uniq_manual_alias"),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.norm = normalize_alias(self.name)
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"{self.scope}: {self.norm} → {self.target_key}"
+
+    def apply_to_asset(self, asset: "AssetVersion") -> None:
+        """Upsert this alias into ``asset``'s live Alias table (so /resolve + /search and the
+        blob-miss fallback see it). Pulls display sci/common off the target if present."""
+        sci, common = self.target_key, None
+        if self.target_kind == Alias.TIP:
+            t = TaxonTip.objects.filter(asset=asset, key=self.target_key).first()
+            if t:
+                sci, common = t.sci, t.common
+        else:
+            n = TaxonNode.objects.filter(asset=asset, key=self.target_key).first()
+            if n:
+                sci, common = n.sci, n.common
+        Alias.objects.get_or_create(
+            asset=asset,
+            norm=self.norm,
+            target_key=self.target_key,
+            defaults={"target_kind": self.target_kind, "sci": sci, "common": common},
+        )
+
+    def remove_from_asset(self, asset: "AssetVersion") -> None:
+        Alias.objects.filter(
+            asset=asset, norm=self.norm, target_key=self.target_key
+        ).delete()
+
+
+# Keep the scope's current asset's live Alias table in sync with manual aliases, so an
+# admin add/remove takes effect immediately (no rebuild).
+from django.db.models.signals import post_delete, post_save  # noqa: E402
+from django.dispatch import receiver  # noqa: E402
+
+
+@receiver(post_save, sender=ManualAlias)
+def _mirror_manual_alias(sender, instance: ManualAlias, **kwargs) -> None:
+    asset = AssetVersion.objects.filter(scope=instance.scope, is_current=True).first()
+    if asset:
+        instance.apply_to_asset(asset)
+
+
+@receiver(post_delete, sender=ManualAlias)
+def _unmirror_manual_alias(sender, instance: ManualAlias, **kwargs) -> None:
+    asset = AssetVersion.objects.filter(scope=instance.scope, is_current=True).first()
+    if asset:
+        instance.remove_from_asset(asset)

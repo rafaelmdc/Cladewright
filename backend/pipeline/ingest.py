@@ -162,11 +162,27 @@ def ingest_coldp(coldp_dir: Path, *, scope: str = "kingdom=Animalia") -> list[Ta
     denormalized = has_higher or "parentID" not in hset
     lineage_of = _denorm_lineage if denormalized else _build_parent_walker(name_usage)
 
+    # Fold each species' SUBSPECIES English vernaculars up into resolution-only aliases, so
+    # "Bengal tiger" → Panthera tigris without the subspecies being a playable tip. Only on
+    # the normalized dump (parentID links a subspecies row to its species); restricted to
+    # rank=subspecies to avoid CoL's mis-ranked vernaculars (e.g. "cattle" on the Bovidae
+    # family). Collected in the SAME pass; attached to the in-scope species afterwards.
+    has_parent = "parentID" in hset
+    subsp_aliases: dict[str, list[str]] = {}
+
     taxa: list[Taxon] = []
     for row, get in _read_tsv(name_usage):
         if get(row, "status").lower() not in ACCEPTED_STATUSES:
             continue
-        if get(row, "rank").lower() != "species":
+        rank = get(row, "rank").lower()
+        if rank == "subspecies":
+            if has_parent:
+                parent_id = get(row, "parentID")
+                name = vernacular.get(get(row, "ID"))
+                if parent_id and name:
+                    subsp_aliases.setdefault(parent_id, []).append(name)
+            continue
+        if rank != "species":
             continue
 
         lineage = lineage_of(row, get)
@@ -196,6 +212,12 @@ def ingest_coldp(coldp_dir: Path, *, scope: str = "kingdom=Animalia") -> list[Ta
                 extinct=get(row, "extinct").lower() in ("true", "1", "yes"),
             )
         )
+
+    # Attach each species' subspecies-vernacular aliases (dedup, preserve order).
+    for t in taxa:
+        extra = subsp_aliases.get(t.source_id)
+        if extra:
+            t.extra_aliases = list(dict.fromkeys(extra))
     return taxa
 
 

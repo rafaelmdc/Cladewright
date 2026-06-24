@@ -18,6 +18,9 @@ class Taxon:
     # ordered (rank, name) lineage from kingdom down to the parent of this species
     lineage: list[tuple[str, str]]
     vernacular: str | None = None          # CoL VernacularName, if present
+    # Resolution-only aliases (NOT the display name): English vernaculars of this species'
+    # subspecies, folded up so "Bengal tiger" resolves to Panthera tigris. See ingest.
+    extra_aliases: list[str] = field(default_factory=list)
     environment: list[str] = field(default_factory=list)
     biomes: list[str] = field(default_factory=list)
     extinct: bool = False

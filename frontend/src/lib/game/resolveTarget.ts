@@ -8,7 +8,7 @@
 
 import { foldResolved } from "../asset/growable";
 import { mightContain } from "../asset/membership";
-import { fetchShard, resolveRemote, shardPrefix } from "../asset/remote";
+import { resolveByName } from "../asset/remote";
 import type { InternedAsset, Target } from "../asset/types";
 import { normalize } from "./normalize";
 import { resolve } from "./resolve";
@@ -37,16 +37,9 @@ export async function resolveTarget(
   }
 
   const version = asset.raw.version;
-  // Exact name→id from the static prefix shard (fame-ordered ids), not the live /search.
-  const shard = await fetchShard(asset.scope, version, shardPrefix(q));
-  const ids = shard[q];
-  if (!ids || ids.length === 0) {
-    asset.negativeCache?.add(q);
-    return null;
-  }
-  const best = ids[0]; // server orders a shared name's ids by fame (famous taxon first)
-
-  const payload = await resolveRemote(asset.scope, best, version);
+  // Exact name → full placement payload in one call (server-side O(log n) btree equality,
+  // immutable + cached). The most-famous taxon wins a shared name.
+  const payload = await resolveByName(asset.scope, q, version);
   if (!payload) {
     asset.negativeCache?.add(q);
     return null;

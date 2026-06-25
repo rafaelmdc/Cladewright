@@ -11,10 +11,13 @@ class TaxonTipAdmin(admin.ModelAdmin):
     """Browse an asset's playable species — search a name to find the id to alias. Read-only
     (the asset is pipeline output); aliasing is done via Manual aliases."""
 
-    list_display = ("common", "sci", "key", "asset")
+    # Ordered by fame (enwiki pageviews / sitelink fallback): filter to a scope and the list
+    # IS its popularity ranking — the most-famous species first, the obscure tail last.
+    list_display = ("fame", "common", "sci", "key", "asset")
     list_filter = ("asset",)
     search_fields = ("sci", "common", "key")
     list_select_related = ("asset",)
+    ordering = ("-fame", "key")
 
     def has_add_permission(self, request) -> bool:
         return False

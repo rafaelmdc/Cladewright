@@ -57,17 +57,29 @@ def _current(scope: str | None) -> AssetVersion | None:
 _IMMUTABLE = "public, max-age=31536000, immutable"
 
 
-def _pinned_or_current(scope: str | None, v: str | None) -> tuple[AssetVersion | None, bool]:
+def _pinned_or_current(
+    scope: str | None, v: str | None, *, defer_heavy: bool = False
+) -> tuple[AssetVersion | None, bool]:
     """(asset, pinned). When ``v`` names an existing (scope, version) build, serve that exact
-    version (immutable → cacheable); otherwise fall back to the current build (uncacheable)."""
+    version (immutable → cacheable); otherwise fall back to the current build (uncacheable).
+
+    ``defer_heavy`` skips loading the multi-MB ``blob`` + ``membership_filter`` columns —
+    /resolve and /search never need them, so deferring keeps each request from deserializing
+    several MB off the asset row."""
+    base = AssetVersion.objects.all()
+    if defer_heavy:
+        base = base.defer("blob", "membership_filter")
     if v:
         try:
-            av = AssetVersion.objects.filter(scope=scope, version=int(v)).first()
+            av = base.filter(scope=scope, version=int(v)).first()
         except (TypeError, ValueError):
             av = None
         if av is not None:
             return av, True
-    return _current(scope), False
+    qs = base.filter(is_current=True)
+    if scope:
+        qs = qs.filter(scope=scope)
+    return qs.first(), False
 
 
 def _trim_to_frontier(lineage_ids: list[str], ranks: dict[str, str], frontier_rank: str):
@@ -235,7 +247,7 @@ class SearchView(APIView):
         except ValueError:
             limit = 20
 
-        av, pinned = _pinned_or_current(scope, request.query_params.get("v"))
+        av, pinned = _pinned_or_current(scope, request.query_params.get("v"), defer_heavy=True)
         if av is None:
             return Response({"results": []})
 
@@ -266,21 +278,34 @@ class SearchView(APIView):
 
 
 class ResolveView(APIView):
-    """GET /api/gamedata/resolve/?id=&scope= -> everything needed to place one organism:
-    its target record plus its denormalized lineage (ancestor nodes with pool_count). One
-    immutable, cacheable read per placed organism — the lazy half of huge-scope serving.
-    """
+    """GET /api/gamedata/resolve/?scope=&v=&(id=|q=) -> everything needed to place one
+    organism: its target record plus its denormalized lineage (ancestor nodes with
+    pool_count). Either ``id`` (a known tip/node id) or ``q`` (an exact typed name) — the
+    latter is the huge-scope tail's name→placement in ONE call: an exact-equality lookup on
+    the (asset, norm) btree (O(log n), scales to any size — no scan, no fuzzy match), then the
+    same lineage. One immutable, cacheable read per placed organism."""
 
     permission_classes: list = []
 
     def get(self, request: Request) -> Response:
-        target_id = request.query_params.get("id")
-        if not target_id:
-            return Response({"error": "id required"}, status=400)
         scope = request.query_params.get("scope")
-        av, pinned = _pinned_or_current(scope, request.query_params.get("v"))
+        av, pinned = _pinned_or_current(scope, request.query_params.get("v"), defer_heavy=True)
         if av is None:
             return Response({"error": "no current asset"}, status=404)
+
+        target_id = request.query_params.get("id")
+        if not target_id:
+            # Resolve an exact typed name → its target id (most-famous on a shared name).
+            q = _normalize(request.query_params.get("q", ""))
+            if not q:
+                return Response({"error": "id or q required"}, status=400)
+            row = (
+                Alias.objects.filter(asset=av, norm=q)
+                .values("target_key").order_by("-fame", "target_key").first()
+            )
+            if row is None:
+                return Response({"error": "not found"}, status=404)
+            target_id = row["target_key"]
 
         kind = "tip" if target_id.startswith("tip:") else "node"
         if kind == "tip":
@@ -320,38 +345,6 @@ class ResolveView(APIView):
             payload["anchor"] = anchor
         resp = Response(payload)
         if pinned:  # one placed organism's lineage is immutable → edge-cacheable forever.
-            resp["Cache-Control"] = _IMMUTABLE
-        return resp
-
-
-class IndexShardView(APIView):
-    """GET /api/gamedata/idx/?scope=&v=&p=<prefix> -> the alias shard for one key prefix:
-    ``{"keys": {norm: [target_id, …]}}`` for every key starting with ``p`` (ids ordered by
-    fame). The game uses **exact-match** input (no fuzzy autocomplete), so a tail name needs
-    only an exact lookup — the client fetches one prefix shard (immutable, edge-cacheable) and
-    looks the typed name up locally, instead of the live substring /search. This is what keeps
-    the last query off the hot path; trigram SearchView stays as an admin/fallback tool."""
-
-    permission_classes: list = []
-
-    def get(self, request: Request) -> Response:
-        prefix = _normalize(request.query_params.get("p", ""))
-        if not prefix:
-            return Response({"keys": {}})
-        scope = request.query_params.get("scope")
-        av, pinned = _pinned_or_current(scope, request.query_params.get("v"))
-        if av is None:
-            return Response({"keys": {}})
-        rows = (
-            Alias.objects.filter(asset=av, norm__startswith=prefix)
-            .values("norm", "target_key", "fame")
-            .order_by("norm", "-fame", "target_key")  # group by norm, best (famous) id first
-        )
-        keys: dict[str, list[str]] = {}
-        for r in rows:
-            keys.setdefault(r["norm"], []).append(r["target_key"])
-        resp = Response({"keys": keys})
-        if pinned:  # immutable per (version, prefix) → edge-cacheable like /resolve.
             resp["Cache-Control"] = _IMMUTABLE
         return resp
 

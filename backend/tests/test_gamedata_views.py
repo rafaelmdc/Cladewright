@@ -143,16 +143,20 @@ class HybridLoadTests(TestCase):
         self.assertEqual(r["Cache-Control"], IMMUTABLE)
         self.assertEqual(r.content, blob)
 
-    def test_index_shard_exact_lookup(self) -> None:
+    def test_resolve_by_exact_name(self) -> None:
         self._load()
-        # The tail name "rare ant" (not in the client blob) is found via its prefix shard.
-        r = self.client.get(reverse("gamedata-idx"), {"scope": "ants", "v": 5, "p": "rar"})
+        # The tail name "rare ant" (not in the client blob) resolves in ONE call via exact
+        # btree equality → the full trimmed placement payload (anchor + lineage), immutable.
+        r = self.client.get(reverse("gamedata-resolve"),
+                            {"scope": "ants", "v": 5, "q": "rare ant"})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Cache-Control"], IMMUTABLE)
-        self.assertEqual(r.json()["keys"].get("rare ant"), ["tip:rare"])
-        # An empty prefix returns nothing (no full-table dump).
-        self.assertEqual(self.client.get(reverse("gamedata-idx"),
-                                         {"scope": "ants", "p": ""}).json()["keys"], {})
+        self.assertEqual(r.json()["target"]["id"], "tip:rare")
+        self.assertEqual(r.json()["anchor"], "fam:Bidae")
+        self.assertEqual([n["id"] for n in r.json()["lineage"]], ["fam:Bidae", "gen:Rarus"])
+        # A name that isn't an exact key (no fuzzy match) → 404.
+        self.assertEqual(self.client.get(reverse("gamedata-resolve"),
+                         {"scope": "ants", "q": "rare a"}).status_code, 404)
 
     def test_tail_tip_resolves_trimmed_to_frontier(self) -> None:
         self._load()

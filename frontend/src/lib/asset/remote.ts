@@ -54,40 +54,6 @@ export async function searchRemote(
   }
 }
 
-// Tail name→id resolution is a STATIC, edge-cacheable prefix shard (exact-match input, no
-// fuzzy autocomplete), not the live substring /search. The client fetches one shard per key
-// prefix and looks the typed name up locally.
-const SHARD_PREFIX_LEN = 3;
-const shardCache = new Map<string, Promise<Record<string, string[]>>>();
-
-/** The shard key prefix for a normalized query (its first few chars; the whole thing when
- *  shorter). Shared across all queries with that prefix, so the shard is fetched once. */
-export function shardPrefix(norm: string): string {
-  return norm.slice(0, SHARD_PREFIX_LEN);
-}
-
-/** Fetch one alias shard `{norm: [ids]}` for a prefix, cached per (scope, version, prefix). */
-export function fetchShard(
-  scope: string | undefined,
-  version: number | undefined,
-  prefix: string,
-): Promise<Record<string, string[]>> {
-  const key = `${scope ?? ""}:${version ?? 0}:${prefix}`;
-  const hit = shardCache.get(key);
-  if (hit) return hit;
-  const p = (async () => {
-    try {
-      const res = await fetch(scoped("idx", scope, { p: prefix }, version));
-      if (!res.ok) return {};
-      return ((await res.json()).keys ?? {}) as Record<string, string[]>;
-    } catch {
-      return {};
-    }
-  })();
-  shardCache.set(key, p);
-  return p;
-}
-
 /** Fetch + parse the scope's binary-fuse8 membership filter (version-pinned, cacheable).
  *  null when the scope has none (whole-pool blob) or the fetch fails — callers then just
  *  skip the local reject and fall through to /search. */
@@ -119,6 +85,31 @@ export function resolveRemote(
   const p = (async () => {
     try {
       const res = await fetch(scoped("resolve", scope, { id }, version));
+      if (!res.ok) return null;
+      return (await res.json()) as ResolvePayload;
+    } catch {
+      return null;
+    }
+  })();
+  resolveCache.set(key, p);
+  return p;
+}
+
+/** Resolve an exact typed name to its full placement payload (target + trimmed lineage) in
+ *  ONE call. The server does an exact-equality lookup on the (asset, norm) btree — O(log n),
+ *  scalable to any table size, never a fuzzy/prefix scan — then returns the same payload as
+ *  resolveRemote. Immutable + cached per (scope, version, name). null on a miss. */
+export function resolveByName(
+  scope: string | undefined,
+  q: string,
+  version?: number,
+): Promise<ResolvePayload | null> {
+  const key = `${scope ?? ""}:${version ?? 0}:q:${q}`;
+  const hit = resolveCache.get(key);
+  if (hit) return hit;
+  const p = (async () => {
+    try {
+      const res = await fetch(scoped("resolve", scope, { q }, version));
       if (!res.ok) return null;
       return (await res.json()) as ResolvePayload;
     } catch {

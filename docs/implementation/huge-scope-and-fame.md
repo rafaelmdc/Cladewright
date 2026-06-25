@@ -77,19 +77,20 @@ See [Resolve payload redesign](#resolve-payload-redesign).
 pageview REST API (rate-limited, non-deterministic, doesn't scale to 1 M+ taxa) and over
 sitelink-count-only (coarser). See [Fame foundation](#fame-foundation).
 
-**D5 — Tail name→id resolution is static, not a live query.** The game uses **exact-match
-input, no fuzzy autocomplete** (existing project decision), so the tail never needs
-trigram fuzzy search — only exact normalized lookup. Build **prefix-sharded alias files**
-(`/idx/<scope>/<v>/<prefix>.json`, sorted `[norm, id, kind, fame]`) keyed on the
-**real Braidworks alias set** — exactly the `index_keys()` output already used to build
-the blob's alias index (full normalized names + baked plural/singular forms), nothing
-synthetic. **No per-word tokenization** — splitting names into words would let "african"
-match a pile of unrelated taxa and manufacture ambiguity; a multi-word key like
-"honey bee" only resolves to a bare word if Braidworks actually emitted that word as an
-alias. Shard by the key's leading chars (1–2; 3-char sub-shard for hot buckets to keep
-files small). The client fetches one shard (CDN-cached) and does a local exact lookup.
-This **removes the last live query from the hot path** and retires the trigram scaling
-risk; `SearchView` survives only as an admin/fallback tool.
+**D5 — Tail name→placement is one exact-equality call, immutable + cached.** The game uses
+**exact-match input, no fuzzy autocomplete**, so the tail needs only an exact normalized
+lookup — never trigram fuzzy search. `/resolve?q=<name>` does an **exact-equality lookup on
+the `(asset, norm)` btree** (`norm = ?`), which is **O(log n)** on *any* backend (~0.3 ms
+over 3.18 M rows; no scan, no special index) — then returns the same trimmed placement
+payload as `/resolve?id=`. One immutable, edge-cached read per (scope, version, name);
+~493 bytes. The most-famous taxon wins a shared name (`ORDER BY -fame`).
+*This replaces the prefix-shard design* originally planned here: sharding was an
+edge-cacheable bucketing scheme, but it relied on a `LIKE 'prefix%'` range query (which a
+plain btree doesn't serve — it scanned: ~350 ms / 567 KB on Arthropoda) and shipped a whole
+bucket per lookup. Exact equality is simpler, ~50× faster, ~1000× smaller, and uses the
+index that already exists. `SearchView` (trigram substring) survives only as an
+admin/fallback tool. (Lookup stays **exact** — a name that isn't a real key resolves to
+nothing, never a fuzzy match.)
 
 **D6 — Wire-format size levers** (raise the effective cap). (a) **Drop `lineage` from the
 wire** — rebuild it from parent pointers at intern time (same routine the trimmed-resolve
@@ -206,6 +207,35 @@ immediately, independent of huge scopes; later it ranks the notable top-N.
 - Alias-shard sizes per prefix bucket (which need 3-char sub-sharding).
 - Binary-fuse FP rate vs size; **key-coverage gaps** (synonyms/plurals/vernaculars) — the
   only real risk, since a missing key would wrongly reject a real species.
+
+## Benchmark — Arthropoda, measured (Phase 6)
+
+Built the real scope end-to-end locally (offline enrich, SQLite, no CDN): **1,187,130
+tips · 127,458 nodes · 3,183,581 aliases**. Numbers are local/cold — prod adds Postgres
+indexing + Cloudflare edge caching on every immutable URL.
+
+| Stage / endpoint | Measured | Notes |
+|---|---|---|
+| Build asset (offline) | **125 s** | reads the 1.8 GB CoL dump; one-time |
+| Load (DB + fuse filter) | **307 s**, ~5.5 GB RSS | one-time admin job; 612 MB JSON parse + 4.4 M row inserts + pure-Python fuse peeling |
+| Notable blob | **3.66 MB** (~0.7 MB gz) | 5000 tips + 4430 backbone nodes; one-time, CDN-cached |
+| Membership filter | **3.42 MB** (9.0 bits/key) | one-time, CDN-cached |
+| `GET /scopes` | **~6 ms** | |
+| **`GET /resolve?q=` (tail name→placement)** | **~6 ms** | exact btree equality + lineage; one call, 493 B ✅ |
+| `GET /resolve?id=` | **~4 ms** | point read (blob/filter deferred off the row) |
+| `GET /current` (blob) | ~80 ms | 3.66 MB, one-time |
+| `GET /filter` | ~46 ms | 3.42 MB, one-time |
+
+**Verdict: the plan holds, and the per-guess hot path is ~6 ms at 1.19 M tips.** Two fixes
+the benchmark forced (both applied):
+- **Tail lookup = exact `(asset, norm)` btree equality, not a prefix shard.** The first cut
+  used a `LIKE 'prefix%'` shard that *scanned* (~350 ms / 567 KB). Exact equality is O(log n)
+  on the existing index — ~6 ms / 493 B, ~50× faster and ~1000× smaller (see D5).
+- **Defer `blob` + `membership_filter`** on the asset row in `/resolve` + `/search`: they
+  were deserializing ~7 MB per request → dropped `/resolve?id=` from ~50 ms to ~4 ms.
+
+Open: load time (307 s) is heavy — a one-time admin job (612 MB JSON parse + 4.4 M inserts
++ pure-Python fuse peeling); fine to leave, optimizable later if rebuilds get frequent.
 
 ## Verification
 

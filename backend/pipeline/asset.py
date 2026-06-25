@@ -40,7 +40,7 @@ _RANK_ORDER = [
 _RANK_INDEX = {r: i for i, r in enumerate(_RANK_ORDER)}
 
 
-def _at_or_above(rank: str, frontier: str) -> bool:
+def rank_at_or_above(rank: str, frontier: str) -> bool:
     """True if ``rank`` is coarser-or-equal to ``frontier`` (so it's kept in the blob).
     Unknown ranks fall below any frontier (kept only when an ancestor of a notable tip)."""
     f = _RANK_INDEX.get(frontier)
@@ -98,7 +98,7 @@ def build_notable_blob(
 
     keep_nodes: set[str] = set()
     for n in doc.get("nodes", []):
-        if _at_or_above(n.get("rank", ""), frontier_rank):
+        if rank_at_or_above(n.get("rank", ""), frontier_rank):
             keep_nodes.add(n["id"])
     for t in notable:  # the notable tips' own ancestors (incl. sub-frontier genera)
         keep_nodes.update(t.get("lineage", []))

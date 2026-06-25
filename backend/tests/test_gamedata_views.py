@@ -124,11 +124,14 @@ class HybridLoadTests(TestCase):
         self.assertEqual(ants["mode"], "hybrid")
         self.assertEqual(ants["notable_count"], 1)
 
-    def test_tail_tip_resolves_from_mirror(self) -> None:
+    def test_tail_tip_resolves_trimmed_to_frontier(self) -> None:
         self._load()
-        # tip:rare is NOT in the client blob, but the relational mirror resolves it.
+        # tip:rare is NOT in the client blob, but the relational mirror resolves it — and
+        # since this is a hybrid scope (frontier=family), the lineage is TRIMMED to start at
+        # the deepest family ancestor (fam:Bidae), which the client already holds. The
+        # kingdom above it is dropped; the client rebuilds it from the anchor's blob parents.
         r = self.client.get(reverse("gamedata-resolve"), {"scope": "ants", "id": "tip:rare"})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["target"]["id"], "tip:rare")
-        self.assertEqual([n["id"] for n in r.json()["lineage"]],
-                         ["kng:Animalia", "fam:Bidae", "gen:Rarus"])
+        self.assertEqual(r.json()["anchor"], "fam:Bidae")
+        self.assertEqual([n["id"] for n in r.json()["lineage"]], ["fam:Bidae", "gen:Rarus"])

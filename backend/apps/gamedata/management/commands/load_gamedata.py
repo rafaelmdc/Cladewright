@@ -97,6 +97,7 @@ class Command(BaseCommand):
                 pool_size=pool_size,
                 pool_size_extant=int(doc.get("pool_size_extant", pool_size)),
                 notable_count=notable_count,
+                frontier_rank=str(doc.get("frontier_rank", "family")),
                 hidden_label_max=int(doc.get("thresholds", {}).get("hidden_label_max", 15)),
                 provenance=doc.get("provenance", {}),
                 blob=None if opts["no_blob"] else blob_doc,

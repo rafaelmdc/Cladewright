@@ -123,6 +123,10 @@ class AssetVersion(models.Model):
     # Tips shipped in the client blob when it's a CAPPED "notable" subset (hybrid scope);
     # 0 when the blob holds the whole pool. >0 ⇒ the rest is served via /search + /resolve.
     notable_count = models.IntegerField(default=0)
+    # The coarse-backbone frontier this build shipped (e.g. "family"). For a hybrid scope
+    # /resolve trims a tail lineage to start at the deepest frontier ancestor (the client
+    # already holds it in the blob), so a tail guess returns ~species→genus, not a whole order.
+    frontier_rank = models.CharField(max_length=32, default="family")
     hidden_label_max = models.IntegerField(default=15)
     provenance = models.JSONField(default=dict, blank=True)
     # Whole-asset payload for blob-mode scopes; null for huge scopes served incrementally.

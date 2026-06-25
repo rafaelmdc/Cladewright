@@ -22,6 +22,8 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from pipeline.asset import rank_at_or_above
+
 from .models import Alias, AssetVersion, TaxonNode, TaxonTip
 
 
@@ -65,6 +67,23 @@ def _pinned_or_current(scope: str | None, v: str | None) -> tuple[AssetVersion |
         if av is not None:
             return av, True
     return _current(scope), False
+
+
+def _trim_to_frontier(lineage_ids: list[str], ranks: dict[str, str], frontier_rank: str):
+    """Trim a tail organism's root→parent lineage to start at the deepest **frontier** ancestor
+    (the *anchor*). In hybrid mode the client already holds every frontier node in its blob, so
+    a tail guess only needs the few nodes below the anchor (≈species→genus), never a whole order.
+    Returns (trimmed_ids, anchor_id-or-None); anchor None ⇒ no frontier node present, send full.
+    """
+    anchor_idx = 0
+    found = False
+    for i, nid in enumerate(lineage_ids):
+        if rank_at_or_above(ranks.get(nid, ""), frontier_rank):
+            anchor_idx = i
+            found = True
+    if not found or anchor_idx == 0:
+        return lineage_ids, None
+    return lineage_ids[anchor_idx:], lineage_ids[anchor_idx]
 
 
 class ScopesView(APIView):
@@ -274,13 +293,23 @@ class ResolveView(APIView):
             n.key: n
             for n in TaxonNode.objects.filter(asset=av, key__in=lineage_ids)
         }
+        # Hybrid scope → trim the lineage to the frontier anchor the client already holds in
+        # its blob (the rest it reconstructs from parent pointers). Whole-pool/remote scopes
+        # get the full root→parent chain (no blob backbone to attach to). See _trim_to_frontier.
+        anchor = None
+        if av.notable_count:
+            ranks = {k: n.rank for k, n in nodes.items()}
+            lineage_ids, anchor = _trim_to_frontier(lineage_ids, ranks, av.frontier_rank)
         lineage = [
             {"id": nid, "rank": nodes[nid].rank, "sci": nodes[nid].sci,
              "common": nodes[nid].common, "pool_count": nodes[nid].pool_count}
             for nid in lineage_ids
             if nid in nodes
         ]
-        resp = Response({"target": target, "lineage": lineage})
+        payload = {"target": target, "lineage": lineage}
+        if anchor is not None:
+            payload["anchor"] = anchor
+        resp = Response(payload)
         if pinned:  # one placed organism's lineage is immutable → edge-cacheable forever.
             resp["Cache-Control"] = _IMMUTABLE
         return resp

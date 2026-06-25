@@ -18,6 +18,7 @@ one to `enrich`.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Protocol
 
 from .types import EnrichedTip, Taxon, Tree
@@ -96,7 +97,8 @@ class EnrichProvider(Protocol):
 
     def prepare(self, taxa: list[Taxon]) -> None: ...
     def harvest(
-        self, scientific_names: list[str], ranks: dict[str, str] | None = None
+        self, scientific_names: list[str], ranks: dict[str, str] | None = None,
+        *, phase: str = "names",
     ) -> None: ...
     def harvest_fame(self, scientific_names: list[str]) -> None: ...
     def fame_for(self, scientific_name: str) -> int: ...
@@ -113,7 +115,8 @@ class OfflineProvider:
         return None
 
     def harvest(
-        self, scientific_names: list[str], ranks: dict[str, str] | None = None
+        self, scientific_names: list[str], ranks: dict[str, str] | None = None,
+        *, phase: str = "names",
     ) -> None:
         return None  # offline has no name source beyond CoL vernacular
 
@@ -151,6 +154,7 @@ class BraidworksProvider:
         fame_dump_path: str | None = None,
         fame_year: int | None = None,
         fame_month: int | None = None,
+        progress: Callable[[str, int, int], None] | None = None,
     ) -> None:
         self._cache: dict[str, list[str]] = {}  # scientific_name -> [name strings]
         self._title: dict[str, str] = {}  # scientific_name -> enwiki article title
@@ -162,6 +166,16 @@ class BraidworksProvider:
         self._fame_dump_path = fame_dump_path
         self._fame_year = fame_year
         self._fame_month = fame_month
+        # Optional progress sink (phase, done, total) so a long network harvest reports
+        # incrementally instead of going silent for minutes. Set by build_gamedata so the
+        # admin job log ticks up.
+        self._progress = progress
+
+    # Aim for ~20 progress ticks over a harvest regardless of pool size (≥200/chunk so each
+    # network round-trip still batches usefully — the wikidata weaver chunks VALUES at 200).
+    @staticmethod
+    def _chunk_size(total: int) -> int:
+        return max(200, (total + 19) // 20)
 
     def prepare(self, taxa: list[Taxon]) -> None:
         # Pool taxa are accepted species, so the homonym disambiguator is "species".
@@ -171,7 +185,8 @@ class BraidworksProvider:
         )
 
     def harvest(
-        self, scientific_names: list[str], ranks: dict[str, str] | None = None
+        self, scientific_names: list[str], ranks: dict[str, str] | None = None,
+        *, phase: str = "names",
     ) -> None:
         """Pull Wikidata names for any names not yet cached. Reusable for species AND
         clade nodes — the reference resolves group names ("bear", "seal") because it
@@ -201,29 +216,38 @@ class BraidworksProvider:
         executor = LocalExecutor(registry)
 
         async def run_all() -> None:
-            # The input strand rides through to the output so we map results by name. One
-            # batch (one event loop): the backend's async HTTP client is cached on the
-            # registry's backend, so re-running asyncio.run() would bind it to a closed loop.
-            inputs = [
-                StrandSet.from_strands(name, [Strand("organism.scientific_name", name)])
-                for name in todo
-            ]
-            result = await executor.execute(braid, inputs)
-            for ss in result.resolved:
-                name_strand = ss.get("organism.scientific_name")
-                if name_strand is None:
-                    continue
-                vn_strand = ss.get("organism.vernacular_names")
-                title_strand = ss.get("wikipedia.title")
-                # Title first — it's the cleanest common name (and the canonical display,
-                # following the reference). Kept separately too so display never falls back
-                # to non-deterministic SPARQL ordering of altLabels.
-                harvested = [title_strand.value] if title_strand else []
-                harvested += list(vn_strand.value) if vn_strand else []
-                # dedup preserving order (the title often repeats a vernacular).
-                self._cache[name_strand.value] = list(dict.fromkeys(harvested))
-                if title_strand:
-                    self._title[name_strand.value] = title_strand.value
+            # ONE event loop (one asyncio.run): the backend's async HTTP client is cached on
+            # the registry's backend, so a second asyncio.run() would bind it to a closed
+            # loop. We still chunk WITHIN this loop — sequential awaits reuse the same client
+            # — so a long harvest reports progress instead of going silent for minutes.
+            total = len(todo)
+            chunk = self._chunk_size(total)
+            done = 0
+            for start in range(0, total, chunk):
+                names = todo[start : start + chunk]
+                inputs = [
+                    StrandSet.from_strands(name, [Strand("organism.scientific_name", name)])
+                    for name in names
+                ]
+                result = await executor.execute(braid, inputs)
+                for ss in result.resolved:
+                    name_strand = ss.get("organism.scientific_name")
+                    if name_strand is None:
+                        continue
+                    vn_strand = ss.get("organism.vernacular_names")
+                    title_strand = ss.get("wikipedia.title")
+                    # Title first — it's the cleanest common name (and the canonical display,
+                    # following the reference). Kept separately too so display never falls
+                    # back to non-deterministic SPARQL ordering of altLabels.
+                    harvested = [title_strand.value] if title_strand else []
+                    harvested += list(vn_strand.value) if vn_strand else []
+                    # dedup preserving order (the title often repeats a vernacular).
+                    self._cache[name_strand.value] = list(dict.fromkeys(harvested))
+                    if title_strand:
+                        self._title[name_strand.value] = title_strand.value
+                done += len(names)
+                if self._progress:
+                    self._progress(phase, done, total)
 
         asyncio.run(run_all())
 
@@ -269,22 +293,31 @@ class BraidworksProvider:
         executor = LocalExecutor(registry)
 
         async def run_all() -> None:
-            inputs = [
-                StrandSet.from_strands(name, [Strand("organism.scientific_name", name)])
-                for name in todo
-            ]
-            result = await executor.execute(braid, inputs)
-            for ss in result.resolved:
-                name_strand = ss.get("organism.scientific_name")
-                if name_strand is None:
-                    continue
-                name = name_strand.value
-                pv = ss.get("wikipedia.pageviews")
-                sl = ss.get("wikidata.sitelinks")
-                if pv is not None and pv.value is not None:
-                    self._pageviews[name] = int(pv.value)
-                if sl is not None and sl.value is not None:
-                    self._sitelinks[name] = int(sl.value)
+            # Chunk within the one event loop (see harvest()) so fame reports progress.
+            total = len(todo)
+            chunk = self._chunk_size(total)
+            done = 0
+            for start in range(0, total, chunk):
+                names = todo[start : start + chunk]
+                inputs = [
+                    StrandSet.from_strands(name, [Strand("organism.scientific_name", name)])
+                    for name in names
+                ]
+                result = await executor.execute(braid, inputs)
+                for ss in result.resolved:
+                    name_strand = ss.get("organism.scientific_name")
+                    if name_strand is None:
+                        continue
+                    name = name_strand.value
+                    pv = ss.get("wikipedia.pageviews")
+                    sl = ss.get("wikidata.sitelinks")
+                    if pv is not None and pv.value is not None:
+                        self._pageviews[name] = int(pv.value)
+                    if sl is not None and sl.value is not None:
+                        self._sitelinks[name] = int(sl.value)
+                done += len(names)
+                if self._progress:
+                    self._progress("fame", done, total)
 
         asyncio.run(run_all())
 
@@ -376,7 +409,7 @@ def enrich_clade_nodes(tree: Tree, provider: EnrichProvider | None = None) -> di
         sci_to_nodes.setdefault(node.sci, []).append(node.id)
         node_rank.setdefault(node.sci, node.rank)  # rank disambiguates homonym clades
 
-    provider.harvest(list(sci_to_nodes), ranks=node_rank)
+    provider.harvest(list(sci_to_nodes), ranks=node_rank, phase="clade names")
 
     node_names: dict[str, list[str]] = {}
     for sci, node_ids in sci_to_nodes.items():

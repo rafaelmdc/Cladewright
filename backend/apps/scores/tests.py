@@ -7,7 +7,8 @@ from rest_framework.test import APIClient
 
 from apps.gamedata.models import AssetVersion, TaxonNode, TaxonTip
 
-from .models import GameMode, NamedSpecies, PlayerStat, Run
+from .models import GameMode, NamedSpeciesSet, PlayerStat, Run, SpeciesToken
+from .named_set import named_keys
 from .scoring import rescore
 
 User = get_user_model()
@@ -180,7 +181,13 @@ class SubmitAndLeaderboardTests(TestCase):
         self.assertEqual(stat.games_played, 2)
         self.assertEqual(stat.total_named, 5)   # 3 + 2 (repeats across sessions count)
         self.assertEqual(stat.unique_named, 3)  # tip:1/2/3 distinct
-        self.assertEqual(NamedSpecies.objects.filter(user=user).count(), 3)
+        # The unique set is one roaring-bitmap row whose cardinality matches, and decodes
+        # back to exactly the distinct species named (#55).
+        nss = NamedSpeciesSet.objects.get(user=user, mode="marathon_free", difficulty="common")
+        self.assertEqual(nss.count, 3)
+        self.assertEqual(
+            set(named_keys(user, "marathon_free", "common")), {"tip:1", "tip:2", "tip:3"}
+        )
 
     def test_account_stats_endpoint(self):
         user = User.objects.create_user("alice", password="x")
@@ -227,8 +234,11 @@ class SubmitAndLeaderboardTests(TestCase):
         res = self.client.delete("/api/auth/account/")
         self.assertEqual(res.status_code, 204)
         self.assertFalse(User.objects.filter(username="alice").exists())
-        self.assertEqual(Run.objects.count(), 0)          # cascaded
-        self.assertEqual(NamedSpecies.objects.count(), 0)  # cascaded
+        self.assertEqual(Run.objects.count(), 0)              # cascaded
+        self.assertEqual(NamedSpeciesSet.objects.count(), 0)  # cascaded
+        # SpeciesToken is a shared dictionary (not user-owned) — it survives the account
+        # deletion; only the user's set row is removed.
+        self.assertTrue(SpeciesToken.objects.filter(species_key="tip:1").exists())
 
     def test_leaderboard_best_per_user_ordered(self):
         a = User.objects.create_user("alice", password="x")
@@ -393,3 +403,58 @@ class SubmitAndLeaderboardTests(TestCase):
         self.assertEqual(res.status_code, 400)
         self.assertEqual(res.data["error"], "mode not enabled")
         self.assertFalse(Run.objects.filter(user=user).exists())
+
+
+class NamedSetTests(TestCase):
+    """The compact roaring-bitmap unique-named-species store (#55)."""
+
+    def setUp(self):
+        from .named_set import add_named, intern_tokens, named_count
+
+        self.add_named = add_named
+        self.intern_tokens = intern_tokens
+        self.named_count = named_count
+        self.user = User.objects.create_user("alice", password="x")
+
+    def test_union_accumulates_and_dedups(self):
+        # Two runs union into one set; a species named twice counts once.
+        self.assertEqual(self.add_named(self.user, "marathon_free", "common", ["tip:1", "tip:2"]), 2)
+        self.assertEqual(
+            self.add_named(self.user, "marathon_free", "common", ["tip:2", "tip:3"]), 3
+        )
+        self.assertEqual(self.named_count(self.user, "marathon_free", "common"), 3)
+        self.assertEqual(
+            set(named_keys(self.user, "marathon_free", "common")), {"tip:1", "tip:2", "tip:3"}
+        )
+        # One row holds the whole set — not one per species.
+        self.assertEqual(
+            NamedSpeciesSet.objects.filter(user=self.user, mode="marathon_free").count(), 1
+        )
+
+    def test_difficulty_sets_are_independent(self):
+        self.add_named(self.user, "marathon_free", "common", ["tip:1", "tip:2"])
+        self.add_named(self.user, "marathon_free", "scientific", ["tip:1"])
+        self.assertEqual(self.named_count(self.user, "marathon_free", "common"), 2)
+        self.assertEqual(self.named_count(self.user, "marathon_free", "scientific"), 1)
+
+    def test_tokens_are_shared_across_users(self):
+        # The same species_key interns to the SAME token for every user — the dictionary is
+        # global, so a million-species scope is stored once, not per player.
+        bob = User.objects.create_user("bob", password="x")
+        self.add_named(self.user, "marathon_free", "common", ["tip:1", "tip:9"])
+        self.add_named(bob, "marathon_free", "common", ["tip:9", "tip:5"])
+        self.assertEqual(SpeciesToken.objects.filter(species_key="tip:9").count(), 1)
+        self.assertEqual(self.intern_tokens(["tip:9"]), self.intern_tokens(["tip:9"]))
+
+    def test_large_set_is_compact(self):
+        # 5,000 species fit in a few KB blob — the whole point vs 5,000 rows.
+        keys = [f"tip:{i}" for i in range(5000)]
+        self.assertEqual(self.add_named(self.user, "marathon_free", "common", keys), 5000)
+        row = NamedSpeciesSet.objects.get(user=self.user, mode="marathon_free", difficulty="common")
+        self.assertLess(len(bytes(row.bitmap)), 12_000)  # ~few KB, far under 5000 string rows
+        self.assertEqual(len(named_keys(self.user, "marathon_free", "common")), 5000)
+
+    def test_blank_and_unknown_keys_ignored(self):
+        # Empty strings/blanks contribute nothing and don't create tokens.
+        self.assertEqual(self.add_named(self.user, "marathon_free", "common", ["", "tip:1", ""]), 1)
+        self.assertFalse(SpeciesToken.objects.filter(species_key="").exists())

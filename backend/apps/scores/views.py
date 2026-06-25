@@ -27,11 +27,11 @@ from .models import (
     DailyRotationEntry,
     GameDefaults,
     GameModeConfig,
-    NamedSpecies,
     PlayerStat,
     Run,
     Streak,
 )
+from .named_set import add_named
 from .scoring import rescore
 from .sessions import issue_run_token, verify_run_token
 
@@ -475,13 +475,9 @@ def _update_player_stats(user, mode: str, difficulty: str, score: int, placed_ti
     """Fold one run into the per-(user, mode, difficulty) aggregate + that game's unique-
     species set. Called inside the submit transaction so stats never drift from the runs.
     The scoring unit is (mode, difficulty) — see docs/games-model.md."""
-    if placed_tips:
-        NamedSpecies.objects.bulk_create(
-            [NamedSpecies(user=user, mode=mode, difficulty=difficulty, species_key=k)
-             for k in placed_tips],
-            ignore_conflicts=True,  # only species new to this (game) actually insert
-        )
-    unique = NamedSpecies.objects.filter(user=user, mode=mode, difficulty=difficulty).count()
+    # The unique-species set is a single roaring-bitmap row (#55): OR this run's placements
+    # in and read back the new cardinality (no per-species rows to insert or count).
+    unique = add_named(user, mode, difficulty, list(placed_tips))
     stat, _ = PlayerStat.objects.get_or_create(user=user, mode=mode, difficulty=difficulty)
     stat.games_played += 1
     stat.total_named += len(placed_tips)

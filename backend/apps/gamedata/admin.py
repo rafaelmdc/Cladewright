@@ -194,23 +194,31 @@ class PipelineJobAdmin(admin.ModelAdmin):
     fieldsets = (
         (None, {
             "fields": ("kind",),
-            "description": "Build an asset, or download a fresh CoL dump (replaces the old "
-                           "one). A separate worker runs the job — refresh to watch status. "
-                           "Standard scope filters (mammalia/aves/reptilia/amphibia/fish) are "
-                           "listed in docs/pipeline-jobs.md.",
+            "description": "Build an asset; download a fresh CoL dump; or download + build the "
+                           "monthly Wikipedia pageview DB once (then every fame build reuses it "
+                           "— do this before a huge-scope build). A separate worker runs the job "
+                           "— refresh to watch status. Standard scope filters "
+                           "(mammalia/aves/reptilia/amphibia/fish) are in docs/pipeline-jobs.md.",
         }),
         ("Build asset (ignored for a Download job)", {
             "fields": ("scope_key", "label", "scope_filter", "enrich", "include_extinct",
                        "load_current", "delete_old"),
         }),
         ("Notable blob (delivery)", {
-            "fields": ("notable_max", "notable_coverage", "notable_min", "frontier_rank",
-                       "fame_dump"),
+            "fields": ("notable_max", "notable_coverage", "notable_min", "frontier_rank"),
             "description": "How much of the scope ships as the local client blob. Leave "
                            "notable_max=0 to ship the whole pool (fine up to ~20k tips). For a "
                            "huge scope, set notable_max (~20000) → hybrid: a top-fame blob + the "
-                           "rest via search/resolve. fame_dump points fame at a Wikimedia "
-                           "pageview dump for million-tip scopes.",
+                           "rest via search/resolve.",
+        }),
+        ("Fame / pageviews", {
+            "fields": ("fame_year", "fame_month", "fame_dump"),
+            "description": "Popularity source. For a 'Download pageview dump' job, set "
+                           "fame_year + fame_month (which monthly dump to fetch). Build jobs "
+                           "then reuse that local DB automatically — leave these blank on a "
+                           "build unless you want its fame dated to a specific month. fame_dump "
+                           "is only for an already-downloaded .bz2 on the worker. With no "
+                           "prebuilt DB, fame falls back to the slow per-title pageviews api.",
         }),
         ("Source / lifecycle", {
             "fields": ("coldp_dir", "status", "log", "requested_by", "created_at",

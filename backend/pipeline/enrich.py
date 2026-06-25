@@ -267,9 +267,34 @@ class BraidworksProvider:
         if not todo:
             return
 
-        # Dump-configured → register the local (dump) pageviews backend; else the keyless
-        # REST api via entry points (right tool for the current few-thousand-title scopes).
-        if self._fame_dump_path or (self._fame_year and self._fame_month):
+        # Pageview source, in preference order:
+        #  1. an explicit dump on this build (fame_dump / year+month) → local backend, built
+        #     once at the shared DB path (persists when BRAIDWORKS_DATA_DIR → the PVC);
+        #  2. a prebuilt local DB already on disk (the "Download pageview dump" action ran) →
+        #     reuse it, no per-title web calls — the scalable path for huge scopes;
+        #  3. otherwise the keyless per-title REST api (fine only for a few-thousand-tip scope).
+        explicit_dump = bool(self._fame_dump_path or (self._fame_year and self._fame_month))
+        prebuilt_db = None
+        if not explicit_dump:
+            try:
+                from wikipedia_weaver.setup import db_is_valid, default_db_path
+
+                cand = default_db_path()
+                if db_is_valid(cand):
+                    prebuilt_db = cand
+            except Exception:  # noqa: BLE001 - wikipedia_weaver missing / unreadable → fall back
+                prebuilt_db = None
+
+        if prebuilt_db is not None:
+            # Reuse the already-built DB directly: the factory's build path insists on a
+            # dump month even to reuse, but the local backend reads its month from the DB —
+            # so wire it straight (the dump backend is self-describing once built).
+            from wikipedia_weaver.backends.local import WikipediaLocalBackend
+            from wikipedia_weaver.weaver import WikipediaWeaver
+
+            registry = build_registry_from_entry_points(only=frozenset({"wikidata"}))
+            registry.register(WikipediaWeaver({"local": WikipediaLocalBackend(prebuilt_db)}))
+        elif explicit_dump:
             from wikipedia_weaver.factory import build_wikipedia_weaver
 
             registry = build_registry_from_entry_points(only=frozenset({"wikidata"}))
@@ -278,7 +303,7 @@ class BraidworksProvider:
                     dump_path=self._fame_dump_path,
                     year=self._fame_year,
                     month=self._fame_month,
-                    auto_setup=True,
+                    auto_setup=True,  # builds once at the default (PVC) DB path, then reused
                 )
             )
         else:

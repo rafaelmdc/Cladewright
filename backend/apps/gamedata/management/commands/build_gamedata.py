@@ -126,12 +126,20 @@ class Command(BaseCommand):
         # whether this build will rank by real pageviews or fall back to nothing.
         if opts["enrich"] != "braidworks":
             self.stdout.write("      fame: disabled (offline enrich — every tip scores 0)")
-        elif opts["fame_dump"]:
-            self.stdout.write(f"      fame source: pageview dump {opts['fame_dump']}")
+        elif opts["fame_dump"] or (opts["fame_year"] and opts["fame_month"]):
+            self.stdout.write("      fame source: pageview dump → local DB (built once, then reused)")
         else:
-            self.stdout.write(
-                "      fame source: Wikipedia pageviews REST api (+ Wikidata sitelink fallback)"
-            )
+            source = ("Wikipedia pageviews REST api — per-title, slow; run a 'Download pageview "
+                      "dump' job once for scale")
+            try:
+                from wikipedia_weaver.setup import db_is_valid, default_db_path
+
+                cand = default_db_path()
+                if db_is_valid(cand):
+                    source = f"prebuilt pageview DB {cand} (local, fast)"
+            except Exception:  # noqa: BLE001 - braidworks absent → REST description stands
+                pass
+            self.stdout.write(f"      fame source: {source}")
 
         self.stdout.write("3/5 pool select…")
         pool_taxa = pool.select_pool(

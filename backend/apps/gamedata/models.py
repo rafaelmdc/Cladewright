@@ -62,6 +62,26 @@ class PipelineJob(models.Model):
     coldp_dir = models.CharField(max_length=256, default="data/coldp_col")
     enrich = models.CharField(max_length=16, default="braidworks")
     include_extinct = models.BooleanField(default=True)
+    # Notable-blob delivery (no pure-remote): the client always downloads a local blob; a
+    # scope too big to ship whole becomes hybrid (blob + remote tail). All knobs are here so
+    # the admin tunes them per build. notable_max=0 ⇒ ship the WHOLE pool (no tail).
+    notable_max = models.IntegerField(
+        default=0, help_text="Max tips in the client blob; 0 = ship the whole pool (no remote "
+                             "tail). Suggested for huge scopes: ~20000.")
+    notable_coverage = models.FloatField(
+        default=0.9, help_text="Fraction of total fame (≈pageview) mass the blob should cover; "
+                              "≈ fraction of guesses served locally. Clamped to [min, max].")
+    notable_min = models.IntegerField(
+        default=5000, help_text="Floor on tips shipped, so a popularity-concentrated scope still "
+                               "ships a meaty offline pool.")
+    frontier_rank = models.CharField(
+        max_length=32, default="family",
+        help_text="Coarse-backbone cut always shipped in the blob (and the deepest rank "
+                  "/resolve trims to), e.g. 'family'.")
+    fame_dump = models.CharField(
+        max_length=256, blank=True, default="",
+        help_text="Optional path to a Wikimedia monthly pageview dump (pageviews-YYYYMM-user.bz2) "
+                  "for fame at huge-scope scale; blank uses the pageviews REST api.")
     load_current = models.BooleanField(
         default=True, help_text="After building, load the asset and mark it current."
     )
@@ -100,6 +120,9 @@ class AssetVersion(models.Model):
     schema = models.CharField(max_length=16, default="1.0")
     pool_size = models.IntegerField(default=0)  # all pool tips (incl. extinct)
     pool_size_extant = models.IntegerField(default=0)  # excluding extinct (toggle denom)
+    # Tips shipped in the client blob when it's a CAPPED "notable" subset (hybrid scope);
+    # 0 when the blob holds the whole pool. >0 ⇒ the rest is served via /search + /resolve.
+    notable_count = models.IntegerField(default=0)
     hidden_label_max = models.IntegerField(default=15)
     provenance = models.JSONField(default=dict, blank=True)
     # Whole-asset payload for blob-mode scopes; null for huge scopes served incrementally.

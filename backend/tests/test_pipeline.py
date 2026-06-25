@@ -169,3 +169,56 @@ def test_offline_enrich_fame_is_zero(coldp_dir: Path):
     """The default offline provider has no popularity signal, so fame is 0 everywhere."""
     doc = build(coldp_dir, size=100, clade_floor=10)
     assert all(t["fame"] == 0 for t in doc["tips"])
+
+
+def _hybrid_doc() -> dict:
+    return {
+        "version": 1, "schema": "1.0", "scope": "bugs", "pool_size": 3,
+        "nodes": [
+            {"id": "kng:Animalia", "rank": "kingdom", "sci": "Animalia", "parent": None,
+             "pool_count": 3},
+            {"id": "fam:Aidae", "rank": "family", "sci": "Aidae", "parent": "kng:Animalia",
+             "pool_count": 2},
+            {"id": "gen:Apis", "rank": "genus", "sci": "Apis", "parent": "fam:Aidae",
+             "pool_count": 2},
+            {"id": "fam:Bidae", "rank": "family", "sci": "Bidae", "parent": "kng:Animalia",
+             "pool_count": 1},
+            {"id": "gen:Rarus", "rank": "genus", "sci": "Rarus", "parent": "fam:Bidae",
+             "pool_count": 1},
+        ],
+        "tips": [
+            {"id": "tip:famous", "sci": "Apis famous", "fame": 1000,
+             "lineage": ["kng:Animalia", "fam:Aidae", "gen:Apis"]},
+            {"id": "tip:mid", "sci": "Apis mid", "fame": 10,
+             "lineage": ["kng:Animalia", "fam:Aidae", "gen:Apis"]},
+            {"id": "tip:rare", "sci": "Rarus rare", "fame": 0,
+             "lineage": ["kng:Animalia", "fam:Bidae", "gen:Rarus"]},
+        ],
+        "aliases": {"famous": ["tip:famous"], "rare": ["tip:rare"], "apis": ["gen:Apis"]},
+    }
+
+
+def test_notable_blob_coverage_frontier_and_aliases():
+    blob = assetmod.build_notable_blob(_hybrid_doc(), coverage=0.9, min_tips=1, max_tips=2,
+                                       frontier_rank="family")
+    # Coverage 0.9 of fame mass (1010) is met by the single famous tip.
+    assert [t["id"] for t in blob["tips"]] == ["tip:famous"]
+    assert blob["notable_count"] == 1
+    node_ids = {n["id"] for n in blob["nodes"]}
+    # Every family ships (complete coarse backbone) so a tail species has a present anchor —
+    # even fam:Bidae, whose only species (rare) is NOT in the blob.
+    assert {"fam:Aidae", "fam:Bidae", "kng:Animalia"} <= node_ids
+    # A genus ships only as an ancestor of a notable tip.
+    assert "gen:Apis" in node_ids and "gen:Rarus" not in node_ids
+    # Aliases are filtered to shipped targets.
+    assert "famous" in blob["aliases"] and "apis" in blob["aliases"]
+    assert "rare" not in blob["aliases"]
+    # Pool counts stay FULL (the game counts against the whole tree).
+    assert next(n for n in blob["nodes"] if n["id"] == "fam:Aidae")["pool_count"] == 2
+
+
+def test_notable_blob_ships_whole_when_it_fits():
+    doc = _hybrid_doc()
+    # max=0 disables capping; a generous min also keeps the whole pool.
+    assert assetmod.build_notable_blob(doc, max_tips=0) is doc
+    assert assetmod.build_notable_blob(doc, coverage=0.9, min_tips=10, max_tips=20) is doc

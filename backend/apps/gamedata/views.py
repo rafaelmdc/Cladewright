@@ -82,7 +82,8 @@ class ScopesView(APIView):
         try:
             rows = list(
                 AssetVersion.objects.filter(is_current=True)
-                .values("scope", "label", "pool_size", "pool_size_extant", "version")
+                .values("scope", "label", "pool_size", "pool_size_extant", "version",
+                        "notable_count")
                 .order_by("label", "scope")
             )
             # `blob__isnull` without pulling the (possibly huge) blob into Python.
@@ -93,6 +94,14 @@ class ScopesView(APIView):
         except DatabaseError:
             return Response({"scopes": []})
 
+        def mode_of(r: dict) -> str:
+            # No blob → legacy pure-remote. Capped blob (notable_count>0) → hybrid: the
+            # client plays the local blob and resolves the tail via /search + /resolve.
+            # Whole-pool blob → blob (no tail).
+            if r["scope"] not in blob_scopes:
+                return "remote"
+            return "hybrid" if r["notable_count"] else "blob"
+
         scopes = [
             {
                 "key": r["scope"],
@@ -100,7 +109,9 @@ class ScopesView(APIView):
                 "tip_count": r["pool_size"],
                 "extant_count": r["pool_size_extant"],
                 "version": r["version"],
-                "mode": "blob" if r["scope"] in blob_scopes else "remote",
+                "mode": mode_of(r),
+                # In hybrid mode, how many tips ship locally (the rest are the remote tail).
+                "notable_count": r["notable_count"],
             }
             for r in rows
         ]

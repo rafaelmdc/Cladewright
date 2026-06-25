@@ -151,6 +151,15 @@ class PipelineJobAdmin(admin.ModelAdmin):
             "fields": ("scope_key", "label", "scope_filter", "enrich", "include_extinct",
                        "load_current", "delete_old"),
         }),
+        ("Notable blob (delivery)", {
+            "fields": ("notable_max", "notable_coverage", "notable_min", "frontier_rank",
+                       "fame_dump"),
+            "description": "How much of the scope ships as the local client blob. Leave "
+                           "notable_max=0 to ship the whole pool (fine up to ~20k tips). For a "
+                           "huge scope, set notable_max (~20000) → hybrid: a top-fame blob + the "
+                           "rest via search/resolve. fame_dump points fame at a Wikimedia "
+                           "pageview dump for million-tip scopes.",
+        }),
         ("Source / lifecycle", {
             "fields": ("coldp_dir", "status", "log", "requested_by", "created_at",
                        "started_at", "finished_at"),

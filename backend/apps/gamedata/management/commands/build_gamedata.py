@@ -68,6 +68,22 @@ class Command(BaseCommand):
                             help="Dump year (with --fame-month), if not inferable from --fame-dump.")
         parser.add_argument("--fame-month", type=int, default=0,
                             help="Dump month 1-12 (with --fame-year).")
+        parser.add_argument("--notable-max", type=int, default=0,
+                            help="Hard ceiling on tips shipped in the client blob; 0 (default) = "
+                                 "ship the WHOLE pool (no remote tail). Above it the scope is served "
+                                 "hybrid: notable blob + complete coarse backbone + the rest via "
+                                 "/search + /resolve. The full pool always lands in the DB.")
+        parser.add_argument("--notable-coverage", type=float, default=0.9,
+                            help="Target fraction of total fame (≈pageview) mass the blob should "
+                                 "cover; guesses track popularity, so this ≈ fraction served "
+                                 "locally. Clamped to [--notable-min, --notable-max].")
+        parser.add_argument("--notable-min", type=int, default=5000,
+                            help="Floor on tips shipped, so a popularity-concentrated scope still "
+                                 "ships a meaty offline pool.")
+        parser.add_argument("--frontier-rank", default="family",
+                            help="Coarse-backbone cut always shipped in the blob (and the deepest "
+                                 "rank /resolve trims to), e.g. 'family'. Guarantees every tail "
+                                 "species has a present anchor.")
 
     def handle(self, *args, **opts) -> None:
         coldp_dir: Path = opts["coldp_dir"]
@@ -127,6 +143,10 @@ class Command(BaseCommand):
             scope=scope_key,
             label=label,
             version=opts["asset_version"],
+            notable_coverage=opts["notable_coverage"],
+            notable_min=opts["notable_min"],
+            notable_max=opts["notable_max"],
+            frontier_rank=opts["frontier_rank"],
         )
         validate.validate_asset(doc)
         asset_builder.write_asset(doc, opts["out"])

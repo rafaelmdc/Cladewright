@@ -29,6 +29,99 @@ def _lineage_ids(tree: Tree, parent_id: str) -> list[str]:
     return chain
 
 
+# Coarse→fine rank order: the "frontier" cut keeps every node at or above a rank (e.g.
+# family) in the notable blob, so a tail species always has a present anchor to attach to.
+_RANK_ORDER = [
+    "domain", "kingdom", "subkingdom", "phylum", "subphylum", "superclass", "class",
+    "subclass", "infraclass", "superorder", "order", "suborder", "infraorder",
+    "superfamily", "family", "subfamily", "tribe", "subtribe", "genus", "subgenus",
+    "species",
+]
+_RANK_INDEX = {r: i for i, r in enumerate(_RANK_ORDER)}
+
+
+def _at_or_above(rank: str, frontier: str) -> bool:
+    """True if ``rank`` is coarser-or-equal to ``frontier`` (so it's kept in the blob).
+    Unknown ranks fall below any frontier (kept only when an ancestor of a notable tip)."""
+    f = _RANK_INDEX.get(frontier)
+    r = _RANK_INDEX.get(rank)
+    return f is not None and r is not None and r <= f
+
+
+def _notable_count(tips: list[dict], *, coverage: float, min_tips: int, max_tips: int) -> int:
+    """How many top-fame tips to ship: enough to cover ``coverage`` of the total fame mass
+    (player guesses track popularity, which is power-law — a small head covers most of it),
+    clamped to ``[min_tips, max_tips]``. Returns a count ≥ len(tips) to mean "ship whole"."""
+    n = len(tips)
+    if max_tips <= 0:
+        return n  # capping disabled → ship whole
+    need = 0
+    total = sum(int(t.get("fame", 0)) for t in tips)
+    if coverage > 0 and total > 0:
+        target = coverage * total
+        acc = 0
+        need = n
+        for i, t in enumerate(sorted(tips, key=lambda t: -int(t.get("fame", 0)))):
+            acc += int(t.get("fame", 0))
+            if acc >= target:
+                need = i + 1
+                break
+    count = min(max(need, min_tips), max_tips)
+    return count if count < n else n
+
+
+def build_notable_blob(
+    doc: dict,
+    *,
+    coverage: float = 0.9,
+    min_tips: int = 5000,
+    max_tips: int = 20000,
+    frontier_rank: str = "family",
+) -> dict:
+    """Derive the capped "notable" blob shipped to the client from a FULL asset doc.
+
+    No pure-remote mode (D7): every scope ships a substantial local blob, the rest is the
+    remote tail. The blob keeps the most-famous tips (by fame coverage, see
+    ``_notable_count``) plus the **complete coarse backbone** (every node at/above
+    ``frontier_rank``) ∪ the notable tips' own ancestors, so any tail species resolved
+    later attaches to an already-present anchor. Pool counts (the "N remaining"
+    denominators) are left at their FULL values — the game still counts against the whole
+    tree. Returns ``doc`` unchanged when the whole pool fits."""
+    tips = doc.get("tips", [])
+    count = _notable_count(tips, coverage=coverage, min_tips=min_tips, max_tips=max_tips)
+    if count >= len(tips):
+        return doc
+
+    # Top-N by fame, deterministic (fame desc, then id) — mirrors the resolve tie-break.
+    notable = sorted(tips, key=lambda t: (-int(t.get("fame", 0)), t["id"]))[:count]
+    notable_ids = {t["id"] for t in notable}
+
+    keep_nodes: set[str] = set()
+    for n in doc.get("nodes", []):
+        if _at_or_above(n.get("rank", ""), frontier_rank):
+            keep_nodes.add(n["id"])
+    for t in notable:  # the notable tips' own ancestors (incl. sub-frontier genera)
+        keep_nodes.update(t.get("lineage", []))
+
+    nodes = [n for n in doc.get("nodes", []) if n["id"] in keep_nodes]
+
+    # Aliases: keep only entries that still resolve to a shipped tip or node.
+    shipped = notable_ids | keep_nodes
+    aliases: dict[str, list[str]] = {}
+    for key, targets in doc.get("aliases", {}).items():
+        kept = [t for t in targets if t in shipped]
+        if kept:
+            aliases[key] = kept
+
+    blob = dict(doc)
+    blob["nodes"] = nodes
+    blob["tips"] = notable
+    blob["aliases"] = aliases
+    blob["notable_count"] = len(notable)  # how many tips actually shipped
+    blob["frontier_rank"] = frontier_rank
+    return blob
+
+
 def build_asset(
     tree: Tree,
     enriched: list[EnrichedTip],
@@ -40,6 +133,10 @@ def build_asset(
     label: str = "",
     version: int = 1,
     provenance: dict | None = None,
+    notable_coverage: float = 0.0,
+    notable_min: int = 5000,
+    notable_max: int = 0,
+    frontier_rank: str = "family",
 ) -> dict:
     node_names = node_names or {}
     group_aliases = group_aliases or {}
@@ -163,6 +260,14 @@ def build_asset(
         # toggle is off. Equals pool_size when no extinct were pooled.
         "pool_size_extant": extant_tips,
         "thresholds": {"hidden_label_max": hidden_label_max},
+        # Notable-blob selection (by fame coverage, clamped to [min,max]) + the coarse-
+        # backbone frontier. notable_max=0 ⇒ ship the whole pool (no remote tail). The full
+        # doc carries these so load_gamedata derives the capped client blob while storing the
+        # full relational mirror for the remote tail. See build_notable_blob.
+        "notable_coverage": notable_coverage,
+        "notable_min": notable_min,
+        "notable_max": notable_max,
+        "frontier_rank": frontier_rank,
         "provenance": prov,
         "nodes": nodes,
         "tips": tips,

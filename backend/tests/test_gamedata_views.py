@@ -5,6 +5,11 @@ edge-cache /resolve, /search, and the blob; an unpinned ("current") request must
 """
 from __future__ import annotations
 
+import json
+import tempfile
+from pathlib import Path
+
+from django.core.management import call_command
 from django.test import TestCase
 from django.urls import reverse
 
@@ -70,3 +75,60 @@ class VersionedCachingTests(TestCase):
         self.assertEqual(b.status_code, 200)
         self.assertEqual(b["Cache-Control"], IMMUTABLE)
         self.assertEqual(b.json()["version"], 1)  # the pinned blob, not current (v2)
+
+
+# Full asset (3 tips) with a cap of 1 → hybrid: blob ships the famous tip + complete
+# coarse backbone; the relational mirror stays full so the tail (tip:rare) resolves.
+HYBRID_ASSET = {
+    "version": 5, "schema": "1.0", "scope": "ants", "label": "Ants", "pool_size": 3,
+    "pool_size_extant": 3, "thresholds": {"hidden_label_max": 15}, "provenance": {},
+    "notable_coverage": 0.9, "notable_min": 1, "notable_max": 1, "frontier_rank": "family",
+    "nodes": [
+        {"id": "kng:Animalia", "rank": "kingdom", "sci": "Animalia", "parent": None, "pool_count": 3},
+        {"id": "fam:Aidae", "rank": "family", "sci": "Aidae", "parent": "kng:Animalia", "pool_count": 2},
+        {"id": "gen:Apis", "rank": "genus", "sci": "Apis", "parent": "fam:Aidae", "pool_count": 2},
+        {"id": "fam:Bidae", "rank": "family", "sci": "Bidae", "parent": "kng:Animalia", "pool_count": 1},
+        {"id": "gen:Rarus", "rank": "genus", "sci": "Rarus", "parent": "fam:Bidae", "pool_count": 1},
+    ],
+    "tips": [
+        {"id": "tip:famous", "sci": "Apis famous", "common": "famous ant", "parent": "gen:Apis",
+         "fame": 1000, "lineage": ["kng:Animalia", "fam:Aidae", "gen:Apis"], "traits": {}},
+        {"id": "tip:mid", "sci": "Apis mid", "common": "mid ant", "parent": "gen:Apis",
+         "fame": 10, "lineage": ["kng:Animalia", "fam:Aidae", "gen:Apis"], "traits": {}},
+        {"id": "tip:rare", "sci": "Rarus rare", "common": "rare ant", "parent": "gen:Rarus",
+         "fame": 0, "lineage": ["kng:Animalia", "fam:Bidae", "gen:Rarus"], "traits": {}},
+    ],
+    "aliases": {"famous ant": ["tip:famous"], "rare ant": ["tip:rare"]},
+}
+
+
+class HybridLoadTests(TestCase):
+    def _load(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "ants.json"
+            p.write_text(json.dumps(HYBRID_ASSET))
+            call_command("load_gamedata", asset=p, current=True)
+
+    def test_blob_is_capped_but_mirror_is_full(self) -> None:
+        self._load()
+        av = AssetVersion.objects.get(scope="ants", version=5)
+        # Blob ships only the notable tip; the relational mirror keeps all three.
+        self.assertEqual([t["id"] for t in av.blob["tips"]], ["tip:famous"])
+        self.assertEqual(av.notable_count, 1)
+        self.assertEqual(TaxonTip.objects.filter(asset=av).count(), 3)
+
+    def test_scopes_reports_hybrid(self) -> None:
+        self._load()
+        r = self.client.get(reverse("gamedata-scopes"))
+        ants = next(s for s in r.json()["scopes"] if s["key"] == "ants")
+        self.assertEqual(ants["mode"], "hybrid")
+        self.assertEqual(ants["notable_count"], 1)
+
+    def test_tail_tip_resolves_from_mirror(self) -> None:
+        self._load()
+        # tip:rare is NOT in the client blob, but the relational mirror resolves it.
+        r = self.client.get(reverse("gamedata-resolve"), {"scope": "ants", "id": "tip:rare"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["target"]["id"], "tip:rare")
+        self.assertEqual([n["id"] for n in r.json()["lineage"]],
+                         ["kng:Animalia", "fam:Bidae", "gen:Rarus"])

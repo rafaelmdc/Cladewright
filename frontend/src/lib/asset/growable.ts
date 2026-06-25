@@ -19,18 +19,37 @@ export interface ResolvedNode {
   pool_count_extant?: number; // absent on older serves -> falls back to pool_count
 }
 
-/** A /resolve response: the placed target plus its denormalized root→… lineage. */
+/** A /resolve response: the placed target plus its denormalized lineage. In hybrid mode
+ *  the server TRIMS the lineage to start at `anchor` — the deepest frontier node the client
+ *  already holds in its blob — so a tail guess ships ≈species→genus, not a whole order. The
+ *  client rebuilds the full root→parent chain from the anchor's seeded ancestors (for MRCA).
+ *  Untrimmed (whole-pool / pure-remote) responses omit `anchor` and start at the root. */
 export interface ResolvePayload {
   target:
     | { id: string; kind: "tip"; sci: string; common: string; traits: AssetTip["traits"] }
     | { id: string; kind: "node"; sci: string; common: string | null; rank: string; pool_count: number };
   lineage: ResolvedNode[];
+  anchor?: string;
 }
 
-/** An empty remote-mode asset: no nodes/tips yet, grown by foldResolved(). */
-export function createEmptyAsset(scope: string, hiddenLabelMax: number): InternedAsset {
+/** Indices of the ancestor chain strictly above `idx` (root→…→parent of idx), walked from
+ *  the already-seeded backbone parent pointers. Empty when `idx` is the root. */
+function ancestorIndices(asset: InternedAsset, idx: number): number[] {
+  const chain: number[] = [];
+  let cur = asset.parent[idx];
+  while (cur >= 0) {
+    chain.push(cur);
+    cur = asset.parent[cur];
+  }
+  chain.reverse();
+  return chain;
+}
+
+/** An empty remote-mode asset: no nodes/tips yet, grown by foldResolved(). `version` pins
+ *  the scope's current build so /search + /resolve hit immutable, edge-cacheable URLs. */
+export function createEmptyAsset(scope: string, hiddenLabelMax: number, version = 0): InternedAsset {
   const raw: GameAsset = {
-    version: 0,
+    version,
     schema: "1.0",
     scope,
     pool_size: 0,
@@ -53,6 +72,54 @@ export function createEmptyAsset(scope: string, hiddenLabelMax: number): Interne
     tipById: new Map(),
     nodeById: new Map(),
     hiddenLabelMax,
+    negativeCache: new Set(),
+  };
+}
+
+/** A *hybrid* asset: seed the growable structures from the downloaded notable blob, so the
+ *  famous ~99% resolve locally via the baked alias index, and the long tail still grows via
+ *  /resolve (foldResolved dedups against these seeded nodes). Same shape as a remote asset
+ *  but pre-populated and with `raw.aliases` kept for local resolution. Hot arrays are number[]
+ *  (appendable) — unlike intern()'s fixed Int32Array. */
+export function seedHybridAsset(raw: GameAsset): InternedAsset {
+  const nodeIndex = new Map<string, number>();
+  const nodeIds: string[] = [];
+  for (const node of raw.nodes) {
+    nodeIndex.set(node.id, nodeIds.length);
+    nodeIds.push(node.id);
+  }
+  const poolCount: number[] = [];
+  const poolCountExtant: number[] = [];
+  const parent: number[] = [];
+  const nodeById = new Map<string, AssetNode>();
+  for (const node of raw.nodes) {
+    poolCount.push(node.pool_count);
+    poolCountExtant.push(node.pool_count_extant ?? node.pool_count);
+    parent.push(node.parent === null ? -1 : (nodeIndex.get(node.parent) ?? -1));
+    nodeById.set(node.id, node);
+  }
+  const tipLineage = new Map<string, Int32Array>();
+  const tipById = new Map<string, AssetTip>();
+  for (const tip of raw.tips) {
+    const arr = new Int32Array(tip.lineage.length);
+    for (let k = 0; k < tip.lineage.length; k++) arr[k] = nodeIndex.get(tip.lineage[k]) ?? -1;
+    tipLineage.set(tip.id, arr);
+    tipById.set(tip.id, tip);
+  }
+  return {
+    raw,
+    mode: "hybrid",
+    scope: raw.scope,
+    nodeIndex,
+    nodeIds,
+    poolCount,
+    poolCountExtant,
+    parent,
+    tipLineage,
+    tipById,
+    nodeById,
+    hiddenLabelMax: raw.thresholds.hidden_label_max,
+    negativeCache: new Set(),
   };
 }
 
@@ -95,13 +162,21 @@ function ensureNode(
  * O(L) — only touches this organism's lineage.
  */
 export function foldResolved(asset: InternedAsset, payload: ResolvePayload): Target {
-  // 1) Materialize the ancestor chain (root→…), wiring each node's parent index.
+  // 1) Materialize the supplied chain, wiring each node's parent index. The chain starts at
+  //    the root (untrimmed) or at the anchor (trimmed hybrid response); the anchor already
+  //    exists, so ensureNode returns its index without disturbing its blob-wired parent.
   const lineageIdx: number[] = [];
   let parentIdx = -1;
   for (const n of payload.lineage) {
     parentIdx = ensureNode(asset, n, parentIdx);
     lineageIdx.push(parentIdx);
   }
+  // Rebuild the FULL root→parent index chain by prepending the first node's seeded
+  // ancestors. Untrimmed → first node is the root → empty prefix (unchanged behaviour);
+  // trimmed → prepends the anchor's ancestors the client already holds. MRCA-critical.
+  const fullIdx = lineageIdx.length
+    ? ancestorIndices(asset, lineageIdx[0]).concat(lineageIdx)
+    : [];
 
   // 2a) A clade node target IS the last lineage entry — already folded above.
   if (payload.target.kind === "node") {
@@ -109,7 +184,7 @@ export function foldResolved(asset: InternedAsset, payload: ResolvePayload): Tar
     return { kind: "node", id: payload.target.id, node };
   }
 
-  // 2b) A tip: its lineage is the whole ancestor chain; parent is the last node.
+  // 2b) A tip: its lineage is the full ancestor chain; parent is the last node.
   const id = payload.target.id;
   const existingTip = asset.tipById.get(id);
   if (existingTip) return { kind: "tip", id, tip: existingTip };
@@ -119,10 +194,10 @@ export function foldResolved(asset: InternedAsset, payload: ResolvePayload): Tar
     sci: payload.target.sci,
     common: payload.target.common,
     parent: payload.lineage.length ? payload.lineage[payload.lineage.length - 1].id : "",
-    lineage: payload.lineage.map((n) => n.id),
+    lineage: fullIdx.map((i) => asset.nodeIds[i]),
     traits: payload.target.traits,
   };
   asset.tipById.set(id, tip);
-  asset.tipLineage.set(id, Int32Array.from(lineageIdx));
+  asset.tipLineage.set(id, Int32Array.from(fullIdx));
   return { kind: "tip", id, tip };
 }

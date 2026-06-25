@@ -34,6 +34,11 @@ function sciOf(t: Target): string {
   return t.kind === "tip" ? t.tip.sci : t.node.sci;
 }
 
+/** Popularity of a target — tips carry a fame score; clade nodes have none (0). */
+function fameOf(t: Target): number {
+  return t.kind === "tip" ? t.tip.fame ?? 0 : 0;
+}
+
 function isPrimary(t: Target, q: string): boolean {
   const common = t.kind === "tip" ? t.tip.common : t.node.common;
   return normalize(sciOf(t)) === q || (common != null && normalize(common) === q);
@@ -72,8 +77,8 @@ export function resolve(asset: InternedAsset, query: string, scientificOnly = fa
   );
   if (specific.length > 0) cands = specific;
 
-  // 3) Genuine ambiguity (e.g. "elk" = wapiti/moose) -> deterministic by id.
-  //    (A popularity tie-break is post-MVP, deferred with the fame system.)
-  cands.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  // 3) Genuine ambiguity (e.g. "elk" = wapiti/moose) -> the more famous taxon
+  //    (enwiki pageviews), with id as the deterministic final tie-break.
+  cands.sort((a, b) => fameOf(b) - fameOf(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return cands[0];
 }

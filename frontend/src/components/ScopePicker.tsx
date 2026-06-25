@@ -52,14 +52,14 @@ export function ScopePicker({
         : `${selected.length} clades`;
 
   function toggle(s: ScopeInfo) {
-    // Single-select (leaderboard filter), or a remote scope (not mergeable): replace the
-    // whole selection and close.
-    if (!multiple || s.mode === "remote") {
+    // Single-select (leaderboard filter), or a scope with a remote tail (hybrid/remote —
+    // not mergeable): replace the whole selection and close. Only pure blobs merge.
+    if (!multiple || s.mode !== "blob") {
       onChange([s.key]);
       setOpen(false);
       return;
     }
-    const blobValue = value.filter((k) => scopes.find((x) => x.key === k)?.mode !== "remote");
+    const blobValue = value.filter((k) => scopes.find((x) => x.key === k)?.mode === "blob");
     const has = blobValue.includes(s.key);
     // Never let the selection become empty — toggling the last one off is a no-op.
     const next = has ? blobValue.filter((k) => k !== s.key) : [...blobValue, s.key];
@@ -116,7 +116,7 @@ export function ScopePicker({
                         </span>
                       )}
                       <span className="font-hand text-xl leading-none">{s.label}</span>
-                      {s.mode === "remote" && (
+                      {s.mode !== "blob" && (
                         <span
                           className={`rounded-full px-1.5 py-px font-mono text-[9px] uppercase tracking-wide ${
                             on ? "bg-clade-paper/25" : "bg-clade-note text-clade-ink/70"

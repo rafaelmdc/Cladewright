@@ -1,6 +1,8 @@
 // Wire shape of the game-data asset. Mirrors docs/game-asset-format.md — keep in
 // sync with that contract and the backend pipeline's asset.py.
 
+import type { FuseFilter } from "./membership";
+
 export interface AssetNode {
   id: string;
   rank: string;
@@ -17,8 +19,10 @@ export interface AssetTip {
   common: string;
   parent: string;
   lineage: string[]; // ordered root→parent ancestor node ids; MRCA = last shared prefix
-  // (No fame/time_weight: the pageview popularity system is post-MVP; the Marathon
-  //  time bonus is novelty-only, computed live. Keep in sync with backend asset.py.)
+  // Popularity score (enwiki pageviews, sitelink-count fallback). Breaks ambiguous
+  // name ties (famous "robin" wins). Optional: older assets predate it → treated as 0.
+  // Keep in sync with backend asset.py.
+  fame?: number;
   traits: {
     environment: string[];
     biomes: string[];
@@ -62,8 +66,10 @@ export interface InternedAsset {
   /** blob mode carries the full source asset; remote mode has only metadata + a
    *  growing `aliases` map (server is the source of truth for names). */
   raw: GameAsset;
-  /** "blob" = complete, downloaded whole; "remote" = grown incrementally via /resolve */
-  mode: "blob" | "remote";
+  /** "blob" = complete pool downloaded whole; "hybrid" = a notable blob downloaded AND
+   *  grown on the tail via /resolve (local alias index first, remote on miss); "remote" =
+   *  started empty, grown entirely via /resolve. */
+  mode: "blob" | "hybrid" | "remote";
   /** scope key, threaded onto /search + /resolve requests in remote mode */
   scope?: string;
   /** node id -> integer index */
@@ -83,4 +89,10 @@ export interface InternedAsset {
   /** clade-node id -> node record */
   nodeById: Map<string, AssetNode>;
   hiddenLabelMax: number;
+  /** hybrid/remote: binary-fuse8 membership filter — a typed name that's "definitely
+   *  absent" is rejected locally (no /search). Undefined for whole-pool blob scopes. */
+  filter?: FuseFilter;
+  /** hybrid/remote: normalized queries already known to resolve to nothing (filter-rejected
+   *  or a remote miss), so a repeated typo never re-hits the network. */
+  negativeCache?: Set<string>;
 }

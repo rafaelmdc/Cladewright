@@ -7,7 +7,8 @@
 // See docs/architecture.md#scaling-to-huge-scope and AGENTS.md (keep the server light).
 
 import { foldResolved } from "../asset/growable";
-import { resolveRemote, searchRemote } from "../asset/remote";
+import { mightContain } from "../asset/membership";
+import { resolveByName } from "../asset/remote";
 import type { InternedAsset, Target } from "../asset/types";
 import { normalize } from "./normalize";
 import { resolve } from "./resolve";
@@ -19,21 +20,36 @@ export async function resolveTarget(
 ): Promise<Target | null> {
   if (asset.mode === "blob") return resolve(asset, query, scientificOnly);
 
-  const hits = await searchRemote(asset.scope, query);
-  if (hits.length === 0) return null;
-  // /search already ranks exact→prefix→shortest; prefer an exact name match, else the top
-  // hit (mirrors the local resolver preferring a primary name).
-  const norm = normalize(query);
-  const best = hits.find((h) => h.name === norm) ?? hits[0];
+  // Hybrid: the famous ~99% resolve locally in the baked notable-blob index; only a genuine
+  // tail miss falls through to the remote /search + /resolve path below.
+  if (asset.mode === "hybrid") {
+    const local = resolve(asset, query, scientificOnly);
+    if (local) return local;
+  }
 
-  const payload = await resolveRemote(asset.scope, best.id);
-  if (!payload) return null;
+  const q = normalize(query);
+  // Gate the tail: a repeat miss, or a name the membership filter says is "definitely
+  // absent" (a typo / out-of-scope guess), is rejected locally — no network at all.
+  if (asset.negativeCache?.has(q)) return null;
+  if (asset.filter && !mightContain(asset.filter, q)) {
+    asset.negativeCache?.add(q);
+    return null;
+  }
+
+  const version = asset.raw.version;
+  // Exact name → full placement payload in one call (server-side O(log n) btree equality,
+  // immutable + cached). The most-famous taxon wins a shared name.
+  const payload = await resolveByName(asset.scope, q, version);
+  if (!payload) {
+    asset.negativeCache?.add(q);
+    return null;
+  }
   const target = foldResolved(asset, payload);
   // Scientific difficulty: only the actual scientific name counts (common-name aliases
   // can match /search, so gate the resolved target on its sci name here too).
   if (target && scientificOnly) {
     const sci = target.kind === "tip" ? target.tip.sci : target.node.sci;
-    if (normalize(sci) !== norm) return null;
+    if (normalize(sci) !== q) return null;
   }
   return target;
 }

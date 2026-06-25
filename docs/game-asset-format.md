@@ -77,8 +77,10 @@ One entry per internal node kept in the induced tree.
   "parent": "gen:Ursus",
   "lineage": ["root","kng:Animalia","phy:Chordata", "...","gen:Ursus"],
   // ordered root→parent ancestor ids; MRCA(a,b) = last shared prefix element. O(L).
-  // (No `fame`/`time_weight`: the pageview-based popularity system is post-MVP. The
-  //  Marathon time bonus is novelty-only for now — computed live from the MRCA depth.)
+  "fame": 84187,                   // popularity score: enwiki monthly pageviews, with
+  // Wikidata sitelink count as the fallback for taxa with no enwiki article; 0 when
+  // neither is known (offline builds). Ranks the pool for the capped "notable" blob,
+  // breaks ambiguous name ties (famous "robin" wins), and weights the Marathon bonus.
   "traits": {                      // nameless-hint material (Stage 1 metadata)
     "environment": ["terrestrial"],
     "biomes": ["Palearctic","Nearctic"],

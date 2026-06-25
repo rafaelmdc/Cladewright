@@ -76,6 +76,29 @@ class Command(BaseCommand):
             AssetVersion.objects.filter(scope=scope, version=version).delete()
 
             pool_size = int(doc.get("pool_size", len(tips)))
+            # The client blob is the capped "notable" subset (top-fame + complete coarse
+            # backbone); the relational mirror below stays FULL so the tail resolves via
+            # /search + /resolve. A scope whose whole pool fits gets the full doc as its blob.
+            from pipeline.asset import build_notable_blob
+
+            blob_doc = build_notable_blob(
+                doc,
+                coverage=float(doc.get("notable_coverage", 0.0)),
+                min_tips=int(doc.get("notable_min", 5000)),
+                max_tips=int(doc.get("notable_max", 0)),
+                frontier_rank=str(doc.get("frontier_rank", "family")),
+            )
+            notable_count = len(blob_doc["tips"]) if blob_doc is not doc else 0
+
+            # Membership filter over the FULL key set, but only when there's a tail to gate:
+            # a hybrid scope (capped blob) or a relational-only remote scope. A whole-pool
+            # blob already holds every name locally, so it needs no filter.
+            membership = None
+            if not opts["no_relational"] and (notable_count or opts["no_blob"]):
+                from apps.gamedata.membership import build_filter
+
+                membership = build_filter(aliases.keys())
+
             asset = AssetVersion.objects.create(
                 scope=scope,
                 label=doc.get("label", ""),
@@ -83,9 +106,12 @@ class Command(BaseCommand):
                 schema=doc.get("schema", "1.0"),
                 pool_size=pool_size,
                 pool_size_extant=int(doc.get("pool_size_extant", pool_size)),
+                notable_count=notable_count,
+                frontier_rank=str(doc.get("frontier_rank", "family")),
                 hidden_label_max=int(doc.get("thresholds", {}).get("hidden_label_max", 15)),
                 provenance=doc.get("provenance", {}),
-                blob=None if opts["no_blob"] else doc,
+                blob=None if opts["no_blob"] else blob_doc,
+                membership_filter=membership,
                 is_current=opts["current"],
             )
 
@@ -101,10 +127,15 @@ class Command(BaseCommand):
                     ma.apply_to_asset(asset)
 
         kind = "current" if opts["current"] else "stored"
+        if opts["no_blob"]:
+            blob_note = ""
+        elif notable_count:
+            blob_note = f" (+hybrid blob: {notable_count} notable, tail via /resolve)"
+        else:
+            blob_note = " (+blob, whole pool)"
         self.stdout.write(self.style.SUCCESS(
             f"{kind}: {scope} v{version} — {len(nodes)} nodes, {len(tips)} tips, "
-            f"{len(aliases)} aliases"
-            + ("" if opts["no_blob"] else " (+blob)")
+            f"{len(aliases)} aliases" + blob_note
         ))
 
     def _load_nodes(self, asset, nodes, node_lineage) -> None:
@@ -126,6 +157,7 @@ class Command(BaseCommand):
             TaxonTip(
                 asset=asset, key=t["id"], sci=t["sci"], common=t.get("common", t["sci"]),
                 parent_key=t["parent"], lineage=t.get("lineage", []), traits=t.get("traits", {}),
+                fame=int(t.get("fame", 0)),
             )
             for t in tips
         ]
@@ -141,7 +173,7 @@ class Command(BaseCommand):
                 if tip is not None:
                     rows.append(Alias(asset=asset, norm=norm, target_key=target,
                                       target_kind=Alias.TIP, sci=tip["sci"],
-                                      common=tip.get("common")))
+                                      common=tip.get("common"), fame=int(tip.get("fame", 0))))
                 elif node is not None:
                     rows.append(Alias(asset=asset, norm=norm, target_key=target,
                                       target_kind=Alias.NODE, sci=node["sci"],

@@ -9,7 +9,8 @@ export interface ScopeInfo {
   tip_count: number; // all pool tips (incl. extinct)
   extant_count: number; // excluding extinct — the "living only" denominator
   version: number;
-  mode: "blob" | "remote";
+  mode: "blob" | "hybrid" | "remote";
+  notable_count?: number; // hybrid: tips shipped locally (the rest are the remote tail)
 }
 
 /** Fetch the available scopes. Returns [] if the backend is down (caller falls back to

@@ -11,10 +11,13 @@ class TaxonTipAdmin(admin.ModelAdmin):
     """Browse an asset's playable species — search a name to find the id to alias. Read-only
     (the asset is pipeline output); aliasing is done via Manual aliases."""
 
-    list_display = ("common", "sci", "key", "asset")
+    # Ordered by fame (enwiki pageviews / sitelink fallback): filter to a scope and the list
+    # IS its popularity ranking — the most-famous species first, the obscure tail last.
+    list_display = ("fame", "common", "sci", "key", "asset")
     list_filter = ("asset",)
     search_fields = ("sci", "common", "key")
     list_select_related = ("asset",)
+    ordering = ("-fame", "key")
 
     def has_add_permission(self, request) -> bool:
         return False
@@ -150,6 +153,15 @@ class PipelineJobAdmin(admin.ModelAdmin):
         ("Build asset (ignored for a Download job)", {
             "fields": ("scope_key", "label", "scope_filter", "enrich", "include_extinct",
                        "load_current", "delete_old"),
+        }),
+        ("Notable blob (delivery)", {
+            "fields": ("notable_max", "notable_coverage", "notable_min", "frontier_rank",
+                       "fame_dump"),
+            "description": "How much of the scope ships as the local client blob. Leave "
+                           "notable_max=0 to ship the whole pool (fine up to ~20k tips). For a "
+                           "huge scope, set notable_max (~20000) → hybrid: a top-fame blob + the "
+                           "rest via search/resolve. fame_dump points fame at a Wikimedia "
+                           "pageview dump for million-tip scopes.",
         }),
         ("Source / lifecycle", {
             "fields": ("coldp_dir", "status", "log", "requested_by", "created_at",

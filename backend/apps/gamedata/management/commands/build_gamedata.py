@@ -59,6 +59,15 @@ class Command(BaseCommand):
         parser.add_argument("--enrich", choices=["offline", "braidworks"], default="offline",
                             help="Enrichment provider: offline stub (default) or real "
                                  "Braidworks (Wikidata names + enwiki titles).")
+        parser.add_argument("--fame-dump", default="",
+                            help="Path to a Wikimedia monthly pageview_complete dump "
+                                 "(pageviews-YYYYMM-user.bz2). When set, fame uses the local "
+                                 "dump backend (scales to huge scopes); otherwise the keyless "
+                                 "pageviews REST api (fine for the current few-thousand-tip scopes).")
+        parser.add_argument("--fame-year", type=int, default=0,
+                            help="Dump year (with --fame-month), if not inferable from --fame-dump.")
+        parser.add_argument("--fame-month", type=int, default=0,
+                            help="Dump month 1-12 (with --fame-year).")
 
     def handle(self, *args, **opts) -> None:
         coldp_dir: Path = opts["coldp_dir"]
@@ -82,7 +91,12 @@ class Command(BaseCommand):
         # One provider instance shared across stages so a Braidworks batch (network)
         # runs once and species + clade names both read its cache.
         provider = (
-            enrich.BraidworksProvider() if opts["enrich"] == "braidworks"
+            enrich.BraidworksProvider(
+                fame_dump_path=opts["fame_dump"] or None,
+                fame_year=opts["fame_year"] or None,
+                fame_month=opts["fame_month"] or None,
+            )
+            if opts["enrich"] == "braidworks"
             else enrich.OfflineProvider()
         )
 

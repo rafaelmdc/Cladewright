@@ -98,6 +98,8 @@ class EnrichProvider(Protocol):
     def harvest(
         self, scientific_names: list[str], ranks: dict[str, str] | None = None
     ) -> None: ...
+    def harvest_fame(self, scientific_names: list[str]) -> None: ...
+    def fame_for(self, scientific_name: str) -> int: ...
     def names_for(self, scientific_name: str) -> list[str]: ...
     def common_name(self, taxon: Taxon) -> str | None: ...
     def names(self, taxon: Taxon) -> list[str]: ...
@@ -114,6 +116,12 @@ class OfflineProvider:
         self, scientific_names: list[str], ranks: dict[str, str] | None = None
     ) -> None:
         return None  # offline has no name source beyond CoL vernacular
+
+    def harvest_fame(self, scientific_names: list[str]) -> None:
+        return None  # offline has no popularity signal
+
+    def fame_for(self, scientific_name: str) -> int:
+        return 0
 
     def names_for(self, scientific_name: str) -> list[str]:
         return []
@@ -137,9 +145,23 @@ class BraidworksProvider:
     Call ``prepare(taxa)`` once before ``common_name`` / ``names`` (the pipeline does).
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        fame_dump_path: str | None = None,
+        fame_year: int | None = None,
+        fame_month: int | None = None,
+    ) -> None:
         self._cache: dict[str, list[str]] = {}  # scientific_name -> [name strings]
         self._title: dict[str, str] = {}  # scientific_name -> enwiki article title
+        self._pageviews: dict[str, int] = {}  # scientific_name -> enwiki pageviews
+        self._sitelinks: dict[str, int] = {}  # scientific_name -> wikidata sitelink count
+        # When a dump is configured, fame uses the local (dump) pageviews backend — the
+        # one that scales to million-title scopes; otherwise the keyless REST api backend
+        # (fine for the few-thousand-title current scopes). See wikipedia_weaver.
+        self._fame_dump_path = fame_dump_path
+        self._fame_year = fame_year
+        self._fame_month = fame_month
 
     def prepare(self, taxa: list[Taxon]) -> None:
         # Pool taxa are accepted species, so the homonym disambiguator is "species".
@@ -218,6 +240,76 @@ class BraidworksProvider:
 
         asyncio.run(run_all())
 
+    def harvest_fame(self, scientific_names: list[str]) -> None:
+        """Pull a popularity score for each pool species: enwiki pageviews (primary) and
+        Wikidata sitelink count (fallback). One braid chains scientific_name → enwiki
+        title → pageviews, and the same item yields its sitelink count. Cached, so a
+        re-run is a no-op for names already scored."""
+        import asyncio
+
+        from braidworks.core import Braider, LocalExecutor, Strand, StrandSet
+        from braidworks.core.discovery import build_registry_from_entry_points
+
+        todo = sorted(
+            {n for n in scientific_names if n and n not in self._pageviews and n not in self._sitelinks}
+        )
+        if not todo:
+            return
+
+        # Dump-configured → register the local (dump) pageviews backend; else the keyless
+        # REST api via entry points (right tool for the current few-thousand-title scopes).
+        if self._fame_dump_path or (self._fame_year and self._fame_month):
+            from wikipedia_weaver.factory import build_wikipedia_weaver
+
+            registry = build_registry_from_entry_points(only=frozenset({"wikidata"}))
+            registry.register(
+                build_wikipedia_weaver(
+                    dump_path=self._fame_dump_path,
+                    year=self._fame_year,
+                    month=self._fame_month,
+                    auto_setup=True,
+                )
+            )
+        else:
+            registry = build_registry_from_entry_points(
+                only=frozenset({"wikidata", "wikipedia"})
+            )
+
+        braid = Braider(registry).plan(
+            available_types=frozenset({"organism.scientific_name"}),
+            target_types=frozenset({"wikipedia.pageviews", "wikidata.sitelinks"}),
+        )
+        executor = LocalExecutor(registry)
+
+        async def run_all() -> None:
+            inputs = [
+                StrandSet.from_strands(name, [Strand("organism.scientific_name", name)])
+                for name in todo
+            ]
+            result = await executor.execute(braid, inputs, params={"resolve_taxon": {"expected_rank": "species"}})
+            for ss in result.resolved:
+                name_strand = ss.get("organism.scientific_name")
+                if name_strand is None:
+                    continue
+                name = name_strand.value
+                pv = ss.get("wikipedia.pageviews")
+                sl = ss.get("wikidata.sitelinks")
+                if pv is not None and pv.value is not None:
+                    self._pageviews[name] = int(pv.value)
+                if sl is not None and sl.value is not None:
+                    self._sitelinks[name] = int(sl.value)
+
+        asyncio.run(run_all())
+
+    def fame_for(self, scientific_name: str) -> int:
+        """Popularity score: enwiki pageviews if known, else the Wikidata sitelink count,
+        else 0. Pageviews dwarf sitelink counts, so any taxon with a real enwiki article
+        outranks sitelink-only taxa — exactly the intended ordering."""
+        pv = self._pageviews.get(scientific_name)
+        if pv:
+            return pv
+        return self._sitelinks.get(scientific_name, 0)
+
     def names_for(self, scientific_name: str) -> list[str]:
         """Harvested names for any scientific name (species or clade), despaced."""
         return [despace(n) for n in self._cache.get(scientific_name, [])]
@@ -264,6 +356,7 @@ class BraidworksProvider:
 def enrich(pool_taxa: list[Taxon], provider: EnrichProvider | None = None) -> list[EnrichedTip]:
     provider = provider or OfflineProvider()
     provider.prepare(pool_taxa)  # no-op if already prepared
+    provider.harvest_fame([t.scientific_name for t in pool_taxa])  # popularity scores
     out: list[EnrichedTip] = []
     for taxon in pool_taxa:
         # Display name precedence: CoL/Wikidata vernacular → scientific.
@@ -276,7 +369,10 @@ def enrich(pool_taxa: list[Taxon], provider: EnrichProvider | None = None) -> li
         keys.update(normalize(n) for n in provider.names(taxon))
         aliases = sorted(keys - {""})
 
-        out.append(EnrichedTip(taxon=taxon, common=common, aliases=aliases))
+        out.append(EnrichedTip(
+            taxon=taxon, common=common, aliases=aliases,
+            fame=provider.fame_for(taxon.scientific_name),
+        ))
     return out
 
 

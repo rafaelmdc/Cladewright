@@ -162,6 +162,9 @@ class TaxonTip(models.Model):
     parent_key = models.CharField(max_length=128)
     lineage = models.JSONField(default=list)  # ordered root→parent ancestor node ids
     traits = models.JSONField(default=dict)
+    # Popularity score (enwiki pageviews, sitelink-count fallback): ranks ambiguous
+    # name matches (famous "robin" wins) and weights the Marathon obscurity time bonus.
+    fame = models.IntegerField(default=0)
 
     class Meta:
         constraints = [
@@ -190,6 +193,9 @@ class Alias(models.Model):
     # Denormalized for display in autocomplete results without a second lookup.
     sci = models.CharField(max_length=255)
     common = models.CharField(max_length=255, null=True, blank=True)
+    # Denormalized target popularity (tips only; 0 for nodes) so a name shared by several
+    # taxa ranks the famous one first without joining back to TaxonTip.
+    fame = models.IntegerField(default=0)
 
     class Meta:
         indexes = [

@@ -126,6 +126,7 @@ class Command(BaseCommand):
             TaxonTip(
                 asset=asset, key=t["id"], sci=t["sci"], common=t.get("common", t["sci"]),
                 parent_key=t["parent"], lineage=t.get("lineage", []), traits=t.get("traits", {}),
+                fame=int(t.get("fame", 0)),
             )
             for t in tips
         ]
@@ -141,7 +142,7 @@ class Command(BaseCommand):
                 if tip is not None:
                     rows.append(Alias(asset=asset, norm=norm, target_key=target,
                                       target_kind=Alias.TIP, sci=tip["sci"],
-                                      common=tip.get("common")))
+                                      common=tip.get("common"), fame=int(tip.get("fame", 0))))
                 elif node is not None:
                     rows.append(Alias(asset=asset, norm=norm, target_key=target,
                                       target_kind=Alias.NODE, sci=node["sci"],

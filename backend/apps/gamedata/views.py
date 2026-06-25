@@ -180,10 +180,12 @@ class SearchView(APIView):
 
         rows = list(
             Alias.objects.filter(asset=av, norm__icontains=q)
-            .values("norm", "target_key", "target_kind", "sci", "common")[: limit * 4]
+            .values("norm", "target_key", "target_kind", "sci", "common", "fame")[: limit * 4]
         )
-        # Rank: exact, then prefix, then shortest (closest) — cheap and deterministic.
-        rows.sort(key=lambda r: (r["norm"] != q, not r["norm"].startswith(q), len(r["norm"])))
+        # Rank: exact, then prefix, then most-famous, then shortest — cheap + deterministic.
+        # Fame (enwiki pageviews) breaks ties so a shared name surfaces the famous taxon.
+        rows.sort(key=lambda r: (r["norm"] != q, not r["norm"].startswith(q),
+                                 -r.get("fame", 0), len(r["norm"])))
         seen: set[str] = set()
         results = []
         for r in rows:

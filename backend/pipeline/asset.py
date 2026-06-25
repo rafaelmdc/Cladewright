@@ -129,6 +129,9 @@ def build_asset(
                 "common": tip.common,
                 "parent": tree.tips[tid][0],
                 "lineage": tip_lineages[tid],
+                # Popularity score (enwiki pageviews, sitelink-count fallback). Ranks the
+                # pool for the capped "notable" blob + weights the Marathon time bonus.
+                "fame": tip.fame,
                 "traits": {
                     "environment": tip.taxon.environment,
                     "biomes": tip.taxon.biomes,

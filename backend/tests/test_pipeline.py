@@ -143,3 +143,29 @@ def test_build_is_deterministic(coldp_dir: Path):
     b = build(coldp_dir, size=100, clade_floor=10)
     a["provenance"] = b["provenance"] = {}  # built_at timestamp is the only nondeterminism
     assert a == b
+
+
+def test_fame_flows_into_asset(coldp_dir: Path):
+    """A provider's fame score lands on each tip; tips with no signal default to 0."""
+
+    class FameProvider(enrich.OfflineProvider):
+        FAME = {"Ursus arctos": 5000, "Panthera leo": 9000}
+
+        def fame_for(self, scientific_name: str) -> int:
+            return self.FAME.get(scientific_name, 0)
+
+    taxa = ingest.ingest_coldp(coldp_dir, scope="kingdom=Animalia")
+    tree = backbone.build_backbone(taxa)
+    enriched = enrich.enrich(pool.select_pool(tree), FameProvider())
+    doc = assetmod.build_asset(tree, enriched, scope="kingdom=Animalia")
+    validate.validate_asset(doc)
+    tips = {t["id"]: t for t in doc["tips"]}
+    assert tips["tip:Panthera_leo"]["fame"] == 9000
+    assert tips["tip:Ursus_arctos"]["fame"] == 5000
+    assert tips["tip:Ursus_maritimus"]["fame"] == 0  # no signal → 0
+
+
+def test_offline_enrich_fame_is_zero(coldp_dir: Path):
+    """The default offline provider has no popularity signal, so fame is 0 everywhere."""
+    doc = build(coldp_dir, size=100, clade_floor=10)
+    assert all(t["fame"] == 0 for t in doc["tips"])

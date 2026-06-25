@@ -17,8 +17,10 @@ export interface AssetTip {
   common: string;
   parent: string;
   lineage: string[]; // ordered root→parent ancestor node ids; MRCA = last shared prefix
-  // (No fame/time_weight: the pageview popularity system is post-MVP; the Marathon
-  //  time bonus is novelty-only, computed live. Keep in sync with backend asset.py.)
+  // Popularity score (enwiki pageviews, sitelink-count fallback). Breaks ambiguous
+  // name ties (famous "robin" wins). Optional: older assets predate it → treated as 0.
+  // Keep in sync with backend asset.py.
+  fame?: number;
   traits: {
     environment: string[];
     biomes: string[];

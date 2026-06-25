@@ -50,11 +50,15 @@ class Tree:
 
 @dataclass
 class EnrichedTip:
-    """A pool tip after common-name enrichment.
+    """A pool tip after common-name + fame enrichment.
 
-    (No fame/time_weight: the popularity/obscurity system is post-MVP.)
+    ``fame`` is a popularity score (Wikipedia pageviews, with Wikidata sitelink count as
+    the fallback for taxa with no enwiki article). It ranks the playable pool (which N to
+    bundle in a capped "notable" blob) and weights the Marathon obscurity time bonus.
+    0 when neither signal is available (offline provider, or a taxon Wikidata doesn't know).
     """
 
     taxon: Taxon
     common: str           # resolved display name (vernacular → wikidata → sci)
     aliases: list[str]
+    fame: int = 0

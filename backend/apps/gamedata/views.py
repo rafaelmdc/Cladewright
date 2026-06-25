@@ -324,6 +324,38 @@ class ResolveView(APIView):
         return resp
 
 
+class IndexShardView(APIView):
+    """GET /api/gamedata/idx/?scope=&v=&p=<prefix> -> the alias shard for one key prefix:
+    ``{"keys": {norm: [target_id, …]}}`` for every key starting with ``p`` (ids ordered by
+    fame). The game uses **exact-match** input (no fuzzy autocomplete), so a tail name needs
+    only an exact lookup — the client fetches one prefix shard (immutable, edge-cacheable) and
+    looks the typed name up locally, instead of the live substring /search. This is what keeps
+    the last query off the hot path; trigram SearchView stays as an admin/fallback tool."""
+
+    permission_classes: list = []
+
+    def get(self, request: Request) -> Response:
+        prefix = _normalize(request.query_params.get("p", ""))
+        if not prefix:
+            return Response({"keys": {}})
+        scope = request.query_params.get("scope")
+        av, pinned = _pinned_or_current(scope, request.query_params.get("v"))
+        if av is None:
+            return Response({"keys": {}})
+        rows = (
+            Alias.objects.filter(asset=av, norm__startswith=prefix)
+            .values("norm", "target_key", "fame")
+            .order_by("norm", "-fame", "target_key")  # group by norm, best (famous) id first
+        )
+        keys: dict[str, list[str]] = {}
+        for r in rows:
+            keys.setdefault(r["norm"], []).append(r["target_key"])
+        resp = Response({"keys": keys})
+        if pinned:  # immutable per (version, prefix) → edge-cacheable like /resolve.
+            resp["Cache-Control"] = _IMMUTABLE
+        return resp
+
+
 class FilterView(APIView):
     """GET /api/gamedata/filter/?scope=&v= -> the raw binary-fuse8 membership filter for a
     scope (octet-stream). The hybrid/remote client fetches it once and checks every typed

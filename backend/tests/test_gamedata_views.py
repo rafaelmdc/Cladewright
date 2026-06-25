@@ -143,6 +143,17 @@ class HybridLoadTests(TestCase):
         self.assertEqual(r["Cache-Control"], IMMUTABLE)
         self.assertEqual(r.content, blob)
 
+    def test_index_shard_exact_lookup(self) -> None:
+        self._load()
+        # The tail name "rare ant" (not in the client blob) is found via its prefix shard.
+        r = self.client.get(reverse("gamedata-idx"), {"scope": "ants", "v": 5, "p": "rar"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Cache-Control"], IMMUTABLE)
+        self.assertEqual(r.json()["keys"].get("rare ant"), ["tip:rare"])
+        # An empty prefix returns nothing (no full-table dump).
+        self.assertEqual(self.client.get(reverse("gamedata-idx"),
+                                         {"scope": "ants", "p": ""}).json()["keys"], {})
+
     def test_tail_tip_resolves_trimmed_to_frontier(self) -> None:
         self._load()
         # tip:rare is NOT in the client blob, but the relational mirror resolves it — and

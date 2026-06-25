@@ -54,6 +54,40 @@ export async function searchRemote(
   }
 }
 
+// Tail name→id resolution is a STATIC, edge-cacheable prefix shard (exact-match input, no
+// fuzzy autocomplete), not the live substring /search. The client fetches one shard per key
+// prefix and looks the typed name up locally.
+const SHARD_PREFIX_LEN = 3;
+const shardCache = new Map<string, Promise<Record<string, string[]>>>();
+
+/** The shard key prefix for a normalized query (its first few chars; the whole thing when
+ *  shorter). Shared across all queries with that prefix, so the shard is fetched once. */
+export function shardPrefix(norm: string): string {
+  return norm.slice(0, SHARD_PREFIX_LEN);
+}
+
+/** Fetch one alias shard `{norm: [ids]}` for a prefix, cached per (scope, version, prefix). */
+export function fetchShard(
+  scope: string | undefined,
+  version: number | undefined,
+  prefix: string,
+): Promise<Record<string, string[]>> {
+  const key = `${scope ?? ""}:${version ?? 0}:${prefix}`;
+  const hit = shardCache.get(key);
+  if (hit) return hit;
+  const p = (async () => {
+    try {
+      const res = await fetch(scoped("idx", scope, { p: prefix }, version));
+      if (!res.ok) return {};
+      return ((await res.json()).keys ?? {}) as Record<string, string[]>;
+    } catch {
+      return {};
+    }
+  })();
+  shardCache.set(key, p);
+  return p;
+}
+
 /** Fetch + parse the scope's binary-fuse8 membership filter (version-pinned, cacheable).
  *  null when the scope has none (whole-pool blob) or the fetch fails — callers then just
  *  skip the local reject and fall through to /search. */

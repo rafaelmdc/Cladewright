@@ -33,14 +33,46 @@ For each row: **kind = Build asset**, **enrich = braidworks**, **include extinct
 | `reptilia` | Reptiles | `class=Reptilia` |
 | `amphibia` | Amphibians | `class=Amphibia` |
 | `fish` | Fish | `class=Teleostei,Elasmobranchii,Myxini,Holocephali,Petromyzonti,Chondrostei,Cladistii,Holostei,Dipneusti,Coelacanthi` |
+| `basal_chordata` | Basal chordates | `subphylum=Tunicata,Cephalochordata` |
 
 Notes:
 - **`scope_filter`** is the CoL `rank=value[,value…]` slice. A comma list is a **union** (for
   paraphyletic groups with no single CoL node).
 - **Reptiles** are paraphyletic in CoL (`class=Reptilia` excludes birds) — by design.
 - **Fish** is the union of all 10 living fish classes — there is no single "fish" node in CoL.
+- **Basal chordates** are the non-vertebrate chordates the vertebrate scopes above miss:
+  sea squirts/salps (Tunicata) + lancelets (Cephalochordata). Small (~3 k) → plain blob.
+  (If CoL labels Tunicata as "Urochordata", use that.)
 - Each build auto-bumps to the next **version** for its scope; the previous version stays
   browsable in **Asset versions** and can be re-served with the **Set current** action.
+
+## 2. Huge scopes (hybrid delivery)
+
+Scopes too big to ship whole (Arthropoda ≈1.2 M species) are served **hybrid**: the client
+downloads a capped "notable" blob (top-fame species + the complete coarse backbone) and
+resolves the long tail on demand via `/resolve`. Same **Build asset** job, but set the
+**Notable blob** fields (all admin-tunable):
+
+| scope_key | label | scope_filter | notable_max | notable_coverage | notable_min | frontier_rank |
+|---|---|---|--:|--:|--:|---|
+| `arthropoda` | Arthropoda | `phylum=Arthropoda` | `20000` | `0.9` | `5000` | `family` |
+| `invertebrata_other` | Other invertebrates | `phylum=Mollusca,Annelida,Cnidaria,Echinodermata,Platyhelminthes,Nematoda,Porifera,Bryozoa,Nemertea,Rotifera,Tardigrada,Onychophora,Acanthocephala,Brachiopoda,Phoronida,Ctenophora,Placozoa,Chaetognatha,Nematomorpha,Gastrotricha,Kinorhyncha,Priapulida,Loricifera,Hemichordata,Xenacoelomorpha,Gnathostomulida,Micrognathozoa,Cycliophora,Entoprocta,Dicyemida,Orthonectida` | `20000` | `0.9` | `5000` | `family` |
+
+Notes:
+- **notable_max = 0** (the default, used by every scope in §1) ships the **whole** pool — no
+  tail. Set it >0 only when a scope is too big to ship whole; `~20000` is a good ceiling.
+- **notable_coverage** = fraction of total fame (≈pageview) mass to cover; **notable_min** is
+  the floor so a popularity-concentrated scope still ships a meaty offline pool. The blob
+  ships `clamp(coverage-of-mass, min, max)` tips.
+- **frontier_rank** (`family`) is the coarse backbone always shipped + the deepest rank
+  `/resolve` trims a tail guess to. Every node at/above it ships, so any tail species attaches.
+- **"Other invertebrates"** is a pragmatic union of the non-arthropod, non-chordate animal
+  phyla (extend/trim the list to taste — it's just a `scope_filter`). It overlaps nothing
+  with `arthropoda` or the chordate scopes.
+- **fame_dump** (optional): for a scope this size, point fame at a monthly Wikimedia
+  pageview dump on the worker, e.g. `data/pageviews-202506-user.bz2` (download it to the
+  dump PVC first; same `data/` dir as the CoL dump). Left blank, fame falls back to the
+  keyless pageviews API — fine for the small scopes in §1, slow for a million-species build.
 
 ## Adding a new standard scope
 

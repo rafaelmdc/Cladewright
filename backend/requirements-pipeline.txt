@@ -9,6 +9,6 @@
 # reproducible build. Needs `git` in the image (see Dockerfile.pipeline). To bump: tag a
 # new release in rafaelmdc/braidworks and change the @ref on all three lines.
 -r requirements.txt
-braidworks-core  @ git+https://github.com/rafaelmdc/braidworks@cladewright-weavers-v0.2.0#subdirectory=braidworks-core
-wikidata_weaver  @ git+https://github.com/rafaelmdc/braidworks@cladewright-weavers-v0.2.0#subdirectory=weavers/wikidata_weaver
-wikipedia_weaver @ git+https://github.com/rafaelmdc/braidworks@cladewright-weavers-v0.2.0#subdirectory=weavers/wikipedia_weaver
+braidworks-core  @ git+https://github.com/rafaelmdc/braidworks@cladewright-weavers-v0.3.0#subdirectory=braidworks-core
+wikidata_weaver  @ git+https://github.com/rafaelmdc/braidworks@cladewright-weavers-v0.3.0#subdirectory=weavers/wikidata_weaver
+wikipedia_weaver @ git+https://github.com/rafaelmdc/braidworks@cladewright-weavers-v0.3.0#subdirectory=weavers/wikipedia_weaver

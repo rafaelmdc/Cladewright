@@ -64,8 +64,10 @@ export interface InternedAsset {
   /** blob mode carries the full source asset; remote mode has only metadata + a
    *  growing `aliases` map (server is the source of truth for names). */
   raw: GameAsset;
-  /** "blob" = complete, downloaded whole; "remote" = grown incrementally via /resolve */
-  mode: "blob" | "remote";
+  /** "blob" = complete pool downloaded whole; "hybrid" = a notable blob downloaded AND
+   *  grown on the tail via /resolve (local alias index first, remote on miss); "remote" =
+   *  started empty, grown entirely via /resolve. */
+  mode: "blob" | "hybrid" | "remote";
   /** scope key, threaded onto /search + /resolve requests in remote mode */
   scope?: string;
   /** node id -> integer index */

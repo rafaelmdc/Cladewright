@@ -19,6 +19,13 @@ export async function resolveTarget(
 ): Promise<Target | null> {
   if (asset.mode === "blob") return resolve(asset, query, scientificOnly);
 
+  // Hybrid: the famous ~99% resolve locally in the baked notable-blob index; only a genuine
+  // tail miss falls through to the remote /search + /resolve path below.
+  if (asset.mode === "hybrid") {
+    const local = resolve(asset, query, scientificOnly);
+    if (local) return local;
+  }
+
   const version = asset.raw.version;
   const hits = await searchRemote(asset.scope, query, version);
   if (hits.length === 0) return null;

@@ -57,6 +57,52 @@ export function createEmptyAsset(scope: string, hiddenLabelMax: number, version 
   };
 }
 
+/** A *hybrid* asset: seed the growable structures from the downloaded notable blob, so the
+ *  famous ~99% resolve locally via the baked alias index, and the long tail still grows via
+ *  /resolve (foldResolved dedups against these seeded nodes). Same shape as a remote asset
+ *  but pre-populated and with `raw.aliases` kept for local resolution. Hot arrays are number[]
+ *  (appendable) — unlike intern()'s fixed Int32Array. */
+export function seedHybridAsset(raw: GameAsset): InternedAsset {
+  const nodeIndex = new Map<string, number>();
+  const nodeIds: string[] = [];
+  for (const node of raw.nodes) {
+    nodeIndex.set(node.id, nodeIds.length);
+    nodeIds.push(node.id);
+  }
+  const poolCount: number[] = [];
+  const poolCountExtant: number[] = [];
+  const parent: number[] = [];
+  const nodeById = new Map<string, AssetNode>();
+  for (const node of raw.nodes) {
+    poolCount.push(node.pool_count);
+    poolCountExtant.push(node.pool_count_extant ?? node.pool_count);
+    parent.push(node.parent === null ? -1 : (nodeIndex.get(node.parent) ?? -1));
+    nodeById.set(node.id, node);
+  }
+  const tipLineage = new Map<string, Int32Array>();
+  const tipById = new Map<string, AssetTip>();
+  for (const tip of raw.tips) {
+    const arr = new Int32Array(tip.lineage.length);
+    for (let k = 0; k < tip.lineage.length; k++) arr[k] = nodeIndex.get(tip.lineage[k]) ?? -1;
+    tipLineage.set(tip.id, arr);
+    tipById.set(tip.id, tip);
+  }
+  return {
+    raw,
+    mode: "hybrid",
+    scope: raw.scope,
+    nodeIndex,
+    nodeIds,
+    poolCount,
+    poolCountExtant,
+    parent,
+    tipLineage,
+    tipById,
+    nodeById,
+    hiddenLabelMax: raw.thresholds.hidden_label_max,
+  };
+}
+
 /** Add one lineage node if new; return its integer index. Parent is the previous
  *  lineage entry (the chain is ordered root→…), so the parent index is always already
  *  assigned by the time we reach a child. Shared ancestors are inserted once. */

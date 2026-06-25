@@ -5,6 +5,7 @@
 
 import type { AssetNode, AssetTip, GameAsset, InternedAsset } from "./types";
 import { mergeAssets } from "./merge";
+import { seedHybridAsset } from "./growable";
 import { readCachedAsset, writeCachedAsset } from "./cache";
 
 // Primary source is the DB-backed API (served by Django, blob from Postgres) — same
@@ -79,6 +80,13 @@ async function fetchScopeAsset(scope: string, version?: number): Promise<GameAss
  *  is down. */
 export async function loadAsset(scope?: string, version?: number): Promise<InternedAsset> {
   return intern(await fetchRawAsset(scope, version));
+}
+
+/** Load a hybrid scope: download its notable blob (capped top-fame subset + complete coarse
+ *  backbone) and seed a growable asset from it, so the famous ~99% play locally and the tail
+ *  grows via /resolve. `version` enables the local cache + pins the immutable blob URL. */
+export async function loadHybridAsset(scope: string, version?: number): Promise<InternedAsset> {
+  return seedHybridAsset(await fetchRawAsset(scope, version));
 }
 
 /** Load + merge several blob scopes into one playable asset (scope mixing). One scope

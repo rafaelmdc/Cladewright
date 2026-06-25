@@ -39,9 +39,18 @@ async function cacheFirst(
   }
 }
 
+/** Build the blob URL, pinning ?v=<version> when known so the response is immutable and
+ *  the CDN can cache it (Cloudflare pull-through); omitted → the server serves "current". */
+function blobUrl(scope?: string, version?: number): string {
+  if (!scope) return PRIMARY;
+  const u = new URLSearchParams({ scope });
+  if (version) u.set("v", String(version));
+  return `${PRIMARY}?${u.toString()}`;
+}
+
 /** Fetch one scope's raw asset, with dev fallbacks (used for the single-scope path). */
 async function fetchRawAsset(scope?: string, version?: number): Promise<GameAsset> {
-  const primary = scope ? `${PRIMARY}?scope=${encodeURIComponent(scope)}` : PRIMARY;
+  const primary = blobUrl(scope, version);
   const cached = await cacheFirst(primary, scope, version);
   if (cached) return cached;
   // Primary missed (non-ok or network error); try the static dev fallbacks in order.
@@ -61,7 +70,7 @@ async function fetchRawAsset(scope?: string, version?: number): Promise<GameAsse
 /** Fetch one specific scope from the API only (no generic dev fallback — a fallback would
  *  pollute a multi-scope merge). Returns null on failure so the merge can skip it. */
 async function fetchScopeAsset(scope: string, version?: number): Promise<GameAsset | null> {
-  return cacheFirst(`${PRIMARY}?scope=${encodeURIComponent(scope)}`, scope, version);
+  return cacheFirst(blobUrl(scope, version), scope, version);
 }
 
 /** Load + intern a blob-mode asset. `scope` selects which current build to fetch

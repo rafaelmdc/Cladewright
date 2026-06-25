@@ -27,10 +27,11 @@ export interface ResolvePayload {
   lineage: ResolvedNode[];
 }
 
-/** An empty remote-mode asset: no nodes/tips yet, grown by foldResolved(). */
-export function createEmptyAsset(scope: string, hiddenLabelMax: number): InternedAsset {
+/** An empty remote-mode asset: no nodes/tips yet, grown by foldResolved(). `version` pins
+ *  the scope's current build so /search + /resolve hit immutable, edge-cacheable URLs. */
+export function createEmptyAsset(scope: string, hiddenLabelMax: number, version = 0): InternedAsset {
   const raw: GameAsset = {
-    version: 0,
+    version,
     schema: "1.0",
     scope,
     pool_size: 0,

@@ -19,14 +19,15 @@ export async function resolveTarget(
 ): Promise<Target | null> {
   if (asset.mode === "blob") return resolve(asset, query, scientificOnly);
 
-  const hits = await searchRemote(asset.scope, query);
+  const version = asset.raw.version;
+  const hits = await searchRemote(asset.scope, query, version);
   if (hits.length === 0) return null;
-  // /search already ranks exact→prefix→shortest; prefer an exact name match, else the top
-  // hit (mirrors the local resolver preferring a primary name).
+  // /search already ranks exact→prefix→fame→shortest; prefer an exact name match, else the
+  // top hit (mirrors the local resolver preferring a primary name).
   const norm = normalize(query);
   const best = hits.find((h) => h.name === norm) ?? hits[0];
 
-  const payload = await resolveRemote(asset.scope, best.id);
+  const payload = await resolveRemote(asset.scope, best.id, version);
   if (!payload) return null;
   const target = foldResolved(asset, payload);
   // Scientific difficulty: only the actual scientific name counts (common-name aliases

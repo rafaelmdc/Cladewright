@@ -18,9 +18,17 @@ export interface SearchHit {
   common: string | null;
 }
 
-function scoped(path: string, scope: string | undefined, params: Record<string, string>): string {
+function scoped(
+  path: string,
+  scope: string | undefined,
+  params: Record<string, string>,
+  version?: number,
+): string {
   const u = new URLSearchParams(params);
   if (scope) u.set("scope", scope);
+  // Pin the asset version so the response is immutable and the CDN can cache it forever
+  // (Cloudflare pull-through). Omitted (0/undefined) → the server serves "current".
+  if (version) u.set("v", String(version));
   return `${API}/${path}/?${u.toString()}`;
 }
 
@@ -28,13 +36,15 @@ function scoped(path: string, scope: string | undefined, params: Record<string, 
 export async function searchRemote(
   scope: string | undefined,
   q: string,
+  version?: number,
   limit = 12,
   signal?: AbortSignal,
 ): Promise<SearchHit[]> {
   const query = q.trim();
   if (!query) return [];
   try {
-    const res = await fetch(scoped("search", scope, { q: query, limit: String(limit) }), { signal });
+    const res = await fetch(scoped("search", scope, { q: query, limit: String(limit) }, version),
+      { signal });
     if (!res.ok) return [];
     const data = await res.json();
     return (data.results ?? []) as SearchHit[];
@@ -43,17 +53,21 @@ export async function searchRemote(
   }
 }
 
-// Per-(scope,id) cache: an immutable resolve is fetched once, then reused forever.
+// Per-(scope,version,id) cache: an immutable resolve is fetched once, then reused forever.
 const resolveCache = new Map<string, Promise<ResolvePayload | null>>();
 
 /** Fetch one organism's target + denormalized lineage, cached. null if not found. */
-export function resolveRemote(scope: string | undefined, id: string): Promise<ResolvePayload | null> {
-  const key = `${scope ?? ""}:${id}`;
+export function resolveRemote(
+  scope: string | undefined,
+  id: string,
+  version?: number,
+): Promise<ResolvePayload | null> {
+  const key = `${scope ?? ""}:${version ?? 0}:${id}`;
   const hit = resolveCache.get(key);
   if (hit) return hit;
   const p = (async () => {
     try {
-      const res = await fetch(scoped("resolve", scope, { id }));
+      const res = await fetch(scoped("resolve", scope, { id }, version));
       if (!res.ok) return null;
       return (await res.json()) as ResolvePayload;
     } catch {

@@ -171,7 +171,7 @@ export function Marathon() {
     } else {
       const info = scopes.find((s) => s.key === list[0]);
       if (info?.mode === "remote") {
-        apply(createEmptyAsset(list[0], 15));
+        apply(createEmptyAsset(list[0], 15, info.version));
       } else {
         loadAsset(list[0], info?.version).then(apply).catch(console.error);
       }

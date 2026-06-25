@@ -100,6 +100,24 @@ arrays, ids interned to ints) — 2–4× density, mainly a parse-time win; meas
 adopting (gzip already dedups strings). Levers, not blockers — apply if a cap needs more
 coverage per MB.
 
+**D7 — No pure-remote mode; every scope ships a notable blob.** A scope is never played
+purely over the network — the client always downloads a substantial local blob, and
+remote is only the long-tail. Policy (tunable):
+- **`ship_whole_max` ≈ 20k tips** — scopes at/below this ship the *entire* pool as a
+  plain blob (today's behaviour; no tail). Covers mammalia/aves/reptilia/fish.
+- **Above it → hybrid**: notable blob = top-N by `fame` ∪ complete coarse backbone, plus
+  the remote tail. Cap **N = 10k if pool < 50k, else 20k** (scales with scope size).
+- `createEmptyAsset` (empty growable) is retired for gameplay; the growable asset is
+  **seeded from the notable blob**. Side benefit: the trimmed `/resolve` (below) then
+  *always* has an anchor, so it's effective for every hybrid scope from the first guess.
+
+  **Admin-configurable (per build), not hardcoded** — the cap is a knob on the generation
+  job. Add to `PipelineJob` (admin) + `build_gamedata`: `notable_cap` (top-N famous tips
+  to bundle; **0 = ship the whole pool**) and `frontier_rank` (the coarse-backbone cut,
+  default `family`). The size-based default (≤20k ship-whole / <50k→10k / else→20k) is the
+  *suggested* value the admin sees, overridable per scope. So Arthropoda can be tuned by
+  hand without a code change.
+
 ## Resolve payload redesign
 
 **Today:** `ResolveView` returns the full root→parent lineage every call. In hybrid mode

@@ -47,6 +47,26 @@ def _current(scope: str | None) -> AssetVersion | None:
     return qs.first()
 
 
+# A pinned (scope, version) build never changes, so its responses are immutable forever.
+# Serving them at a versioned URL (?v=) lets Cloudflare edge-cache them: the origin is hit
+# once globally per id, then ~0 — the latency lever for the huge-scope remote tail. Unpinned
+# ("current") responses can change on a rebuild, so they stay uncached.
+_IMMUTABLE = "public, max-age=31536000, immutable"
+
+
+def _pinned_or_current(scope: str | None, v: str | None) -> tuple[AssetVersion | None, bool]:
+    """(asset, pinned). When ``v`` names an existing (scope, version) build, serve that exact
+    version (immutable → cacheable); otherwise fall back to the current build (uncacheable)."""
+    if v:
+        try:
+            av = AssetVersion.objects.filter(scope=scope, version=int(v)).first()
+        except (TypeError, ValueError):
+            av = None
+        if av is not None:
+            return av, True
+    return _current(scope), False
+
+
 class ScopesView(APIView):
     """GET /api/gamedata/scopes/ -> the catalog the picker renders.
 
@@ -95,12 +115,14 @@ class CurrentAssetView(APIView):
     def get(self, request: Request) -> Response:
         scope = request.query_params.get("scope")
         try:
-            av = _current(scope)
+            av, pinned = _pinned_or_current(scope, request.query_params.get("v"))
         except DatabaseError:
-            av = None
+            av, pinned = None, False
         if av is not None and av.blob is not None:
             resp = Response(av.blob)
             resp["X-Asset-Version"] = str(av.version)
+            if pinned:  # ?v=<version> → the blob is immutable, let the edge cache it.
+                resp["Cache-Control"] = _IMMUTABLE
             return resp
         # No DB build (or this scope is incremental-only) -> dev file fallback.
         asset = _file_asset()
@@ -174,7 +196,7 @@ class SearchView(APIView):
         except ValueError:
             limit = 20
 
-        av = _current(scope)
+        av, pinned = _pinned_or_current(scope, request.query_params.get("v"))
         if av is None:
             return Response({"results": []})
 
@@ -198,7 +220,10 @@ class SearchView(APIView):
             })
             if len(results) >= limit:
                 break
-        return Response({"results": results})
+        resp = Response({"results": results})
+        if pinned:  # results are immutable per (version, q, limit) → edge-cacheable.
+            resp["Cache-Control"] = _IMMUTABLE
+        return resp
 
 
 class ResolveView(APIView):
@@ -214,7 +239,7 @@ class ResolveView(APIView):
         if not target_id:
             return Response({"error": "id required"}, status=400)
         scope = request.query_params.get("scope")
-        av = _current(scope)
+        av, pinned = _pinned_or_current(scope, request.query_params.get("v"))
         if av is None:
             return Response({"error": "no current asset"}, status=404)
 
@@ -244,4 +269,7 @@ class ResolveView(APIView):
             for nid in lineage_ids
             if nid in nodes
         ]
-        return Response({"target": target, "lineage": lineage})
+        resp = Response({"target": target, "lineage": lineage})
+        if pinned:  # one placed organism's lineage is immutable → edge-cacheable forever.
+            resp["Cache-Control"] = _IMMUTABLE
+        return resp

@@ -177,12 +177,11 @@ class BraidworksProvider:
         clade nodes — the reference resolves group names ("bear", "seal") because it
         harvests higher taxa too.
 
-        ``ranks`` (scientific_name -> taxon rank, e.g. "order") disambiguates cross-code
-        homonyms: a name on several Wikidata items (the orchid genus *Pholidota* vs the
-        pangolin order) would otherwise come back ambiguous and contribute no name —
-        worse, an earlier resolution could pick the wrong-kingdom item. We pass each
-        name's expected rank to the weaver, which keeps only the item whose P105 rank
-        matches. Names share one batch per rank (the param is per-batch)."""
+        ``ranks`` (scientific_name -> taxon rank) is accepted for call-site compatibility but
+        currently unused: the wikidata weaver's resolve_taxon takes no rank parameter, so a
+        cross-code homonym is resolved by Wikidata's own P225 match. (Earlier code passed an
+        ``expected_rank`` param, but the weaver never consumed it — newer braidworks-core
+        rejects unknown params, so it's dropped.)"""
         import asyncio
 
         from braidworks.core import Braider, LocalExecutor, Strand, StrandSet
@@ -201,42 +200,30 @@ class BraidworksProvider:
         )
         executor = LocalExecutor(registry)
 
-        # Group by expected rank so each batch passes the rank that disambiguates its
-        # homonyms. Names with no known rank go in one unparameterised batch (the
-        # historical behaviour — exactly reproduced when ``ranks`` is omitted).
-        ranks = ranks or {}
-        by_rank: dict[str | None, list[str]] = {}
-        for name in todo:
-            by_rank.setdefault(ranks.get(name), []).append(name)
-
         async def run_all() -> None:
-            # One event loop for every rank batch: the backend's async HTTP client is
-            # cached on the registry's backend, so a fresh asyncio.run() per batch would
-            # bind it to a loop that's then closed and fail on the next batch.
-            for rank, names in by_rank.items():
-                # The input strand rides through to the output so we map results by name.
-                inputs = [
-                    StrandSet.from_strands(name, [Strand("organism.scientific_name", name)])
-                    for name in names
-                ]
-                params = {"resolve_taxon": {"expected_rank": rank}} if rank else None
-                result = await executor.execute(braid, inputs, params=params)
-
-                for ss in result.resolved:
-                    name_strand = ss.get("organism.scientific_name")
-                    if name_strand is None:
-                        continue
-                    vn_strand = ss.get("organism.vernacular_names")
-                    title_strand = ss.get("wikipedia.title")
-                    # Title first — it's the cleanest common name (and the canonical
-                    # display, following the reference). Kept separately too so display
-                    # never falls back to non-deterministic SPARQL ordering of altLabels.
-                    harvested = [title_strand.value] if title_strand else []
-                    harvested += list(vn_strand.value) if vn_strand else []
-                    # dedup preserving order (the title often repeats a vernacular).
-                    self._cache[name_strand.value] = list(dict.fromkeys(harvested))
-                    if title_strand:
-                        self._title[name_strand.value] = title_strand.value
+            # The input strand rides through to the output so we map results by name. One
+            # batch (one event loop): the backend's async HTTP client is cached on the
+            # registry's backend, so re-running asyncio.run() would bind it to a closed loop.
+            inputs = [
+                StrandSet.from_strands(name, [Strand("organism.scientific_name", name)])
+                for name in todo
+            ]
+            result = await executor.execute(braid, inputs)
+            for ss in result.resolved:
+                name_strand = ss.get("organism.scientific_name")
+                if name_strand is None:
+                    continue
+                vn_strand = ss.get("organism.vernacular_names")
+                title_strand = ss.get("wikipedia.title")
+                # Title first — it's the cleanest common name (and the canonical display,
+                # following the reference). Kept separately too so display never falls back
+                # to non-deterministic SPARQL ordering of altLabels.
+                harvested = [title_strand.value] if title_strand else []
+                harvested += list(vn_strand.value) if vn_strand else []
+                # dedup preserving order (the title often repeats a vernacular).
+                self._cache[name_strand.value] = list(dict.fromkeys(harvested))
+                if title_strand:
+                    self._title[name_strand.value] = title_strand.value
 
         asyncio.run(run_all())
 
@@ -286,7 +273,7 @@ class BraidworksProvider:
                 StrandSet.from_strands(name, [Strand("organism.scientific_name", name)])
                 for name in todo
             ]
-            result = await executor.execute(braid, inputs, params={"resolve_taxon": {"expected_rank": "species"}})
+            result = await executor.execute(braid, inputs)
             for ss in result.resolved:
                 name_strand = ss.get("organism.scientific_name")
                 if name_strand is None:

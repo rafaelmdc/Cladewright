@@ -13,6 +13,7 @@ dependencies = [
     "gunicorn>=22.0",         # WSGI server (docker)
     "celery[redis]>=5.4",     # pipeline job queue (web enqueues, worker consumes)
     "whitenoise>=6.6",        # static (admin CSS) behind gunicorn, no nginx
+    "pyroaring>=1.0,<2",      # roaring bitmaps: compact unique-named-species storage (#55)
 ]
 
 # ColDP ingest lives in the in-repo backend/pipeline/ package (no external ingest dep).

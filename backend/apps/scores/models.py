@@ -241,7 +241,7 @@ class PlayerStat(models.Model):
     # Cumulative species placements across sessions (a species named in two runs counts
     # twice) — "total animals named".
     total_named = models.IntegerField(default=0)
-    # Distinct species ever named (mirrors NamedSpecies count) — "unique animals named".
+    # Distinct species ever named (mirrors NamedSpeciesSet.count) — "unique animals named".
     unique_named = models.IntegerField(default=0)
     best_score = models.IntegerField(default=0)
     updated_at = models.DateTimeField(auto_now=True)
@@ -250,28 +250,50 @@ class PlayerStat(models.Model):
         unique_together = ("user", "mode", "difficulty")
 
 
-class NamedSpecies(models.Model):
-    """Every distinct species a user has ever named, per mode — the unique-animals set and
-    the foundation for future 'collection' features. Small indexed rows; the account page
-    never scans this (it reads PlayerStat.unique_named), so it stays cheap."""
+class SpeciesToken(models.Model):
+    """Global intern dictionary: a species tip id -> a stable, never-reused integer token
+    (the row pk). Named-set membership bitmaps address species by this token instead of the
+    128-char string, so the dictionary is stored ONCE site-wide rather than per user.
+
+    The pk is a 32-bit AutoField on purpose: roaring bitmaps (NamedSpeciesSet) index by
+    uint32, and the token space is bounded by the distinct species ever named across the
+    whole site (≤ the catalog's few-million taxa) — far inside 2**31. Tokens are interned
+    once and never recycled, so a stored bitmap stays valid for the life of the species. See
+    apps/scores/named_set.py."""
+
+    id = models.AutoField(primary_key=True)
+    species_key = models.CharField(max_length=128, unique=True)  # tip id, e.g. "tip:Panthera_leo"
+
+    def __str__(self) -> str:
+        return f"{self.id}:{self.species_key}"
+
+
+class NamedSpeciesSet(models.Model):
+    """A player's whole unique-named-species set for one (mode, difficulty), as a single
+    roaring-bitmap blob over SpeciesToken ids — the compact replacement for the old one-row-
+    per-species table (#55). Each run ORs its placements in (see named_set.add_named); the
+    account page reads the cached cardinality off PlayerStat.unique_named, so this is never
+    scanned on a hot path. Decode it with named_set.named_keys for a future collection view."""
 
     user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="named_species"
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="named_species_sets"
     )
     mode = models.CharField(max_length=32, choices=GameMode.choices)
     # Per (mode, difficulty), matching PlayerStat — a species named in Common and in
-    # Scientific is a distinct entry in each game's collection.
+    # Scientific belongs to each game's collection separately.
     difficulty = models.CharField(
         max_length=16, choices=Difficulty.choices, default=Difficulty.COMMON
     )
-    species_key = models.CharField(max_length=128)  # tip id, e.g. "tip:Panthera_leo"
-    first_named_at = models.DateTimeField(auto_now_add=True)
+    # Serialized pyroaring BitMap (portable CRoaring format) of SpeciesToken ids.
+    bitmap = models.BinaryField(default=bytes, blank=True)
+    # Cached cardinality (len of the bitmap) so a count never deserializes the blob; mirrors
+    # PlayerStat.unique_named.
+    count = models.IntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["user", "mode", "difficulty", "species_key"],
-                name="uniq_user_mode_difficulty_species",
+                fields=["user", "mode", "difficulty"], name="uniq_named_set_user_mode_difficulty"
             ),
         ]
-        indexes = [models.Index(fields=["user", "mode", "difficulty"])]

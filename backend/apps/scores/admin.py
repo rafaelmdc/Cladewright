@@ -9,7 +9,7 @@ from .models import (
     DailyRotationEntry,
     GameDefaults,
     GameModeConfig,
-    NamedSpecies,
+    NamedSpeciesSet,
     PlayerStat,
     Run,
     Streak,
@@ -101,8 +101,17 @@ class StreakAdmin(admin.ModelAdmin):
     search_fields = ("user__username",)
 
 
-@admin.register(NamedSpecies)
-class NamedSpeciesAdmin(admin.ModelAdmin):
-    list_display = ("user", "mode", "species_key", "first_named_at")
-    search_fields = ("user__username", "species_key")
-    list_filter = ("mode",)
+@admin.register(NamedSpeciesSet)
+class NamedSpeciesSetAdmin(admin.ModelAdmin):
+    """A player's unique-named-species set, stored as one roaring-bitmap blob (#55). Read-
+    only: the count is the unique-animals total; the blob itself is opaque (decode via
+    named_set.named_keys for a collection view)."""
+
+    list_display = ("user", "mode", "difficulty", "count", "updated_at")
+    search_fields = ("user__username",)
+    list_filter = ("mode", "difficulty")
+    readonly_fields = ("user", "mode", "difficulty", "count", "updated_at")
+    exclude = ("bitmap",)  # opaque binary; never edited by hand
+
+    def has_add_permission(self, request) -> bool:
+        return False  # written only by run submission

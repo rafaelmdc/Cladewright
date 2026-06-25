@@ -13,3 +13,6 @@ whitenoise>=6.6
 # Pipeline job queue: web enqueues, worker consumes (see cladewright/celery.py). The redis
 # extra pulls the broker client; lightweight, so it ships in the serving image too.
 celery[redis]>=5.4
+# Roaring bitmaps (CRoaring bindings) — compact storage for a player's unique-named-species
+# set: thousands of placements collapse to a few-KB blob instead of one row per species (#55).
+pyroaring>=1.0,<2

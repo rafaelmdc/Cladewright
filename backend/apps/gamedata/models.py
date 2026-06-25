@@ -44,11 +44,14 @@ class PipelineJob(models.Model):
     class Kind(models.TextChoices):
         BUILD = "build", "Build asset"
         FETCH_DUMP = "fetch_dump", "Download CoL dump"
+        FETCH_PAGEVIEWS = "fetch_pageviews", "Download pageview dump"
 
     kind = models.CharField(
         max_length=16, choices=Kind.choices, default=Kind.BUILD,
-        help_text="Build an asset, or download a fresh CoL dump (replaces the old one). "
-                  "Download jobs ignore the scope fields.",
+        help_text="Build an asset; download a fresh CoL dump (replaces the old one); or "
+                  "download + build the monthly Wikipedia pageview DB ONCE (then every fame "
+                  "build reuses it — the scalable path for huge scopes). Download jobs ignore "
+                  "the scope fields.",
     )
 
     # What to build. (scope_key/scope_filter are unused for a Download-dump job.)
@@ -80,8 +83,15 @@ class PipelineJob(models.Model):
                   "/resolve trims to), e.g. 'family'.")
     fame_dump = models.CharField(
         max_length=256, blank=True, default="",
-        help_text="Optional path to a Wikimedia monthly pageview dump (pageviews-YYYYMM-user.bz2) "
-                  "for fame at huge-scope scale; blank uses the pageviews REST api.")
+        help_text="Optional path to an already-downloaded Wikimedia monthly pageview dump "
+                  "(pageviews-YYYYMM-user.bz2). Usually blank: once a 'Download pageview dump' "
+                  "job has built the local DB, every fame build reuses it automatically; blank "
+                  "with no prebuilt DB falls back to the per-title pageviews REST api.")
+    # Which monthly pageview dump to fetch/build (the 'Download pageview dump' kind, and the
+    # month a build's fame is dated to). 0/0 = infer from fame_dump's filename, else the
+    # pageviews REST api.
+    fame_year = models.IntegerField(default=0, help_text="Pageview dump year, e.g. 2026.")
+    fame_month = models.IntegerField(default=0, help_text="Pageview dump month 1–12.")
     load_current = models.BooleanField(
         default=True, help_text="After building, load the asset and mark it current."
     )

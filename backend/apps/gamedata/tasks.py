@@ -65,6 +65,8 @@ def run_pipeline_job(self, job_id: int) -> str:
     try:
         if job.kind == PipelineJob.Kind.FETCH_DUMP:
             result = _run_fetch_dump(job, stream, emit)
+        elif job.kind == PipelineJob.Kind.FETCH_PAGEVIEWS:
+            result = _run_fetch_pageviews(job, stream, emit)
         else:
             result = _run_build(job, stream, emit)
     except Exception:  # noqa: BLE001 - record any failure on the job, then re-raise
@@ -90,6 +92,22 @@ def _run_fetch_dump(job, stream, emit) -> str:
     emit(f"== download CoL dump -> {job.coldp_dir} (replaces the old one) ==")
     call_command("fetch_col_dump", "--out", job.coldp_dir, stdout=stream, stderr=stream)
     return f"dump refreshed at {job.coldp_dir}"
+
+
+def _run_fetch_pageviews(job, stream, emit) -> str:
+    from django.core.management import call_command
+
+    if not (job.fame_year and job.fame_month):
+        raise ValueError(
+            "a Download-pageview-dump job needs fame_year + fame_month (which month to fetch)."
+        )
+    emit(f"== download + build pageview DB for {job.fame_year}-{job.fame_month:02d} "
+         "(one-time; future fame builds reuse it) ==")
+    args = ["--year", str(job.fame_year), "--month", str(job.fame_month)]
+    if job.fame_dump:  # an already-downloaded bz2 on the PVC → skip the network fetch
+        args += ["--dump", job.fame_dump]
+    call_command("fetch_pageviews_dump", *args, stdout=stream, stderr=stream)
+    return f"pageview DB ready for {job.fame_year}-{job.fame_month:02d}"
 
 
 def _run_build(job, stream, emit) -> str:
@@ -132,6 +150,8 @@ def _run_build(job, stream, emit) -> str:
         ]
         if job.fame_dump:
             build_args += ["--fame-dump", job.fame_dump]
+        if job.fame_year and job.fame_month:
+            build_args += ["--fame-year", str(job.fame_year), "--fame-month", str(job.fame_month)]
         call_command("build_gamedata", *build_args, stdout=stream, stderr=stream)
 
         load_args = ["--asset", str(out)]

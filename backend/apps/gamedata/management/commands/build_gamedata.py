@@ -104,6 +104,12 @@ class Command(BaseCommand):
         group_aliases = paraphyletic.apply_groups(tree)
         self.stdout.write(f"      {len(group_aliases)} virtual group nodes")
 
+        # Live progress for the long network harvests (names + fame), so the admin job log
+        # ticks up instead of going silent for minutes. The provider chunks to ~20 ticks.
+        def harvest_progress(phase: str, done: int, total: int) -> None:
+            pct = round(100 * done / total) if total else 100
+            self.stdout.write(f"      {phase}: {done:,}/{total:,} ({pct}%)")
+
         # One provider instance shared across stages so a Braidworks batch (network)
         # runs once and species + clade names both read its cache.
         provider = (
@@ -111,10 +117,29 @@ class Command(BaseCommand):
                 fame_dump_path=opts["fame_dump"] or None,
                 fame_year=opts["fame_year"] or None,
                 fame_month=opts["fame_month"] or None,
+                progress=harvest_progress,
             )
             if opts["enrich"] == "braidworks"
             else enrich.OfflineProvider()
         )
+        # Surface where fame (popularity) comes from, so the admin log shows at a glance
+        # whether this build will rank by real pageviews or fall back to nothing.
+        if opts["enrich"] != "braidworks":
+            self.stdout.write("      fame: disabled (offline enrich — every tip scores 0)")
+        elif opts["fame_dump"] or (opts["fame_year"] and opts["fame_month"]):
+            self.stdout.write("      fame source: pageview dump → local DB (built once, then reused)")
+        else:
+            source = ("Wikipedia pageviews REST api — per-title, slow; run a 'Download pageview "
+                      "dump' job once for scale")
+            try:
+                from wikipedia_weaver.setup import db_is_valid, default_db_path
+
+                cand = default_db_path()
+                if db_is_valid(cand):
+                    source = f"prebuilt pageview DB {cand} (local, fast)"
+            except Exception:  # noqa: BLE001 - braidworks absent → REST description stands
+                pass
+            self.stdout.write(f"      fame source: {source}")
 
         self.stdout.write("3/5 pool select…")
         pool_taxa = pool.select_pool(
@@ -125,6 +150,16 @@ class Command(BaseCommand):
 
         self.stdout.write(f"4/5 enrich ({opts['enrich']}; species + clades)…")
         enriched = enrich.enrich(pool_taxa, provider)
+        # Fame coverage: how many tips actually got a popularity score (and the top one), so
+        # the log proves fame landed — a 0% here means the fame source returned nothing.
+        if enriched:
+            scored = sum(1 for e in enriched if e.fame > 0)
+            pct = round(100 * scored / len(enriched))
+            top = max(enriched, key=lambda e: e.fame)
+            tail = f"top {top.fame:,} ({top.common})" if top.fame else "NO fame harvested"
+            self.stdout.write(
+                f"      fame: {scored:,}/{len(enriched):,} tips scored ({pct}%) — {tail}"
+            )
         node_names = enrich.enrich_clade_nodes(tree, provider)  # "bear"->Ursidae, …
         self.stdout.write(f"      {len(node_names)} clades got common names")
 

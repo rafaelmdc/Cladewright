@@ -5,47 +5,87 @@ from django.contrib import admin
 
 from .models import Alias, AssetVersion, ManualAlias, PipelineJob, TaxonNode, TaxonTip
 
+# AssetVersion's whole-asset `blob` (JSONB, tens of MB) and `membership_filter` (multi-MB
+# bytes) must NEVER be pulled into a list render. A TaxonTip/Node/Alias changelist joins to
+# its asset (for the `asset` column + filter); without deferring these, `select_related`
+# would deserialize ONE copy of the multi-MB blob PER ROW (100/page) — gigabytes on a small
+# pod → OOMKill. Deferring keeps only the cheap asset columns (scope/version/is_current,
+# which is all `str(asset)` needs).
+_HEAVY_ASSET_FIELDS = ("asset__blob", "asset__membership_filter")
+
+
+class CheapAssetFilter(admin.SimpleListFilter):
+    """Filter a tip/node/alias list by its asset WITHOUT loading the asset's multi-MB
+    blob/filter. The stock ``("asset",)`` related filter renders its dropdown by iterating
+    ``AssetVersion.objects.all()`` (every column, incl. the blob) — itself an OOM vector at
+    these row sizes. This lists assets via a values() query over cheap columns only."""
+
+    title = "asset"
+    parameter_name = "asset"
+
+    def lookups(self, request, model_admin):
+        rows = (
+            AssetVersion.objects.order_by("scope", "-version")
+            .values("id", "scope", "version", "is_current")
+        )
+        return [
+            (r["id"], f"{r['scope']} v{r['version']}" + (" (current)" if r["is_current"] else ""))
+            for r in rows
+        ]
+
+    def queryset(self, request, queryset):
+        return queryset.filter(asset_id=self.value()) if self.value() else queryset
+
+
+class _AssetChildAdmin(admin.ModelAdmin):
+    """Base for the read-only relational-mirror admins (TaxonTip/Node/Alias). Each row joins
+    to its AssetVersion for display, so the queryset MUST defer the asset's heavy columns;
+    and the global COUNT(*) is skipped (meaningless + slow on a million-row mirror)."""
+
+    show_full_result_count = False  # no SELECT COUNT(*) over the whole mirror per page load
+    # Own JSON columns not shown in the list — kept off the page too.
+    _own_defer: tuple[str, ...] = ()
+
+    def get_queryset(self, request):
+        return (
+            super()
+            .get_queryset(request)
+            .select_related("asset")
+            .defer(*_HEAVY_ASSET_FIELDS, *self._own_defer)
+        )
+
+    def has_add_permission(self, request) -> bool:
+        return False
+
+    def has_change_permission(self, request, obj=None) -> bool:
+        return False  # view-only mirror of pipeline output
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return False
+
 
 @admin.register(TaxonTip)
-class TaxonTipAdmin(admin.ModelAdmin):
+class TaxonTipAdmin(_AssetChildAdmin):
     """Browse an asset's playable species — search a name to find the id to alias. Read-only
     (the asset is pipeline output); aliasing is done via Manual aliases."""
 
     # Ordered by fame (enwiki pageviews / sitelink fallback): filter to a scope and the list
     # IS its popularity ranking — the most-famous species first, the obscure tail last.
     list_display = ("fame", "common", "sci", "key", "asset")
-    list_filter = ("asset",)
+    list_filter = (CheapAssetFilter,)
     search_fields = ("sci", "common", "key")
-    list_select_related = ("asset",)
     ordering = ("-fame", "key")
-
-    def has_add_permission(self, request) -> bool:
-        return False
-
-    def has_change_permission(self, request, obj=None) -> bool:
-        return False  # view-only
-
-    def has_delete_permission(self, request, obj=None) -> bool:
-        return False
+    _own_defer = ("lineage", "traits")
 
 
 @admin.register(TaxonNode)
-class TaxonNodeAdmin(admin.ModelAdmin):
+class TaxonNodeAdmin(_AssetChildAdmin):
     """Browse an asset's clade nodes (read-only)."""
 
     list_display = ("sci", "common", "rank", "key", "asset")
-    list_filter = ("asset", "rank")
+    list_filter = (CheapAssetFilter, "rank")
     search_fields = ("sci", "common", "key")
-    list_select_related = ("asset",)
-
-    def has_add_permission(self, request) -> bool:
-        return False
-
-    def has_change_permission(self, request, obj=None) -> bool:
-        return False
-
-    def has_delete_permission(self, request, obj=None) -> bool:
-        return False
+    _own_defer = ("lineage",)
 
 
 @admin.register(ManualAlias)
@@ -61,23 +101,13 @@ class ManualAliasAdmin(admin.ModelAdmin):
 
 
 @admin.register(Alias)
-class AliasAdmin(admin.ModelAdmin):
+class AliasAdmin(_AssetChildAdmin):
     """The live (baked + mirrored) alias index — read-only; handy to confirm a manual alias
     landed on the current asset."""
 
     list_display = ("norm", "target_kind", "target_key", "sci", "asset")
-    list_filter = ("asset", "target_kind")
+    list_filter = (CheapAssetFilter, "target_kind")
     search_fields = ("norm", "target_key", "sci")
-    list_select_related = ("asset",)
-
-    def has_add_permission(self, request) -> bool:
-        return False
-
-    def has_change_permission(self, request, obj=None) -> bool:
-        return False
-
-    def has_delete_permission(self, request, obj=None) -> bool:
-        return False
 
 
 @admin.register(AssetVersion)
@@ -96,9 +126,28 @@ class AssetVersionAdmin(admin.ModelAdmin):
     )
     actions = ["make_current", "deactivate", "delete_superseded"]
 
+    def get_queryset(self, request):
+        # Defer the multi-MB blob + membership_filter so the changelist never loads them (one
+        # `blob IS NOT NULL` flag is enough to label delivery); a page of asset rows would
+        # otherwise pull tens of MB each. `_has_blob` is computed in SQL, no bytes transferred.
+        from django.db.models import BooleanField, Case, Value, When
+
+        return (
+            super()
+            .get_queryset(request)
+            .defer("blob", "membership_filter")
+            .annotate(
+                _has_blob=Case(
+                    When(blob__isnull=False, then=Value(True)),
+                    default=Value(False),
+                    output_field=BooleanField(),
+                )
+            )
+        )
+
     @admin.display(description="delivery")
     def delivery(self, obj: AssetVersion) -> str:
-        return "blob" if obj.blob is not None else "incremental"
+        return "blob" if getattr(obj, "_has_blob", obj.blob is not None) else "incremental"
 
     @admin.action(description="Delete superseded — purge non-current versions of the selected scope(s)")
     def delete_superseded(self, request, queryset):
@@ -145,23 +194,31 @@ class PipelineJobAdmin(admin.ModelAdmin):
     fieldsets = (
         (None, {
             "fields": ("kind",),
-            "description": "Build an asset, or download a fresh CoL dump (replaces the old "
-                           "one). A separate worker runs the job — refresh to watch status. "
-                           "Standard scope filters (mammalia/aves/reptilia/amphibia/fish) are "
-                           "listed in docs/pipeline-jobs.md.",
+            "description": "Build an asset; download a fresh CoL dump; or download + build the "
+                           "monthly Wikipedia pageview DB once (then every fame build reuses it "
+                           "— do this before a huge-scope build). A separate worker runs the job "
+                           "— refresh to watch status. Standard scope filters "
+                           "(mammalia/aves/reptilia/amphibia/fish) are in docs/pipeline-jobs.md.",
         }),
         ("Build asset (ignored for a Download job)", {
             "fields": ("scope_key", "label", "scope_filter", "enrich", "include_extinct",
                        "load_current", "delete_old"),
         }),
         ("Notable blob (delivery)", {
-            "fields": ("notable_max", "notable_coverage", "notable_min", "frontier_rank",
-                       "fame_dump"),
+            "fields": ("notable_max", "notable_coverage", "notable_min", "frontier_rank"),
             "description": "How much of the scope ships as the local client blob. Leave "
                            "notable_max=0 to ship the whole pool (fine up to ~20k tips). For a "
                            "huge scope, set notable_max (~20000) → hybrid: a top-fame blob + the "
-                           "rest via search/resolve. fame_dump points fame at a Wikimedia "
-                           "pageview dump for million-tip scopes.",
+                           "rest via search/resolve.",
+        }),
+        ("Fame / pageviews", {
+            "fields": ("fame_year", "fame_month", "fame_dump"),
+            "description": "Popularity source. For a 'Download pageview dump' job, set "
+                           "fame_year + fame_month (which monthly dump to fetch). Build jobs "
+                           "then reuse that local DB automatically — leave these blank on a "
+                           "build unless you want its fame dated to a specific month. fame_dump "
+                           "is only for an already-downloaded .bz2 on the worker. With no "
+                           "prebuilt DB, fame falls back to the slow per-title pageviews api.",
         }),
         ("Source / lifecycle", {
             "fields": ("coldp_dir", "status", "log", "requested_by", "created_at",

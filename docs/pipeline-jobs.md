@@ -69,10 +69,39 @@ Notes:
 - **"Other invertebrates"** is a pragmatic union of the non-arthropod, non-chordate animal
   phyla (extend/trim the list to taste — it's just a `scope_filter`). It overlaps nothing
   with `arthropoda` or the chordate scopes.
-- **fame_dump** (optional): for a scope this size, point fame at a monthly Wikimedia
-  pageview dump on the worker, e.g. `data/pageviews-202506-user.bz2` (download it to the
-  dump PVC first; same `data/` dir as the CoL dump). Left blank, fame falls back to the
-  keyless pageviews API — fine for the small scopes in §1, slow for a million-species build.
+- **fame at scale** — see §3: run the **Download pageview dump** job ONCE; every fame build
+  then reuses the local pageview DB automatically (no per-job `fame_dump` needed). Without a
+  prebuilt DB, fame falls back to the per-title pageviews REST API — fine for the small scopes
+  in §1, but **one HTTP request per species**, so unusable for a million-species build.
+
+## 3. Fame at scale — download the pageview DB once
+
+The popularity ("fame") signal is enwiki pageviews. The keyless pageviews REST API is **one
+request per article**, so it's fine for a few-thousand-species scope but impossible for
+Arthropoda (≈1.2 M). The fix is a one-time job that downloads a monthly Wikimedia pageview
+dump and builds a local `title → views` SQLite on the worker's PVC; afterwards every fame
+build does a fast local lookup (plus the already-batched Wikidata title/sitelink resolve).
+
+Run this **before** a huge-scope build (and refresh monthly if you want fresher numbers):
+
+| field | value |
+|---|---|
+| kind | **Download pageview dump** |
+| fame_year | e.g. `2026` |
+| fame_month | e.g. `6` (1–12) |
+| fame_dump | *(blank — fetched from Wikimedia; set only if you pre-downloaded the `.bz2`)* |
+
+Notes:
+- One-time + cached: it streams a ~3 GB dump and builds a ~0.4 GB SQLite at
+  `$BRAIDWORKS_DATA_DIR/wikipedia/` on the dump PVC (the worker sets
+  `BRAIDWORKS_DATA_DIR=/app/data/braidworks`). It is **not** re-downloaded on pod restarts,
+  and **every later Build job reuses it with no extra fields** — the job log prints
+  `fame source: prebuilt pageview DB …`. Re-run the job (or a build with `fame_year/month`)
+  to refresh to a newer month.
+- The build job's **fame_year/fame_month** only need setting if you want a build's fame dated
+  to a specific month; normally leave them blank and the prebuilt DB is used as-is.
+- The build log now reports fame progress and coverage, e.g.
+  `fame: 4,810/6,500 tips scored (74%) — top 1,838,000 (lion)`, so you can see it working.
 
 ## Adding a new standard scope
 

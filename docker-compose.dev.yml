@@ -79,6 +79,10 @@ services:
       POSTGRES_PORT: "5432"
       DJANGO_SETTINGS_MODULE: cladewright.settings
       CELERY_BROKER_URL: redis://redis:6379/0
+      # Braidworks local DBs (e.g. the Wikipedia pageview DB for fame) persist under the
+      # mounted ./data, so a "Download pageview dump" job builds them once and every later
+      # fame build reuses them across restarts.
+      BRAIDWORKS_DATA_DIR: /app/data/braidworks
     volumes:
       - ./backend:/app # live code mount (restart worker to pick up task edits)
       # The dump lives here; RW so a Download-dump job can refresh it in place. coldp_dir

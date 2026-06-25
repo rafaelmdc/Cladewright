@@ -131,6 +131,11 @@ class AssetVersion(models.Model):
     provenance = models.JSONField(default=dict, blank=True)
     # Whole-asset payload for blob-mode scopes; null for huge scopes served incrementally.
     blob = models.JSONField(null=True, blank=True)
+    # Binary-fuse8 membership filter over the scope's FULL key set (built for hybrid/remote
+    # scopes). The client checks it before any /search — a "definitely absent" name (a typo
+    # or out-of-scope guess) is rejected locally, never touching the network. Served raw by
+    # FilterView. Null when the local blob already holds the whole pool (no tail to gate).
+    membership_filter = models.BinaryField(null=True, blank=True)
     is_current = models.BooleanField(default=False)
     built_at = models.DateTimeField(auto_now_add=True)
 

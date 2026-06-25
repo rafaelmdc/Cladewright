@@ -6,6 +6,7 @@
 //   * search is debounced by the caller (the search box), not fired per keystroke.
 
 import type { ResolvePayload } from "./growable";
+import { parseFilter, type FuseFilter } from "./membership";
 
 const API = import.meta.env.VITE_API_BASE ?? "/api/gamedata";
 
@@ -50,6 +51,22 @@ export async function searchRemote(
     return (data.results ?? []) as SearchHit[];
   } catch {
     return []; // aborted or network error — caller treats as "no results yet"
+  }
+}
+
+/** Fetch + parse the scope's binary-fuse8 membership filter (version-pinned, cacheable).
+ *  null when the scope has none (whole-pool blob) or the fetch fails — callers then just
+ *  skip the local reject and fall through to /search. */
+export async function fetchFilter(
+  scope: string | undefined,
+  version?: number,
+): Promise<FuseFilter | null> {
+  try {
+    const res = await fetch(scoped("filter", scope, {}, version));
+    if (!res.ok) return null;
+    return parseFilter(await res.arrayBuffer());
+  } catch {
+    return null;
   }
 }
 

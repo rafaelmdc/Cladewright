@@ -1,6 +1,8 @@
 // Wire shape of the game-data asset. Mirrors docs/game-asset-format.md — keep in
 // sync with that contract and the backend pipeline's asset.py.
 
+import type { FuseFilter } from "./membership";
+
 export interface AssetNode {
   id: string;
   rank: string;
@@ -87,4 +89,10 @@ export interface InternedAsset {
   /** clade-node id -> node record */
   nodeById: Map<string, AssetNode>;
   hiddenLabelMax: number;
+  /** hybrid/remote: binary-fuse8 membership filter — a typed name that's "definitely
+   *  absent" is rejected locally (no /search). Undefined for whole-pool blob scopes. */
+  filter?: FuseFilter;
+  /** hybrid/remote: normalized queries already known to resolve to nothing (filter-rejected
+   *  or a remote miss), so a repeated typo never re-hits the network. */
+  negativeCache?: Set<string>;
 }

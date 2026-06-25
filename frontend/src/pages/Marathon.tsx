@@ -19,7 +19,7 @@ import { ScopePicker } from "../components/ScopePicker";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { TreeRenderer } from "../components/TreeRenderer";
 import { createEmptyAsset } from "../lib/asset/growable";
-import { loadAsset, loadAssets, loadHybridAsset } from "../lib/asset/load";
+import { loadAsset, loadAssets, loadHybridAsset, loadRemoteAsset } from "../lib/asset/load";
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import type { InternedAsset, Target } from "../lib/asset/types";
 import { fetchDaily, type DailyInfo } from "../lib/daily";
@@ -171,7 +171,8 @@ export function Marathon() {
     } else {
       const info = scopes.find((s) => s.key === list[0]);
       if (info?.mode === "remote") {
-        apply(createEmptyAsset(list[0], 15, info.version));
+        // Start empty + attach the membership filter, then grow via /resolve.
+        loadRemoteAsset(list[0], 15, info.version).then(apply).catch(console.error);
       } else if (info?.mode === "hybrid") {
         // Download the notable blob + seed a growable asset; the tail grows via /resolve.
         loadHybridAsset(list[0], info.version).then(apply).catch(console.error);

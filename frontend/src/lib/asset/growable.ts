@@ -72,6 +72,7 @@ export function createEmptyAsset(scope: string, hiddenLabelMax: number, version 
     tipById: new Map(),
     nodeById: new Map(),
     hiddenLabelMax,
+    negativeCache: new Set(),
   };
 }
 
@@ -118,6 +119,7 @@ export function seedHybridAsset(raw: GameAsset): InternedAsset {
     tipById,
     nodeById,
     hiddenLabelMax: raw.thresholds.hidden_label_max,
+    negativeCache: new Set(),
   };
 }
 

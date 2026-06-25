@@ -123,6 +123,25 @@ class HybridLoadTests(TestCase):
         ants = next(s for s in r.json()["scopes"] if s["key"] == "ants")
         self.assertEqual(ants["mode"], "hybrid")
         self.assertEqual(ants["notable_count"], 1)
+        self.assertTrue(ants["has_filter"])
+
+    def test_membership_filter_built_and_served(self) -> None:
+        self._load()
+        from apps.gamedata.membership import filter_contains
+
+        av = AssetVersion.objects.get(scope="ants", version=5)
+        self.assertIsNotNone(av.membership_filter)
+        blob = bytes(av.membership_filter)
+        # Every real name (incl. the tail "rare ant") is present; a typo is rejected.
+        self.assertTrue(filter_contains(blob, "rare ant"))
+        self.assertTrue(filter_contains(blob, "famous ant"))
+        self.assertFalse(filter_contains(blob, "zzzz not a real name"))
+
+        r = self.client.get(reverse("gamedata-filter"), {"scope": "ants", "v": 5})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/octet-stream")
+        self.assertEqual(r["Cache-Control"], IMMUTABLE)
+        self.assertEqual(r.content, blob)
 
     def test_tail_tip_resolves_trimmed_to_frontier(self) -> None:
         self._load()

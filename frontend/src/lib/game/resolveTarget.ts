@@ -7,6 +7,7 @@
 // See docs/architecture.md#scaling-to-huge-scope and AGENTS.md (keep the server light).
 
 import { foldResolved } from "../asset/growable";
+import { mightContain } from "../asset/membership";
 import { resolveRemote, searchRemote } from "../asset/remote";
 import type { InternedAsset, Target } from "../asset/types";
 import { normalize } from "./normalize";
@@ -26,22 +27,36 @@ export async function resolveTarget(
     if (local) return local;
   }
 
+  const q = normalize(query);
+  // Gate the tail: a repeat miss, or a name the membership filter says is "definitely
+  // absent" (a typo / out-of-scope guess), is rejected locally — no network at all.
+  if (asset.negativeCache?.has(q)) return null;
+  if (asset.filter && !mightContain(asset.filter, q)) {
+    asset.negativeCache?.add(q);
+    return null;
+  }
+
   const version = asset.raw.version;
   const hits = await searchRemote(asset.scope, query, version);
-  if (hits.length === 0) return null;
+  if (hits.length === 0) {
+    asset.negativeCache?.add(q);
+    return null;
+  }
   // /search already ranks exact→prefix→fame→shortest; prefer an exact name match, else the
   // top hit (mirrors the local resolver preferring a primary name).
-  const norm = normalize(query);
-  const best = hits.find((h) => h.name === norm) ?? hits[0];
+  const best = hits.find((h) => h.name === q) ?? hits[0];
 
   const payload = await resolveRemote(asset.scope, best.id, version);
-  if (!payload) return null;
+  if (!payload) {
+    asset.negativeCache?.add(q);
+    return null;
+  }
   const target = foldResolved(asset, payload);
   // Scientific difficulty: only the actual scientific name counts (common-name aliases
   // can match /search, so gate the resolved target on its sci name here too).
   if (target && scientificOnly) {
     const sci = target.kind === "tip" ? target.tip.sci : target.node.sci;
-    if (normalize(sci) !== norm) return null;
+    if (normalize(sci) !== q) return null;
   }
   return target;
 }

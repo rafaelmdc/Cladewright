@@ -89,6 +89,16 @@ class Command(BaseCommand):
                 frontier_rank=str(doc.get("frontier_rank", "family")),
             )
             notable_count = len(blob_doc["tips"]) if blob_doc is not doc else 0
+
+            # Membership filter over the FULL key set, but only when there's a tail to gate:
+            # a hybrid scope (capped blob) or a relational-only remote scope. A whole-pool
+            # blob already holds every name locally, so it needs no filter.
+            membership = None
+            if not opts["no_relational"] and (notable_count or opts["no_blob"]):
+                from apps.gamedata.membership import build_filter
+
+                membership = build_filter(aliases.keys())
+
             asset = AssetVersion.objects.create(
                 scope=scope,
                 label=doc.get("label", ""),
@@ -101,6 +111,7 @@ class Command(BaseCommand):
                 hidden_label_max=int(doc.get("thresholds", {}).get("hidden_label_max", 15)),
                 provenance=doc.get("provenance", {}),
                 blob=None if opts["no_blob"] else blob_doc,
+                membership_filter=membership,
                 is_current=opts["current"],
             )
 

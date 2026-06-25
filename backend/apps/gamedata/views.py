@@ -18,6 +18,7 @@ from functools import lru_cache
 
 from django.conf import settings
 from django.db.utils import DatabaseError
+from django.http import HttpResponse
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -110,6 +111,12 @@ class ScopesView(APIView):
                 AssetVersion.objects.filter(is_current=True, blob__isnull=False)
                 .values_list("scope", flat=True)
             )
+            # Which scopes carry a membership filter — so the client only fetches one when
+            # there's a tail to gate. Checked without pulling the (large) filter bytes.
+            filter_scopes = set(
+                AssetVersion.objects.filter(is_current=True, membership_filter__isnull=False)
+                .values_list("scope", flat=True)
+            )
         except DatabaseError:
             return Response({"scopes": []})
 
@@ -131,6 +138,8 @@ class ScopesView(APIView):
                 "mode": mode_of(r),
                 # In hybrid mode, how many tips ship locally (the rest are the remote tail).
                 "notable_count": r["notable_count"],
+                # Whether a membership filter is available to gate tail lookups client-side.
+                "has_filter": r["scope"] in filter_scopes,
             }
             for r in rows
         ]
@@ -311,5 +320,23 @@ class ResolveView(APIView):
             payload["anchor"] = anchor
         resp = Response(payload)
         if pinned:  # one placed organism's lineage is immutable → edge-cacheable forever.
+            resp["Cache-Control"] = _IMMUTABLE
+        return resp
+
+
+class FilterView(APIView):
+    """GET /api/gamedata/filter/?scope=&v= -> the raw binary-fuse8 membership filter for a
+    scope (octet-stream). The hybrid/remote client fetches it once and checks every typed
+    name before any /search, so typos and out-of-scope guesses never hit the network."""
+
+    permission_classes: list = []
+
+    def get(self, request: Request) -> HttpResponse:
+        scope = request.query_params.get("scope")
+        av, pinned = _pinned_or_current(scope, request.query_params.get("v"))
+        if av is None or not av.membership_filter:
+            return HttpResponse(b"", status=404)
+        resp = HttpResponse(bytes(av.membership_filter), content_type="application/octet-stream")
+        if pinned:  # immutable per (scope, version) → edge-cacheable like the blob.
             resp["Cache-Control"] = _IMMUTABLE
         return resp

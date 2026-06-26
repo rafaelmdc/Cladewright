@@ -212,13 +212,16 @@ class PipelineJobAdmin(admin.ModelAdmin):
                            "rest via search/resolve.",
         }),
         ("Fame / pageviews", {
-            "fields": ("fame_year", "fame_month", "fame_dump"),
+            "fields": ("fame_source", "fame_year", "fame_month", "fame_dump"),
             "description": "Popularity source. For a 'Download pageview dump' job, set "
                            "fame_year + fame_month (which monthly dump to fetch). Build jobs "
                            "then reuse that local DB automatically — leave these blank on a "
                            "build unless you want its fame dated to a specific month. fame_dump "
-                           "is only for an already-downloaded .bz2 on the worker. With no "
-                           "prebuilt DB, fame falls back to the slow per-title pageviews api.",
+                           "is only for an already-downloaded .bz2 on the worker. "
+                           "fame_source picks the backend: leave AUTO normally; use PREBUILT for "
+                           "a HUGE scope so the build fails fast (instead of a multi-day REST "
+                           "crawl) if the dump DB isn't on this worker; the job log prints the "
+                           "exact DB path it checked.",
         }),
         ("Source / lifecycle", {
             "fields": ("coldp_dir", "status", "log", "requested_by", "created_at",

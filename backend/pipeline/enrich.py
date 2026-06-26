@@ -171,11 +171,16 @@ class BraidworksProvider:
         # admin job log ticks up.
         self._progress = progress
 
-    # Aim for ~20 progress ticks over a harvest regardless of pool size (≥200/chunk so each
-    # network round-trip still batches usefully — the wikidata weaver chunks VALUES at 200).
+    # Aim for ~20 progress ticks over a harvest, but CAP the chunk so a huge scope can't build
+    # a giant in-flight batch. At ~1.2M tips the old (total+19)//20 made ~61k-name chunks, and
+    # one executor.execute() then held ~61k input StrandSets + ~61k resolved results (with all
+    # their vernacular/title strands, plus buffered REST responses) live at once — an OOM
+    # spike. Bounding to 2000/chunk keeps each round-trip's peak flat regardless of pool size;
+    # the floor (≥200) still batches the wikidata VALUES (chunked at 200) usefully. Big scopes
+    # just get more than 20 ticks, which is fine.
     @staticmethod
     def _chunk_size(total: int) -> int:
-        return max(200, (total + 19) // 20)
+        return min(2000, max(200, (total + 19) // 20))
 
     def prepare(self, taxa: list[Taxon]) -> None:
         # Pool taxa are accepted species, so the homonym disambiguator is "species".

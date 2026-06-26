@@ -63,23 +63,6 @@ export const DEFAULT_SETTINGS: GameSettings = {
   cladeMinSize: 3,
 };
 
-// A run only counts for the leaderboard when its score-affecting modifiers are at their
-// defaults — otherwise infinite time / boosted time-per-organism / a juiced combo / an
-// extinct-inclusive pool would inflate scores. Visual-only settings (layout, scientific
-// names, falling leaves, flash fade) are ignored.
-const RANKED_FIELDS: (keyof GameSettings)[] = [
-  "infiniteTime",
-  "startSeconds",
-  "timePerNew",
-  "noveltyBonus",
-  "timePerRefinement",
-  "extantOnly",
-  "comboWindowSeconds",
-  "comboTimeMultiplier",
-  "comboScoreMultiplier",
-  "cladeScoreMultiplier",
-  "cladeMinSize",
-];
 
 // The effective defaults: the hardcoded fallbacks, overlaid by whatever the admin configured
 // (filled in once fetchGameDefaults resolves). A fresh run and the "ranked" baseline both key
@@ -114,10 +97,6 @@ export async function fetchGameDefaults(mode?: string): Promise<void> {
   } catch {
     /* offline / backend down — keep the fallbacks */
   }
-}
-
-export function isRankedSettings(s: GameSettings): boolean {
-  return RANKED_FIELDS.every((k) => s[k] === runtimeDefaults[k]);
 }
 
 const KEY = "cladewright.settings.v1";

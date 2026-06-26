@@ -20,7 +20,14 @@ import {
   type GameConfig,
 } from "../lib/game/config";
 import { gameplayFields } from "../lib/game/schema";
-import { fetchGameDefaults, gameDefaults, isRankedSettings } from "../lib/game/settings";
+import { fetchGameDefaults, gameDefaults } from "../lib/game/settings";
+import {
+  conflictingModifiers,
+  fetchModifiers,
+  formatMultiplier,
+  previewMultiplier,
+  type ModifierInfo,
+} from "../lib/game/multipliers";
 import type { Difficulty } from "../lib/scores";
 import { useTitle } from "../lib/useTitle";
 
@@ -32,6 +39,7 @@ export function Lobby() {
   const navigate = useNavigate();
   const [games, setGames] = useState<Game[]>(FALLBACK_GAMES);
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
+  const [modInfo, setModInfo] = useState<ModifierInfo | null>(null);
   const [cfg, setCfg] = useState<GameConfig>(() => seedConfig(mode));
 
   const game = games.find((g) => g.mode === mode);
@@ -45,6 +53,18 @@ export function Lobby() {
       if (!localStorage.getItem(configKey(mode))) {
         setCfg((c) => ({ ...c, settings: { ...gameDefaults() } }));
       }
+    });
+  }, [mode]);
+
+  // The game's modifiers + multiplier rules, for the chips + the live multiplier preview.
+  useEffect(() => {
+    fetchModifiers(mode).then((info) => {
+      setModInfo(info);
+      // Drop any remembered modifier the backend no longer serves.
+      setCfg((c) => {
+        const valid = c.modifiers.filter((k) => info.modifiers.some((m) => m.key === k));
+        return valid.length === c.modifiers.length ? c : { ...c, modifiers: valid };
+      });
     });
   }, [mode]);
 
@@ -65,10 +85,20 @@ export function Lobby() {
 
   const supportsDifficulty = game?.supports_difficulty ?? true;
   const fields = useMemo(() => gameplayFields(mode), [mode]);
-  const ranked = isRankedSettings(cfg.settings);
   const totalTips = scopes
     .filter((s) => cfg.scopes.includes(s.key))
     .reduce((n, s) => n + s.tip_count, 0);
+  // Live score multiplier the run will score at (∏ active modifiers × ∏ eased settings, #101).
+  const multiplier = modInfo ? previewMultiplier(cfg.modifiers, cfg.settings, modInfo) : 1;
+  const conflicts = modInfo ? conflictingModifiers(cfg.modifiers, modInfo.modifiers) : new Set<string>();
+
+  function toggleModifier(key: string) {
+    setCfg((c) => {
+      const has = c.modifiers.includes(key);
+      const next = has ? c.modifiers.filter((k) => k !== key) : [...c.modifiers, key];
+      return { ...c, modifiers: next.sort() };
+    });
+  }
 
   function start() {
     const code = encodeConfig(cfg);
@@ -134,16 +164,54 @@ export function Lobby() {
             </Section>
           )}
 
+          {/* Modifiers — opt-in mutators, each carrying a score multiplier (#101). */}
+          {modInfo && modInfo.modifiers.length > 0 && (
+            <Section label="Modifiers">
+              <div className="flex flex-wrap gap-2">
+                {modInfo.modifiers.map((m) => {
+                  const on = cfg.modifiers.includes(m.key);
+                  // Grey out a modifier incompatible with the current selection (unless it's the
+                  // one already on, so it can be toggled off).
+                  const blocked =
+                    !on &&
+                    (m.incompatible_with ?? []).some((k) => cfg.modifiers.includes(k));
+                  return (
+                    <button
+                      key={m.key}
+                      type="button"
+                      disabled={blocked}
+                      onClick={() => toggleModifier(m.key)}
+                      title={m.blurb || undefined}
+                      className={`pill ${on ? "pill-active" : "border-dashed"} ${
+                        blocked ? "cursor-not-allowed opacity-40" : ""
+                      } ${conflicts.has(m.key) ? "!border-red-500" : ""}`}
+                    >
+                      {m.label}
+                      <span className="ml-1.5 font-mono text-[10px] opacity-70">
+                        {formatMultiplier(m.multiplier)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </Section>
+          )}
+
           {/* Settings */}
           <div className="ink-card flex flex-col gap-5 bg-clade-paper p-5">
             <div className="flex items-center justify-between">
               <h2 className="font-hand text-2xl font-bold text-clade-ink">Settings</h2>
               <span
                 className={`font-mono text-[11px] uppercase tracking-wide ${
-                  ranked ? "text-clade-accent" : "text-clade-ink/45"
+                  multiplier === 1
+                    ? "text-clade-ink/45"
+                    : multiplier > 1
+                      ? "text-clade-accent"
+                      : "text-clade-ink/55"
                 }`}
+                title="Score multiplier from your modifiers + settings"
               >
-                {ranked ? "● Ranked" : "○ Custom"}
+                ● {formatMultiplier(multiplier)} run
               </span>
             </div>
             <SettingsFields

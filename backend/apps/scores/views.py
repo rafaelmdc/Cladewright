@@ -29,9 +29,15 @@ from .models import (
     FrozenDaily,
     GameDefaults,
     GameModeConfig,
+    GameModifier,
     PlayerStat,
     Run,
     Streak,
+)
+from .multipliers import (
+    DEFAULT_SETTING_MULTIPLIERS,
+    final_score,
+    resolve_multiplier,
 )
 from .named_set import add_named
 from .scoring import rescore
@@ -120,6 +126,57 @@ class GameDefaultsView(APIView):
     def get(self, request: Request) -> Response:
         game = _defaults_game(request.query_params.get("mode"))
         return Response(GameDefaults.load(game).as_settings())
+
+
+def _modifier_defs(game: str) -> dict[str, dict]:
+    """The game's ENABLED modifiers as {key: {label, multiplier, incompatible_with}} — the
+    authoritative set the server resolves a config's multiplier against (a client can't invent
+    one). Keyed by the game base ("marathon_free" → "marathon"), like GameDefaults."""
+    return {
+        m.key: {
+            "label": m.label,
+            "multiplier": m.multiplier,
+            "incompatible_with": m.incompatible_with or [],
+        }
+        for m in GameModifier.objects.filter(game=game, enabled=True)
+    }
+
+
+def _setting_rules(defaults: GameDefaults) -> dict[str, dict]:
+    """The per-setting derate ruleset for a game: the admin override on GameDefaults, or the
+    built-in default when unset."""
+    return defaults.setting_multipliers or DEFAULT_SETTING_MULTIPLIERS
+
+
+class ModifiersView(APIView):
+    """GET /api/scores/modifiers/?mode= -> the game's enabled modifiers + the setting-derate
+    rules + current defaults, so the lobby can render the modifier chips AND compute the live
+    multiplier preview the same way the server will. Public; the server stays the authority at
+    submit (this is presentation only)."""
+
+    permission_classes: list = []
+
+    def get(self, request: Request) -> Response:
+        game = _defaults_game(request.query_params.get("mode"))
+        defaults = GameDefaults.load(game)
+        modifiers = [
+            {
+                "key": m.key,
+                "label": m.label,
+                "blurb": m.blurb,
+                "multiplier": m.multiplier,
+                "incompatible_with": m.incompatible_with or [],
+            }
+            for m in GameModifier.objects.filter(game=game, enabled=True)
+        ]
+        return Response({
+            "mode": request.query_params.get("mode"),
+            "game": game,
+            "modifiers": modifiers,
+            # The client mirrors these to preview the multiplier; the server re-resolves at submit.
+            "setting_multipliers": _setting_rules(defaults),
+            "defaults": defaults.as_settings(),
+        })
 
 
 DAILY_MODE = GameMode.MARATHON_DAILY
@@ -325,9 +382,16 @@ class SubmitRunView(APIView):
         transcript = data.get("transcript") or []
         if not isinstance(transcript, list):
             return Response({"error": "transcript must be a list of ids"}, status=400)
-        # Default ("ranked") settings → eligible for the leaderboard. A custom run still
-        # records + counts toward stats, but never appears on the board.
-        ranked = bool(data.get("ranked", True))
+
+        # The run's config (#101): its gameplay settings + opted-in modifiers resolve to the
+        # score multiplier. The daily is server-fixed (default settings, no modifiers, 1.0×), so
+        # ignore whatever the client posts for it. ``ranked`` now means ONLY anti-cheat-eligible
+        # (set below) — custom settings/modifiers no longer un-rank, they multiply.
+        posted_settings = data.get("settings") if isinstance(data.get("settings"), dict) else {}
+        posted_modifiers = data.get("modifiers") if isinstance(data.get("modifiers"), list) else []
+        run_settings = {} if is_daily else posted_settings
+        run_modifiers = [] if is_daily else [m for m in posted_modifiers if isinstance(m, str)]
+        ranked = True
 
         # Signed run session (#77): verifies this run was started via the server and gives a
         # trusted start time. Combos only score from timings when the session is valid AND
@@ -362,14 +426,26 @@ class SubmitRunView(APIView):
             for r in TaxonNode.objects.filter(asset=av, key__in=ids).values("key", "lineage"):
                 node_lineages[r["key"]] = r["lineage"]
 
-        defaults = GameDefaults.load(_defaults_game(mode))
+        game = _defaults_game(mode)
+        defaults = GameDefaults.load(game)
         combo_kwargs = _combo_bonus_args(timings, ids, token_payload, defaults)
+
+        # Resolve the score multiplier from the run's config against the server's own modifier +
+        # setting-derate definitions (never a client number). An incompatible modifier pair is a
+        # tampered/stale config → reject. The daily resolves to 1.0× (no settings/modifiers).
+        resolution = resolve_multiplier(
+            modifiers=run_modifiers,
+            settings=run_settings,
+            mod_defs=_modifier_defs(game),
+            setting_rules=_setting_rules(defaults),
+        )
+        if resolution.error:
+            return Response({"error": resolution.error}, status=400)
 
         # Clade-completion bonus: pull the species denominator for every ANCESTOR clade of a
         # placed tip (not just the named ids), so the server can detect a clade going fully
-        # named. A ranked run is default settings → use the admin's extant_only; a custom run
-        # may differ, so honour its claim (it's off-board anyway, this only matches the HUD).
-        extant_only = defaults.extant_only if ranked else bool(data.get("extant_only", defaults.extant_only))
+        # named. Honour the run's actual living-only choice (the daily uses the admin default).
+        extant_only = bool(run_settings.get("extantOnly", defaults.extant_only))
         ancestor_ids = {a for lin in tip_lineages.values() for a in lin}
         node_pool_counts: dict[str, int] = {}
         if ancestor_ids and defaults.clade_score_multiplier > 0:
@@ -388,9 +464,22 @@ class SubmitRunView(APIView):
         )
 
         # A ranked run must come from a valid session at a humanly-plausible pace; otherwise
-        # it still records (stats) but doesn't reach the leaderboard.
+        # it still records (stats) but doesn't reach the leaderboard. This is the ONLY thing
+        # that un-ranks a run now (#101) — settings/modifiers resolve to a multiplier instead.
         if ranked and not _rate_plausible(token_payload, result.base):
             ranked = False
+
+        # Board score = base (placements + combo/clade bonuses) × the resolved multiplier.
+        base_score = result.score
+        multiplier = resolution.multiplier
+        final = final_score(base_score, multiplier)
+        run_config = {
+            "mode": mode,
+            "difficulty": difficulty,
+            "scopes": components,
+            "settings": run_settings,
+            "modifiers": resolution.modifiers,
+        }
 
         puzzle_date = today if is_daily else None
 
@@ -400,7 +489,10 @@ class SubmitRunView(APIView):
                 mode=mode,
                 scope=scope,
                 difficulty=difficulty,
-                score=result.score,
+                score=final,
+                base_score=base_score,
+                score_multiplier=multiplier,
+                config=run_config,
                 asset_version=max(a.version for a in assets),
                 puzzle_date=puzzle_date,
                 transcript=ids,
@@ -409,16 +501,18 @@ class SubmitRunView(APIView):
             if is_daily and puzzle_date is not None:
                 # Global day streak — any game's daily advances the one streak.
                 _bump_streak(request.user, DAILY_STREAK_KEY, puzzle_date)
-            # Stats fold in EVERY finished run, ranked or not.
-            _update_player_stats(request.user, mode, difficulty, result.score, result.placed_tips)
+            # Stats fold in EVERY finished run, ranked or not — best_score tracks the board
+            # (final) score, so it's comparable to what the leaderboard shows.
+            _update_player_stats(request.user, mode, difficulty, final, result.placed_tips)
 
-        # Rank only for ranked runs (the leaderboard ignores custom-settings runs). Among
-        # distinct users with a strictly better RANKED run for this board.
+        # Rank only for runs that passed anti-cheat. Among distinct users with a strictly better
+        # board run — comparison is on the final (× multiplier) score, so a harder run can outrank
+        # a default one (#101).
         rank = None
         if ranked:
             rank_qs = Run.objects.filter(
                 mode__in=_board_modes(mode), scope=scope, difficulty=difficulty, ranked=True,
-                score__gt=result.score,
+                score__gt=final,
             )
             # The global free board is all-time across free + daily; the daily board is the
             # one specific day. (#46)
@@ -426,7 +520,15 @@ class SubmitRunView(APIView):
                 rank_qs = rank_qs.filter(puzzle_date=puzzle_date)
             rank = rank_qs.values("user").distinct().count() + 1
         return Response(
-            {**result.as_dict(), "run_id": run.id, "rank": rank, "ranked": ranked},
+            {
+                **result.as_dict(),
+                "score": final,
+                "base_score": base_score,
+                "score_multiplier": multiplier,
+                "run_id": run.id,
+                "rank": rank,
+                "ranked": ranked,
+            },
             status=201,
         )
 

@@ -9,6 +9,7 @@ import { useState } from "react";
 
 import { SettingsFields } from "./controls/SettingControls";
 import { visualFields } from "../lib/game/schema";
+import { formatMultiplier } from "../lib/game/multipliers";
 import type { GameSettings } from "../lib/game/settings";
 
 interface Props {
@@ -16,14 +17,14 @@ interface Props {
   settings: GameSettings;
   /** Apply + persist a visual-pref change (the only thing tunable mid-run). */
   onChange: (next: GameSettings) => void;
-  /** Whether THIS run counts for the leaderboard — shown read-only (gameplay is frozen at
-   *  the lobby, so it can't change here). */
-  runRanked?: boolean;
+  /** This run's score multiplier (modifiers × eased settings, #101) — shown read-only, since
+   *  gameplay is frozen at the lobby and can't change here. 1.0 = a default run. */
+  multiplier?: number;
   /** DEV CHEAT (remove before launch): auto-place N random organisms onto the tree. */
   onAutofill?: (n: number) => void;
 }
 
-export function SettingsPanel({ mode, settings, onChange, runRanked, onAutofill }: Props) {
+export function SettingsPanel({ mode, settings, onChange, multiplier = 1, onAutofill }: Props) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -61,20 +62,23 @@ export function SettingsPanel({ mode, settings, onChange, runRanked, onAutofill 
                 </button>
               </div>
 
-              {/* Read-only ranked status. Gameplay (and so the run's ranked status) is fixed at
-                  the lobby — only visual prefs are tunable here, and they never affect it. */}
+              {/* Read-only score multiplier. Gameplay + modifiers (and so the multiplier) are
+                  fixed at the lobby — only visual prefs are tunable here, and they never move it. */}
               <div className="-mt-2">
-                {runRanked ? (
-                  <span className="font-mono text-[11px] uppercase tracking-wide text-clade-accent">
-                    ● Ranked run
-                  </span>
-                ) : (
-                  <span className="font-mono text-[11px] uppercase tracking-wide text-clade-ink/45">
-                    ○ Custom run · not ranked
-                  </span>
-                )}
+                <span
+                  className={`font-mono text-[11px] uppercase tracking-wide ${
+                    multiplier === 1
+                      ? "text-clade-ink/45"
+                      : multiplier > 1
+                        ? "text-clade-accent"
+                        : "text-clade-ink/55"
+                  }`}
+                >
+                  {multiplier === 1 ? "● Default run" : `● ${formatMultiplier(multiplier)} run`}
+                </span>
                 <p className="mt-1 font-mono text-[10px] text-clade-ink/40">
-                  Set up packs, difficulty &amp; gameplay before the run, from the game menu.
+                  Every run is on the board, ranked by score × multiplier. Set packs, difficulty,
+                  gameplay &amp; modifiers before the run, from the game menu.
                 </p>
               </div>
 

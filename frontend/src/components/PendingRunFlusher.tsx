@@ -11,7 +11,7 @@ import { fetchMe } from "../lib/auth";
 import { submitRun, takePendingRun, type SubmitResult } from "../lib/scores";
 
 type Toast =
-  | { kind: "saved"; result: SubmitResult; ranked: boolean; scopeLabel: string }
+  | { kind: "saved"; result: SubmitResult; scopeLabel: string }
   | { kind: "error" };
 
 export function PendingRunFlusher() {
@@ -30,7 +30,7 @@ export function PendingRunFlusher() {
       if (!live) return;
       setToast(
         outcome.ok
-          ? { kind: "saved", result: outcome.result, ranked: run.payload.ranked, scopeLabel: run.scopeLabel }
+          ? { kind: "saved", result: outcome.result, scopeLabel: run.scopeLabel }
           : { kind: "error" },
       );
     })();
@@ -61,8 +61,8 @@ function renderToast(toast: Toast) {
   if (toast.kind === "error") {
     return <p className="font-mono text-xs text-clade-ink/60">Couldn't save your last run.</p>;
   }
-  const { result, ranked, scopeLabel } = toast;
-  if (ranked && result.rank != null) {
+  const { result, scopeLabel } = toast;
+  if (result.ranked && result.rank != null) {
     return (
       <p className="font-hand text-xl text-clade-accent">
         Saved your last run — rank #{result.rank}

@@ -7,8 +7,13 @@ import { csrfToken } from "./auth";
 export type Difficulty = "common" | "scientific";
 
 export interface SubmitResult {
+  /** Board score = base_score × score_multiplier (#101) — what the leaderboard ranks by. */
   score: number;
-  /** Base placements (pre-bonus), plus the two bonus components that make up `score`. */
+  /** The re-scored result BEFORE the multiplier (placements + combo/clade bonuses). */
+  base_score?: number;
+  /** Multiplier the server resolved from the run's modifiers + settings (1.0 = default setup). */
+  score_multiplier?: number;
+  /** Base placements (pre-bonus), plus the two bonus components that make up `base_score`. */
   base?: number;
   combo_bonus?: number;
   clade_bonus?: number;
@@ -16,7 +21,7 @@ export interface SubmitResult {
   refinements: number;
   duplicates: number;
   unknown: number;
-  // null for an unranked run (recorded to stats, but not placed on the leaderboard).
+  // null when the run didn't pass anti-cheat (recorded to stats, but not placed on the board).
   rank: number | null;
   ranked: boolean;
   run_id: number;
@@ -49,15 +54,16 @@ export async function submitRun(payload: {
   difficulty: Difficulty;
   asset_version: number;
   transcript: string[];
-  ranked: boolean;
   /** Per-placement timestamps (ms since the first placement), parallel to `transcript` —
    *  the server re-derives the combo bonus from these. */
   timings?: number[];
   /** Signed run-session token from `startRun`. */
   run_token?: string | null;
-  /** Whether the run was played living-only — picks the clade-completion denominator for an
-   *  unranked custom run (ranked runs always use the server default). */
-  extant_only?: boolean;
+  /** The run's gameplay settings (camelCase) — the server resolves the score multiplier from
+   *  any score-easing deviations (#101). Includes `extantOnly` (the clade-completion lens). */
+  settings?: Record<string, unknown>;
+  /** Active gameplay modifier keys — the server multiplies the score by their resolved factor. */
+  modifiers?: string[];
 }): Promise<SubmitOutcome> {
   try {
     const res = await fetch("/api/scores/runs/", {

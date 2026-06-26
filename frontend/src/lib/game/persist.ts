@@ -30,9 +30,6 @@ export interface SavedRun {
    *  refresh can't be used to pause the clock. */
   seconds: number;
   infiniteTime: boolean;
-  /** Whether the run is already disqualified from the leaderboard (settings went custom at
-   *  some point). Persisted so a refresh can't relaunder a tainted run back to ranked. */
-  tainted: boolean;
   savedAt: number;
 }
 

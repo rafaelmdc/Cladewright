@@ -10,6 +10,7 @@ from .models import (
     FrozenDaily,
     GameDefaults,
     GameModeConfig,
+    GameModifier,
     NamedSpeciesSet,
     PlayerStat,
     Run,
@@ -28,10 +29,10 @@ class GameDefaultsAdmin(admin.ModelAdmin):
 
     fieldsets = (
         (None, {"fields": ("game",)}),
-        ("Visual (don't affect ranked)", {
+        ("Visual (never affect score)", {
             "fields": ("tree_layout", "show_scientific", "falling_leaves", "flash_fade_seconds"),
         }),
-        ("Time + pool (changing off-default un-ranks a run)", {
+        ("Time + pool (easing these derates a run via setting_multipliers)", {
             "fields": ("start_seconds", "infinite_time", "time_per_new", "novelty_bonus",
                        "time_per_refinement", "extant_only"),
         }),
@@ -41,10 +42,28 @@ class GameDefaultsAdmin(admin.ModelAdmin):
         ("Clade-completion bonus", {
             "fields": ("clade_score_multiplier", "clade_min_size"),
         }),
+        ("Score multipliers (#101)", {
+            "fields": ("setting_multipliers",),
+            "description": "Per-setting score derates for score-easing settings. Leave empty to "
+                           "use the built-in default ruleset (multipliers.py).",
+        }),
     )
 
     def has_delete_permission(self, request, obj=None) -> bool:
         return False  # a game's defaults are edited, never deleted
+
+
+@admin.register(GameModifier)
+class GameModifierAdmin(admin.ModelAdmin):
+    """Gameplay modifiers a player opts into in the lobby (#101): each declares a score
+    multiplier (harder >1, easier <1) and any incompatible siblings. The SPA reads enabled rows
+    from /api/scores/modifiers/?mode=; the server resolves a run's multiplier against them."""
+
+    list_display = ("label", "game", "key", "multiplier", "enabled", "sort_order")
+    list_editable = ("multiplier", "enabled", "sort_order")
+    list_filter = ("game", "enabled")
+    fields = ("game", "key", "label", "blurb", "multiplier", "incompatible_with",
+              "enabled", "sort_order")
 
 
 @admin.register(DailyRotationEntry)
@@ -95,12 +114,13 @@ class GameModeConfigAdmin(admin.ModelAdmin):
 
 @admin.register(Run)
 class RunAdmin(admin.ModelAdmin):
-    list_display = ("user", "mode", "scope", "difficulty", "score", "puzzle_date", "created_at")
-    list_filter = ("mode", "difficulty", "scope")
+    list_display = ("user", "mode", "scope", "difficulty", "score", "base_score",
+                    "score_multiplier", "ranked", "puzzle_date", "created_at")
+    list_filter = ("mode", "difficulty", "scope", "ranked")
     search_fields = ("user__username",)
     readonly_fields = (
-        "user", "mode", "scope", "difficulty", "score", "asset_version", "puzzle_date",
-        "transcript", "created_at",
+        "user", "mode", "scope", "difficulty", "score", "base_score", "score_multiplier",
+        "config", "ranked", "asset_version", "puzzle_date", "transcript", "created_at",
     )  # immutable record; delete to moderate, never edit
 
 

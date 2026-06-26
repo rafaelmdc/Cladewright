@@ -494,3 +494,122 @@ class NamedSetTests(TestCase):
         # Empty strings/blanks contribute nothing and don't create tokens.
         self.assertEqual(self.add_named(self.user, "marathon_free", "common", ["", "tip:1", ""]), 1)
         self.assertFalse(SpeciesToken.objects.filter(species_key="").exists())
+
+
+class MultiplierResolutionTests(TestCase):
+    """The pure multiplier resolver (#101) — no DB."""
+
+    def test_modifier_product_and_unknown_dropped(self):
+        from .multipliers import resolve_modifier_multiplier
+        defs = {
+            "blind": {"label": "Blind", "multiplier": 1.5, "incompatible_with": []},
+            "calm": {"label": "Calm", "multiplier": 0.8, "incompatible_with": []},
+        }
+        res = resolve_modifier_multiplier(["blind", "calm", "ghost"], defs)
+        self.assertIsNone(res.error)
+        self.assertAlmostEqual(res.multiplier, 1.2)         # 1.5 × 0.8; "ghost" unknown → dropped
+        self.assertEqual(res.modifiers, ["blind", "calm"])  # only known keys kept
+
+    def test_incompatible_modifiers_error(self):
+        from .multipliers import resolve_modifier_multiplier
+        defs = {
+            "blind": {"label": "Blind", "multiplier": 1.5, "incompatible_with": ["no_tree"]},
+            "no_tree": {"label": "No tree", "multiplier": 1.3, "incompatible_with": ["blind"]},
+        }
+        res = resolve_modifier_multiplier(["blind", "no_tree"], defs)
+        self.assertIsNotNone(res.error)
+        self.assertEqual(res.multiplier, 1.0)               # rejected → neutral
+
+    def test_setting_derates_bool_and_linear(self):
+        from .multipliers import DEFAULT_SETTING_MULTIPLIERS, resolve_settings_multiplier
+        rules = DEFAULT_SETTING_MULTIPLIERS
+        # infinite time is the bool easer.
+        self.assertEqual(resolve_settings_multiplier({"infiniteTime": True}, rules)["infiniteTime"], 0.5)
+        # default value → no entry (a default setup derates nothing).
+        self.assertNotIn("startSeconds", resolve_settings_multiplier({"startSeconds": 60}, rules))
+        # linear easer derates within [floor, 1]; harder-than-default never exceeds 1.
+        self.assertAlmostEqual(resolve_settings_multiplier({"startSeconds": 120}, rules)["startSeconds"], 0.85)
+        self.assertNotIn("startSeconds", resolve_settings_multiplier({"startSeconds": 30}, rules))  # capped at 1 → dropped
+
+    def test_full_resolution_and_final_score(self):
+        from .multipliers import DEFAULT_SETTING_MULTIPLIERS, final_score, resolve_multiplier
+        defs = {"blind": {"label": "Blind", "multiplier": 1.5, "incompatible_with": []}}
+        res = resolve_multiplier(
+            modifiers=["blind"], settings={"infiniteTime": True},
+            mod_defs=defs, setting_rules=DEFAULT_SETTING_MULTIPLIERS,
+        )
+        self.assertAlmostEqual(res.multiplier, 0.75)        # 1.5 × 0.5
+        self.assertEqual(final_score(10, res.multiplier), 8)  # round(7.5)
+
+
+class ModifierSubmitTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.av = AssetVersion.objects.create(scope="test", version=1, pool_size=3, is_current=True)
+        for key, lineage in {"kng:A": [], "gen:G": ["kng:A"]}.items():
+            TaxonNode.objects.create(asset=self.av, key=key, rank="genus", sci=key,
+                                     parent_key=lineage[-1] if lineage else None, lineage=lineage)
+        for key in ("tip:1", "tip:2"):
+            TaxonTip.objects.create(asset=self.av, key=key, sci=key, common=key,
+                                    parent_key="gen:G", lineage=["kng:A", "gen:G"])
+
+    def _submit(self, user, **extra):
+        from .sessions import issue_run_token
+        self.client.force_authenticate(user)
+        body = {"mode": "marathon_free", "scope": "test", "asset_version": 1,
+                "transcript": ["tip:1", "tip:2"], "run_token": issue_run_token(user.id)}
+        body.update(extra)
+        return self.client.post("/api/scores/runs/", body, format="json")
+
+    def test_modifiers_endpoint_lists_enabled(self):
+        from .models import GameModifier
+        GameModifier.objects.create(game="marathon", key="blind", label="Blind", multiplier=1.5)
+        GameModifier.objects.create(game="marathon", key="off", label="Off", multiplier=2.0, enabled=False)
+        res = self.client.get("/api/scores/modifiers/?mode=marathon_free")
+        self.assertEqual(res.status_code, 200)
+        keys = [m["key"] for m in res.data["modifiers"]]
+        self.assertEqual(keys, ["blind"])                   # disabled row hidden
+        self.assertIn("infiniteTime", res.data["setting_multipliers"])
+
+    def test_modifier_multiplies_board_score(self):
+        from .models import GameModifier
+        GameModifier.objects.create(game="marathon", key="blind", label="Blind", multiplier=1.5)
+        user = User.objects.create_user("alice", password="x")
+        res = self._submit(user, modifiers=["blind"])
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data["base_score"], 2)
+        self.assertAlmostEqual(res.data["score_multiplier"], 1.5)
+        self.assertEqual(res.data["score"], 3)              # round(2 × 1.5)
+        run = Run.objects.get(user=user)
+        self.assertEqual((run.base_score, run.score), (2, 3))
+        self.assertEqual(run.config["modifiers"], ["blind"])
+        self.assertTrue(run.ranked)                          # valid session → on the board
+
+    def test_easing_setting_derates_but_stays_on_board(self):
+        user = User.objects.create_user("alice", password="x")
+        res = self._submit(user, settings={"infiniteTime": True})
+        self.assertEqual(res.status_code, 201)
+        self.assertAlmostEqual(res.data["score_multiplier"], 0.5)
+        self.assertEqual(res.data["score"], 1)              # round(2 × 0.5)
+        self.assertTrue(Run.objects.get(user=user).ranked)  # NOT un-ranked — just derated (#101)
+
+    def test_incompatible_modifiers_rejected(self):
+        from .models import GameModifier
+        GameModifier.objects.create(game="marathon", key="a", label="A", multiplier=1.2,
+                                    incompatible_with=["b"])
+        GameModifier.objects.create(game="marathon", key="b", label="B", multiplier=1.3,
+                                    incompatible_with=["a"])
+        user = User.objects.create_user("alice", password="x")
+        res = self._submit(user, modifiers=["a", "b"])
+        self.assertEqual(res.status_code, 400)
+
+    def test_harder_modifier_outranks_default_run(self):
+        from .models import GameModifier
+        GameModifier.objects.create(game="marathon", key="blind", label="Blind", multiplier=1.5)
+        default_user = User.objects.create_user("bob", password="x")
+        self._submit(default_user)                           # base 2 × 1.0 = 2
+        hard_user = User.objects.create_user("alice", password="x")
+        self._submit(hard_user, modifiers=["blind"])         # base 2 × 1.5 = 3
+        board = self.client.get("/api/scores/leaderboard/?mode=marathon_free&scope=test")
+        self.assertEqual([(e["user"], e["score"]) for e in board.data["entries"]],
+                         [("alice", 3), ("bob", 2)])         # harder run ranks first

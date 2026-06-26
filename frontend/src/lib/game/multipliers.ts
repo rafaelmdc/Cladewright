@@ -20,10 +20,10 @@ export interface ModifierDef {
   forces_settings?: Partial<GameSettings>;
 }
 
-/** A per-setting derate rule (mirrors apps/scores/multipliers.py). */
+/** A per-setting factor rule (mirrors apps/scores/multipliers.py). */
 export type SettingRule =
   | { kind: "bool"; easing_value: unknown; multiplier: number }
-  | { kind: "linear"; default: number; per_unit: number; floor: number };
+  | { kind: "linear"; default: number; per_unit: number; floor: number; cap?: number };
 
 /** The /modifiers payload: the game's modifiers + the setting-derate rules + its defaults. */
 export interface ModifierInfo {
@@ -74,13 +74,13 @@ export function modifierEffects(
 
 const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
 
-/** One setting's derate from its rule + the run's value (mirrors `_setting_factor`). 1.0 when
- *  it doesn't apply, so a malformed rule can only fail to derate — never inflate. */
+/** One setting's factor from its rule + the run's value (mirrors `_setting_factor`). Symmetric:
+ *  a harder-than-default dial scores >1, an easier one <1. 1.0 when the rule doesn't apply. */
 export function settingFactor(rule: SettingRule, value: unknown): number {
   if (rule.kind === "bool") return value === rule.easing_value ? rule.multiplier : 1;
   if (rule.kind === "linear") {
     if (typeof value !== "number") return 1;
-    return clamp(1 + rule.per_unit * (value - rule.default), rule.floor, 1);
+    return clamp(1 + rule.per_unit * (value - rule.default), rule.floor, rule.cap ?? 2);
   }
   return 1;
 }

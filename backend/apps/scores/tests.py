@@ -520,16 +520,16 @@ class MultiplierResolutionTests(TestCase):
         self.assertIsNotNone(res.error)
         self.assertEqual(res.multiplier, 1.0)               # rejected → neutral
 
-    def test_setting_derates_bool_and_linear(self):
+    def test_setting_factors_bool_and_linear(self):
         from .multipliers import DEFAULT_SETTING_MULTIPLIERS, resolve_settings_multiplier
         rules = DEFAULT_SETTING_MULTIPLIERS
         # infinite time is the bool easer.
         self.assertEqual(resolve_settings_multiplier({"infiniteTime": True}, rules)["infiniteTime"], 0.5)
-        # default value → no entry (a default setup derates nothing).
+        # default value → no entry (a default setup contributes nothing).
         self.assertNotIn("startSeconds", resolve_settings_multiplier({"startSeconds": 60}, rules))
-        # linear easer derates within [floor, 1]; harder-than-default never exceeds 1.
+        # SYMMETRIC: easier-than-default (more time) <1; harder-than-default (less time) >1.
         self.assertAlmostEqual(resolve_settings_multiplier({"startSeconds": 120}, rules)["startSeconds"], 0.85)
-        self.assertNotIn("startSeconds", resolve_settings_multiplier({"startSeconds": 30}, rules))  # capped at 1 → dropped
+        self.assertAlmostEqual(resolve_settings_multiplier({"startSeconds": 30}, rules)["startSeconds"], 1.075)
 
     def test_full_resolution_and_final_score(self):
         from .multipliers import DEFAULT_SETTING_MULTIPLIERS, final_score, resolve_multiplier

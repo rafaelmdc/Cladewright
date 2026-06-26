@@ -51,9 +51,11 @@ exactly as it already re-derives combo/clade bonuses from the signed session. Th
   modifiers; the schema/controls just consume them. Adding a coupling needs no frontend change.
   Only a modifier's *gameplay* effect (e.g. `no_tree` swapping the board for a list) is keyed in
   code — that part is irreducible.
-- **Setting derates** turn each score-easing setting into a ≤1.0× factor (infinite time, a
-  longer clock) instead of hard-banning the run. Per-setting rules live in
-  `apps/scores/multipliers.py` (admin-overridable via `GameDefaults.setting_multipliers`).
+- **Setting factors** move the multiplier BOTH ways: easing a dial (infinite time, a longer
+  clock) scores <1.0×, tightening it past the default (less time) scores >1.0× — so a harder
+  setup is rewarded, not just a relaxed one penalised. Per-setting `linear` rules carry a
+  `floor`/`cap` for the two directions; live in `apps/scores/multipliers.py` (admin-overridable
+  via `GameDefaults.setting_multipliers`).
 - `ranked` no longer means "default settings" — it means **anti-cheat-eligible** only (valid
   signed session + plausible placement rate). Every other run is on the board at its multiplier.
 - The server resolver (`multipliers.py`) is mirrored on the client (`lib/game/multipliers.ts`)

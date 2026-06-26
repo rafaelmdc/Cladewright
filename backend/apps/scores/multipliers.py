@@ -6,8 +6,9 @@ exactly 1.0×. The multiplier is the product of:
 
   * **modifiers** — opt-in gameplay mutators (GameModifier rows), each declaring its own factor
     (a harder one >1.0, an easier one <1.0);
-  * **setting derates** — score-EASING gameplay settings (infinite time, a longer clock) that
-    used to hard-ban a run from the board now just multiply it down (≤1.0×).
+  * **setting factors** — score-affecting gameplay settings move the multiplier BOTH ways:
+    easing a dial (a longer clock, infinite time) scores <1.0×, tightening it past the default
+    (less time) scores >1.0×. (They used to hard-ban a custom run from the board entirely.)
 
 The server re-derives this from the submitted config against its OWN definitions — a client
 number is never trusted (same principle as the combo/clade re-score). Mirrored on the client
@@ -22,17 +23,19 @@ from dataclasses import dataclass, field
 # admin override (``setting_multipliers`` empty). Keys are the camelCase GameSettings names the
 # client posts. Two rule shapes:
 #   * bool   — when settings[key] == easing_value, multiply by `multiplier`.
-#   * linear — multiplier = clamp(1 + per_unit·(value − default), floor, 1.0); only ever derates
-#              (cap 1.0), so a harder-than-default dial gives no bonus (that's a modifier's job).
+#   * linear — multiplier = clamp(1 + per_unit·(value − default), floor, cap). SYMMETRIC: with a
+#              negative per_unit, a HARDER-than-default dial (less time) scores >1.0 (a bonus) and
+#              an easier one <1.0 — so tightening the clock is rewarded, not just penalised when
+#              loosened. `floor`/`cap` bound the two directions (cap defaults to 2.0).
 # Numbers are illustrative, admin-tunable starting points (see docs/lobby-and-config.md).
 DEFAULT_SETTING_MULTIPLIERS: dict[str, dict] = {
     "infiniteTime": {"kind": "bool", "easing_value": True, "multiplier": 0.5},
-    "startSeconds": {"kind": "linear", "default": 60, "per_unit": -0.0025, "floor": 0.5},
-    "timePerNew": {"kind": "linear", "default": 10, "per_unit": -0.01, "floor": 0.6},
-    "noveltyBonus": {"kind": "linear", "default": 8, "per_unit": -0.005, "floor": 0.7},
-    "timePerRefinement": {"kind": "linear", "default": 5, "per_unit": -0.01, "floor": 0.8},
-    "comboWindowSeconds": {"kind": "linear", "default": 6, "per_unit": -0.02, "floor": 0.8},
-    "comboTimeMultiplier": {"kind": "linear", "default": 1.5, "per_unit": -0.05, "floor": 0.7},
+    "startSeconds": {"kind": "linear", "default": 60, "per_unit": -0.0025, "floor": 0.5, "cap": 2.0},
+    "timePerNew": {"kind": "linear", "default": 10, "per_unit": -0.01, "floor": 0.6, "cap": 2.0},
+    "noveltyBonus": {"kind": "linear", "default": 8, "per_unit": -0.005, "floor": 0.7, "cap": 2.0},
+    "timePerRefinement": {"kind": "linear", "default": 5, "per_unit": -0.01, "floor": 0.8, "cap": 2.0},
+    "comboWindowSeconds": {"kind": "linear", "default": 6, "per_unit": -0.02, "floor": 0.8, "cap": 2.0},
+    "comboTimeMultiplier": {"kind": "linear", "default": 1.5, "per_unit": -0.05, "floor": 0.7, "cap": 2.0},
 }
 
 
@@ -53,7 +56,8 @@ def _setting_factor(rule: dict, value) -> float:
         base = float(rule.get("default", 0))
         per = float(rule.get("per_unit", 0))
         floor = float(rule.get("floor", 0))
-        return _clamp(1.0 + per * (float(value) - base), floor, 1.0)
+        cap = float(rule.get("cap", 2.0))  # harder-than-default scores >1.0, up to this
+        return _clamp(1.0 + per * (float(value) - base), floor, cap)
     return 1.0
 
 

@@ -63,7 +63,7 @@ class GameModifierAdmin(admin.ModelAdmin):
     list_editable = ("multiplier", "enabled", "sort_order")
     list_filter = ("game", "enabled")
     fields = ("game", "key", "label", "blurb", "multiplier", "incompatible_with",
-              "enabled", "sort_order")
+              "hides_settings", "forces_settings", "enabled", "sort_order")
 
 
 @admin.register(DailyRotationEntry)

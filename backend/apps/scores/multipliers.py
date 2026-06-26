@@ -65,6 +65,9 @@ class Resolution:
     multiplier: float = 1.0
     modifiers: list[str] = field(default_factory=list)  # the valid, known active modifier keys
     breakdown: dict[str, float] = field(default_factory=dict)  # label -> factor, for display/audit
+    # The run's settings AFTER applying each active modifier's forced values — the authoritative
+    # settings the run actually played under (the caller stores these + derives extant_only).
+    settings: dict = field(default_factory=dict)
     error: str | None = None
 
 
@@ -114,11 +117,22 @@ def resolve_multiplier(
     mod_defs: dict[str, dict],
     setting_rules: dict[str, dict],
 ) -> Resolution:
-    """Full resolution: ∏ active-modifier factors × ∏ setting derates. ``error`` set → reject."""
+    """Full resolution: ∏ active-modifier factors × ∏ setting derates. ``error`` set → reject.
+
+    A modifier may FORCE settings (``forces`` in its def); those are applied here, server-side,
+    on top of the client's posted settings — so a modifier that eases the game (e.g. forces
+    infinite time) still incurs that setting's derate even if the client omits it. The resulting
+    effective settings ride back on ``Resolution.settings``."""
     res = resolve_modifier_multiplier(modifiers or [], mod_defs)
     if res.error:
         return res
-    for key, f in resolve_settings_multiplier(settings or {}, setting_rules).items():
+    effective = dict(settings or {})
+    for k in res.modifiers:
+        forced = mod_defs[k].get("forces")
+        if isinstance(forced, dict):
+            effective.update(forced)
+    res.settings = effective
+    for key, f in resolve_settings_multiplier(effective, setting_rules).items():
         res.multiplier *= f
         res.breakdown[key] = f
     return res

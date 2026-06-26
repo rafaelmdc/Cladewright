@@ -574,10 +574,24 @@ class ModifierSubmitTests(TestCase):
         self.assertIn("infiniteTime", res.data["setting_multipliers"])
 
     def test_seeded_no_tree_modifier(self):
-        # The first real modifier (#101) ships seeded + enabled at 1.3×.
+        # The first real modifier (#101) ships seeded + enabled at 1.3×, hiding the layout dial.
         res = self.client.get("/api/scores/modifiers/?mode=marathon_free")
         no_tree = next(m for m in res.data["modifiers"] if m["key"] == "no_tree")
         self.assertEqual(no_tree["multiplier"], 1.3)
+        self.assertEqual(no_tree["hides_settings"], ["treeLayout"])
+
+    def test_modifier_forced_setting_applies_server_side(self):
+        # A modifier that FORCES a score-easing setting derates the run even if the client never
+        # posts that setting — the server applies the force (#101), and stores the effective config.
+        from .models import GameModifier
+        GameModifier.objects.create(game="marathon", key="zen", label="Zen", multiplier=1.0,
+                                    forces_settings={"infiniteTime": True})
+        user = User.objects.create_user("alice", password="x")
+        res = self._submit(user, modifiers=["zen"])  # note: no settings posted at all
+        self.assertEqual(res.status_code, 201)
+        self.assertAlmostEqual(res.data["score_multiplier"], 0.5)  # 1.0 × forced infinite-time 0.5
+        run = Run.objects.get(user=user)
+        self.assertTrue(run.config["settings"]["infiniteTime"])     # effective settings stored
 
     def test_modifier_multiplies_board_score(self):
         from .models import GameModifier

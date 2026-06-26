@@ -137,6 +137,7 @@ def _modifier_defs(game: str) -> dict[str, dict]:
             "label": m.label,
             "multiplier": m.multiplier,
             "incompatible_with": m.incompatible_with or [],
+            "forces": m.forces_settings or {},
         }
         for m in GameModifier.objects.filter(game=game, enabled=True)
     }
@@ -166,6 +167,8 @@ class ModifiersView(APIView):
                 "blurb": m.blurb,
                 "multiplier": m.multiplier,
                 "incompatible_with": m.incompatible_with or [],
+                "hides_settings": m.hides_settings or [],
+                "forces_settings": m.forces_settings or {},
             }
             for m in GameModifier.objects.filter(game=game, enabled=True)
         ]
@@ -441,11 +444,13 @@ class SubmitRunView(APIView):
         )
         if resolution.error:
             return Response({"error": resolution.error}, status=400)
+        # Settings after any modifier-forced overrides — the authoritative run settings.
+        effective_settings = resolution.settings
 
         # Clade-completion bonus: pull the species denominator for every ANCESTOR clade of a
         # placed tip (not just the named ids), so the server can detect a clade going fully
         # named. Honour the run's actual living-only choice (the daily uses the admin default).
-        extant_only = bool(run_settings.get("extantOnly", defaults.extant_only))
+        extant_only = bool(effective_settings.get("extantOnly", defaults.extant_only))
         ancestor_ids = {a for lin in tip_lineages.values() for a in lin}
         node_pool_counts: dict[str, int] = {}
         if ancestor_ids and defaults.clade_score_multiplier > 0:
@@ -477,7 +482,7 @@ class SubmitRunView(APIView):
             "mode": mode,
             "difficulty": difficulty,
             "scopes": components,
-            "settings": run_settings,
+            "settings": effective_settings,
             "modifiers": resolution.modifiers,
         }
 

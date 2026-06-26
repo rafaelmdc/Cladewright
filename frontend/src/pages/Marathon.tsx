@@ -36,6 +36,7 @@ import {
 } from "../lib/game/settings";
 import {
   fetchModifiers,
+  modifierEffects,
   previewMultiplier,
   type ModifierInfo,
 } from "../lib/game/multipliers";
@@ -301,13 +302,24 @@ function Game({
   // for the in-game badge (#101). The server re-resolves authoritatively at submit. The daily is
   // always a default 1.0× run. Modifiers come from the frozen lobby config.
   const modifiers = useMemo(() => (isDaily ? [] : configModifiers), [isDaily, configModifiers]);
-  // "No tree" modifier (#101): hide the cladogram and show a plain scrollable list of what's
-  // been named instead — no spatial memory aid. The clock/score/input HUD is unaffected.
+  // "No tree" modifier (#101): the one IRREDUCIBLY-coded gameplay effect — swap the cladogram
+  // for a plain list. (Its settings coupling — hiding the layout dial — is data, see below.)
   const noTree = modifiers.includes("no_tree");
   const [modInfo, setModInfo] = useState<ModifierInfo | null>(null);
   useEffect(() => {
-    fetchModifiers(mode).then(setModInfo);
-  }, [mode]);
+    fetchModifiers(mode).then((info) => {
+      setModInfo(info);
+      // Apply any modifier-forced settings to the live run (the server forces them too, so the
+      // multiplier matches). Forced keys are gameplay, not visual, so this won't fight the gear.
+      const { forced } = modifierEffects(modifiers, info);
+      if (Object.keys(forced).length) setSettings((s) => ({ ...s, ...forced }));
+    });
+  }, [mode, modifiers]);
+  // What the active modifiers do to the settings (admin data): `hidden` dials the gear drops.
+  const effects = useMemo(
+    () => (modInfo ? modifierEffects(modifiers, modInfo) : { hidden: new Set<keyof GameSettings>(), forced: {} }),
+    [modifiers, modInfo],
+  );
   const runMultiplier = isDaily || !modInfo ? 1 : previewMultiplier(modifiers, settings, modInfo);
 
   const [input, setInput] = useState("");
@@ -676,7 +688,7 @@ function Game({
           onChange={updateSettings}
           onAutofill={autofill}
           multiplier={runMultiplier}
-          noTree={noTree}
+          hidden={effects.hidden}
         />
       )}
       {/* End-the-run control sits just left of the settings gear; only while playing. */}

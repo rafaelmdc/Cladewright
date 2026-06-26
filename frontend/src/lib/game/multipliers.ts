@@ -7,13 +7,17 @@ import type { GameSettings } from "./settings";
 
 const API = import.meta.env.VITE_API_BASE_SCORES ?? "/api/scores";
 
-/** One opt-in gameplay modifier (a GameModifier row). */
+/** One opt-in gameplay modifier (a GameModifier row). A modifier's coupling to settings is
+ *  admin DATA, not hardcoded UI: `hides_settings` removes now-irrelevant dials, `forces_settings`
+ *  pins settings to a value (shown locked, applied server-side). See modifierEffects(). */
 export interface ModifierDef {
   key: string;
   label: string;
   blurb: string;
   multiplier: number;
   incompatible_with: string[];
+  hides_settings?: string[];
+  forces_settings?: Partial<GameSettings>;
 }
 
 /** A per-setting derate rule (mirrors apps/scores/multipliers.py). */
@@ -46,6 +50,26 @@ export async function fetchModifiers(mode?: string): Promise<ModifierInfo> {
   } catch {
     return EMPTY;
   }
+}
+
+/** What the active modifiers do to the SETTINGS — derived from the modifier defs (admin data),
+ *  so adding/changing a coupling needs no frontend change. `hidden`: dials to drop from the
+ *  lobby/gear (now irrelevant). `forced`: settings pinned to a value (shown locked, and merged
+ *  into the run — the server applies the same forces, so the multiplier always reflects them). */
+export function modifierEffects(
+  active: string[],
+  info: ModifierInfo,
+): { hidden: Set<keyof GameSettings>; forced: Partial<GameSettings> } {
+  const byKey = new Map(info.modifiers.map((m) => [m.key, m]));
+  const hidden = new Set<keyof GameSettings>();
+  const forced: Partial<GameSettings> = {};
+  for (const key of active) {
+    const def = byKey.get(key);
+    if (!def) continue;
+    for (const k of def.hides_settings ?? []) hidden.add(k as keyof GameSettings);
+    Object.assign(forced, def.forces_settings ?? {});
+  }
+  return { hidden, forced };
 }
 
 const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
@@ -88,8 +112,9 @@ export function conflictingModifiers(active: string[], defs: ModifierDef[]): Set
   return bad;
 }
 
-/** Full preview multiplier: ∏ active-modifier factors × ∏ setting derates. Conflicting
- *  modifiers are skipped from the product (the lobby blocks selecting them anyway). */
+/** Full preview multiplier: ∏ active-modifier factors × ∏ setting derates, on the EFFECTIVE
+ *  settings (any modifier-forced overrides applied) — mirrors the server. Conflicting modifiers
+ *  are skipped from the product (the lobby blocks selecting them anyway). */
 export function previewMultiplier(
   active: string[],
   settings: GameSettings,
@@ -97,12 +122,14 @@ export function previewMultiplier(
 ): number {
   const byKey = new Map(info.modifiers.map((d) => [d.key, d]));
   const bad = conflictingModifiers(active, info.modifiers);
+  const { forced } = modifierEffects(active, info);
+  const effective = { ...settings, ...forced };
   let m = 1;
   for (const k of active) {
     if (bad.has(k)) continue;
     m *= byKey.get(k)?.multiplier ?? 1;
   }
-  return m * settingsMultiplier(settings, info.setting_multipliers);
+  return m * settingsMultiplier(effective, info.setting_multipliers);
 }
 
 /** "1.5×" / "0.75×" — a compact label for a multiplier. */

@@ -20,13 +20,14 @@ interface Props {
   /** This run's score multiplier (modifiers × eased settings, #101) — shown read-only, since
    *  gameplay is frozen at the lobby and can't change here. 1.0 = a default run. */
   multiplier?: number;
-  /** The "No tree" modifier is active — hide cladogram-only visual dials (e.g. layout). */
-  noTree?: boolean;
+  /** Setting keys the active modifiers have made irrelevant (modifierEffects().hidden) — these
+   *  dials are dropped from the gear. */
+  hidden?: Set<keyof GameSettings>;
   /** DEV CHEAT (remove before launch): auto-place N random organisms onto the tree. */
   onAutofill?: (n: number) => void;
 }
 
-export function SettingsPanel({ mode, settings, onChange, multiplier = 1, noTree, onAutofill }: Props) {
+export function SettingsPanel({ mode, settings, onChange, multiplier = 1, hidden, onAutofill }: Props) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -84,7 +85,7 @@ export function SettingsPanel({ mode, settings, onChange, multiplier = 1, noTree
                 </p>
               </div>
 
-              <SettingsFields fields={visualFields(mode, { noTree })} settings={settings} onChange={onChange} />
+              <SettingsFields fields={visualFields(mode, hidden)} settings={settings} onChange={onChange} />
 
               {/* DEV CHEAT — dev-only. import.meta.env.DEV is true under the Vite dev server and
                   false in the production build (`vite build`), so this is compiled out of prod. */}

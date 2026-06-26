@@ -44,6 +44,13 @@ exactly as it already re-derives combo/clade bonuses from the signed session. Th
   without changing the game. First shipped: **`no_tree`** (1.3×) — hide the cladogram and play
   off a plain scrollable list of what you've named (`components/PlacedList.tsx`); a real memory
   challenge with the loop otherwise unchanged.
+- **Modifier ↔ settings coupling is admin DATA, not hardcoded UI.** A modifier row carries
+  `hides_settings` (dials it makes irrelevant — dropped from lobby/gear) and `forces_settings`
+  (dials it pins — shown locked, and applied server-side so the multiplier always reflects them).
+  `lib/game/multipliers.ts#modifierEffects` derives the hidden/forced sets from the active
+  modifiers; the schema/controls just consume them. Adding a coupling needs no frontend change.
+  Only a modifier's *gameplay* effect (e.g. `no_tree` swapping the board for a list) is keyed in
+  code — that part is irreducible.
 - **Setting derates** turn each score-easing setting into a ≤1.0× factor (infinite time, a
   longer clock) instead of hard-banning the run. Per-setting rules live in
   `apps/scores/multipliers.py` (admin-overridable via `GameDefaults.setting_multipliers`).

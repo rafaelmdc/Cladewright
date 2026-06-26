@@ -166,6 +166,17 @@ class GameModifier(models.Model):
     incompatible_with = models.JSONField(
         default=list, blank=True, help_text="List of modifier keys incompatible with this one."
     )
+    # Settings this modifier interacts with (admin-tunable, so a modifier's UI/gameplay coupling
+    # is data, not code — see lib/game/modifierEffects.ts). HIDES: setting keys made irrelevant
+    # (removed from the lobby/gear). FORCES: settings pinned to a value when active — shown locked
+    # in the UI AND applied server-side in the multiplier resolution, so the client can't dodge
+    # an eased setting's derate. Setting keys are the camelCase GameSettings names.
+    hides_settings = models.JSONField(
+        default=list, blank=True, help_text="Setting keys hidden when active, e.g. ['treeLayout']."
+    )
+    forces_settings = models.JSONField(
+        default=dict, blank=True, help_text="Settings pinned when active, e.g. {'infiniteTime': true}."
+    )
     enabled = models.BooleanField(default=True)
     sort_order = models.IntegerField(default=0, help_text="Lower sorts first in the lobby.")
 

@@ -20,11 +20,12 @@ import {
   type GameConfig,
 } from "../lib/game/config";
 import { gameplayFields } from "../lib/game/schema";
-import { fetchGameDefaults, gameDefaults } from "../lib/game/settings";
+import { fetchGameDefaults, gameDefaults, type GameSettings } from "../lib/game/settings";
 import {
   conflictingModifiers,
   fetchModifiers,
   formatMultiplier,
+  modifierEffects,
   previewMultiplier,
   type ModifierInfo,
 } from "../lib/game/multipliers";
@@ -84,10 +85,18 @@ export function Lobby() {
   }, []);
 
   const supportsDifficulty = game?.supports_difficulty ?? true;
-  const fields = useMemo(() => gameplayFields(mode), [mode]);
   const totalTips = scopes
     .filter((s) => cfg.scopes.includes(s.key))
     .reduce((n, s) => n + s.tip_count, 0);
+  // What the active modifiers do to the settings (admin data): drop `hidden` dials, pin `forced`
+  // ones. Forced values are shown as a locked overlay — the player's own cfg.settings is left
+  // intact, so toggling the modifier off restores them.
+  const effects = modInfo
+    ? modifierEffects(cfg.modifiers, modInfo)
+    : { hidden: new Set<keyof GameSettings>(), forced: {} as Partial<GameSettings> };
+  const fields = useMemo(() => gameplayFields(mode, effects.hidden), [mode, effects.hidden]);
+  const shownSettings = { ...cfg.settings, ...effects.forced };
+  const lockedKeys = new Set(Object.keys(effects.forced) as (keyof GameSettings)[]);
   // Live score multiplier the run will score at (∏ active modifiers × ∏ eased settings, #101).
   const multiplier = modInfo ? previewMultiplier(cfg.modifiers, cfg.settings, modInfo) : 1;
   const conflicts = modInfo ? conflictingModifiers(cfg.modifiers, modInfo.modifiers) : new Set<string>();
@@ -216,8 +225,18 @@ export function Lobby() {
             </div>
             <SettingsFields
               fields={fields}
-              settings={cfg.settings}
-              onChange={(settings) => setCfg((c) => ({ ...c, settings }))}
+              settings={shownSettings}
+              locked={lockedKeys}
+              onChange={(next) =>
+                setCfg((c) => {
+                  // Don't bake the forced overlay into the stored config — keep the player's own
+                  // value for locked keys, so removing the modifier restores it.
+                  const merged = { ...next } as unknown as Record<string, unknown>;
+                  const own = c.settings as unknown as Record<string, unknown>;
+                  for (const k of lockedKeys) merged[k] = own[k];
+                  return { ...c, settings: merged as unknown as GameSettings };
+                })
+              }
             />
           </div>
 

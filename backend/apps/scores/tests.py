@@ -568,8 +568,16 @@ class ModifierSubmitTests(TestCase):
         res = self.client.get("/api/scores/modifiers/?mode=marathon_free")
         self.assertEqual(res.status_code, 200)
         keys = [m["key"] for m in res.data["modifiers"]]
-        self.assertEqual(keys, ["blind"])                   # disabled row hidden
+        self.assertIn("blind", keys)
+        self.assertIn("no_tree", keys)                      # seeded by migration 0023
+        self.assertNotIn("off", keys)                       # disabled row hidden
         self.assertIn("infiniteTime", res.data["setting_multipliers"])
+
+    def test_seeded_no_tree_modifier(self):
+        # The first real modifier (#101) ships seeded + enabled at 1.3×.
+        res = self.client.get("/api/scores/modifiers/?mode=marathon_free")
+        no_tree = next(m for m in res.data["modifiers"] if m["key"] == "no_tree")
+        self.assertEqual(no_tree["multiplier"], 1.3)
 
     def test_modifier_multiplies_board_score(self):
         from .models import GameModifier

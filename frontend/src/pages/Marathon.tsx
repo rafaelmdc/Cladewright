@@ -39,6 +39,7 @@ import {
   previewMultiplier,
   type ModifierInfo,
 } from "../lib/game/multipliers";
+import { PlacedList, buildPlacedList } from "../components/PlacedList";
 import { useTitle } from "../lib/useTitle";
 import { createInducedTree, place, type InducedTree, type Placement } from "../lib/tree/induced";
 
@@ -300,6 +301,9 @@ function Game({
   // for the in-game badge (#101). The server re-resolves authoritatively at submit. The daily is
   // always a default 1.0× run. Modifiers come from the frozen lobby config.
   const modifiers = useMemo(() => (isDaily ? [] : configModifiers), [isDaily, configModifiers]);
+  // "No tree" modifier (#101): hide the cladogram and show a plain scrollable list of what's
+  // been named instead — no spatial memory aid. The clock/score/input HUD is unaffected.
+  const noTree = modifiers.includes("no_tree");
   const [modInfo, setModInfo] = useState<ModifierInfo | null>(null);
   useEffect(() => {
     fetchModifiers(mode).then(setModInfo);
@@ -766,18 +770,27 @@ function Game({
         />
       )}
 
-      <TreeRenderer
-        asset={asset}
-        tree={treeRef.current}
-        tracker={tracker}
-        rev={rev}
-        layout={settings.treeLayout}
-        showScientific={settings.showScientific}
-        scientificPrimary={difficulty === "scientific"}
-        pulse={pulse}
-        pulseCombo={combo}
-        reveal={!running}
-      />
+      {noTree ? (
+        <PlacedList
+          entries={buildPlacedList(asset, transcriptRef.current, {
+            showScientific: settings.showScientific,
+            scientificPrimary: difficulty === "scientific",
+          })}
+        />
+      ) : (
+        <TreeRenderer
+          asset={asset}
+          tree={treeRef.current}
+          tracker={tracker}
+          rev={rev}
+          layout={settings.treeLayout}
+          showScientific={settings.showScientific}
+          scientificPrimary={difficulty === "scientific"}
+          pulse={pulse}
+          pulseCombo={combo}
+          reveal={!running}
+        />
+      )}
 
       {!running && (
         // Game over: DON'T blanket the canvas — dock the card (right on desktop, top on

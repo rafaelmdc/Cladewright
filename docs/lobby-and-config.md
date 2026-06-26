@@ -40,9 +40,10 @@ exactly as it already re-derives combo/clade bonuses from the signed session. Th
 **Built (#101).** `final = base × ∏(modifier multipliers) × ∏(setting derates)`:
 - **Modifiers** are admin rows (`GameModifier`: key, label, multiplier, `incompatible_with`),
   served by `GET /api/scores/modifiers/?mode=`. A harder one is >1.0×, an easier one <1.0×.
-  *A modifier should only be added once its in-game effect exists* — otherwise it multiplies a
-  score without changing the game. The model + scoring are built; specific modifiers (blind, no
-  tree, …) are added with their gameplay effect.
+  *A modifier is only added once its in-game effect exists* — otherwise it multiplies a score
+  without changing the game. First shipped: **`no_tree`** (1.3×) — hide the cladogram and play
+  off a plain scrollable list of what you've named (`components/PlacedList.tsx`); a real memory
+  challenge with the loop otherwise unchanged.
 - **Setting derates** turn each score-easing setting into a ≤1.0× factor (infinite time, a
   longer clock) instead of hard-banning the run. Per-setting rules live in
   `apps/scores/multipliers.py` (admin-overridable via `GameDefaults.setting_multipliers`).

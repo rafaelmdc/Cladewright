@@ -9,8 +9,8 @@ import { Link } from "react-router-dom";
 
 import { fetchMe, type Me } from "../lib/auth";
 import {
+  cacheRun,
   fetchLeaderboard,
-  stashPendingRun,
   submitRun,
   type Difficulty,
   type LeaderEntry,
@@ -72,13 +72,14 @@ export function GameOverCard({
       const who = await fetchMe();
       if (!live) return;
       setMe(who);
-      // EVERY finished run is submitted; the server scores it as base × multiplier and places
-      // it on the board unless it fails anti-cheat (#101).
+      const payload = {
+        mode, scope, difficulty, asset_version: assetVersion, transcript,
+        timings, run_token: runToken, settings: settingsRecord, modifiers,
+      };
       if (who.authenticated && transcript.length > 0) {
-        const outcome = await submitRun({
-          mode, scope, difficulty, asset_version: assetVersion, transcript,
-          timings, run_token: runToken, settings: settingsRecord, modifiers,
-        });
+        // Signed in: submit now. The server scores it as base × multiplier and places it on the
+        // board unless it fails anti-cheat (#101).
+        const outcome = await submitRun(payload);
         if (!live) return;
         setSubmit(outcome);
         if (outcome.ok) {
@@ -91,6 +92,10 @@ export function GameOverCard({
             rank: outcome.result.rank,
           });
         }
+      } else if (!who.authenticated && transcript.length > 0) {
+        // Signed out: cache the run for 5 min so signing in shortly after can offer to import
+        // it (#107). Survives the OAuth redirect via localStorage.
+        cacheRun({ payload, count, score, scopeLabel });
       }
       const result = await fetchLeaderboard(mode, scope, difficulty);
       if (live) setBoard(result.entries);
@@ -109,20 +114,7 @@ export function GameOverCard({
         {count} placed · {score} points · {scopeLabel}
       </p>
 
-      <div className="mt-4 w-full">
-        {renderSubmitStatus(me, submit, () =>
-          // Stash the run so it survives the OAuth redirect and auto-saves on return (#78).
-          stashPendingRun({
-            payload: {
-              mode, scope, difficulty, asset_version: assetVersion, transcript,
-              timings, run_token: runToken, settings: settingsRecord, modifiers,
-            },
-            count,
-            score,
-            scopeLabel,
-          }),
-        )}
-      </div>
+      <div className="mt-4 w-full">{renderSubmitStatus(me, submit)}</div>
 
       <Leaderboard board={board} label={`${scopeLabel} · ${difficulty}`} me={me} />
 
@@ -153,18 +145,14 @@ export function GameOverCard({
   );
 }
 
-function renderSubmitStatus(
-  me: Me | null,
-  submit: SubmitOutcome | null,
-  onSignIn: () => void,
-) {
+function renderSubmitStatus(me: Me | null, submit: SubmitOutcome | null) {
   if (me === null) return <p className="font-mono text-xs text-clade-ink/40">Checking…</p>;
 
   if (!me.authenticated) {
+    // The run is cached for 5 min (#107); signing in now offers to import it on return.
     return (
       <Link
         to="/login"
-        onClick={onSignIn}
         className="inline-flex items-center gap-2 rounded-full border-2 border-clade-ink/80 bg-clade-paper px-4 py-1.5 font-hand text-xl text-clade-ink transition hover:border-clade-accent"
       >
         Sign in to save your score

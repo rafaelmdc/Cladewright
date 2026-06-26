@@ -80,51 +80,69 @@ export async function submitRun(payload: {
   }
 }
 
-// ── Pending run across the sign-in redirect ──────────────────────────────────────
-// Signing in is a top-level OAuth redirect, so the in-memory run is lost. When a
-// logged-out player taps "sign in to save", we stash the run here first; after they
-// land back authenticated, PendingRunFlusher submits it. See GitHub issue #78.
+// ── Signed-out run cache (import after sign-in) ───────────────────────────────────
+// Runs finished while signed out are cached here for 5 minutes (localStorage, so they survive
+// the OAuth redirect). After the player signs in, RunImporter offers to add them to their
+// profile in one go. Supersedes the single-run stash of #78. See GitHub issue #107.
 
-const PENDING_KEY = "cw.pendingRun";
-// Drop a stash older than this — a run is only worth auto-saving right after the redirect,
-// not days later from a forgotten tab. Generous enough to cover the OAuth round-trip.
-const PENDING_TTL_MS = 60 * 60 * 1000; // 1h
+const CACHE_KEY = "cw.cachedRuns";
+// #107: a run finished while signed out is kept this long, so signing in shortly after can
+// offer to import it. Short on purpose — it's "the runs you just played", not a forgotten tab.
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
+const CACHE_MAX = 10; // cap the stash so a long signed-out streak can't bloat localStorage
 
-export interface PendingRun {
+export interface CachedRun {
   payload: Parameters<typeof submitRun>[0];
-  // For the confirmation toast, so we don't re-derive labels post-redirect.
+  // For the import popup, so we don't re-derive labels.
   count: number;
   score: number;
   scopeLabel: string;
-  at: number; // epoch ms when stashed
+  at: number; // epoch ms when cached
 }
 
-/** Persist a just-finished run before the sign-in redirect so it survives the round-trip. */
-export function stashPendingRun(run: Omit<PendingRun, "at">): void {
+function readCache(): CachedRun[] {
   try {
-    localStorage.setItem(PENDING_KEY, JSON.stringify({ ...run, at: Date.now() }));
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as CachedRun[];
+    const now = Date.now();
+    return arr.filter(
+      (r) => r?.payload?.transcript?.length && now - (r.at ?? 0) <= CACHE_TTL_MS,
+    );
   } catch {
-    /* storage unavailable — the run just won't auto-save */
+    return [];
   }
 }
 
-/** Read and CLEAR the stashed run, or null if absent/expired/corrupt. */
-export function takePendingRun(): PendingRun | null {
-  let raw: string | null = null;
+function writeCache(runs: CachedRun[]): void {
   try {
-    raw = localStorage.getItem(PENDING_KEY);
-    if (raw) localStorage.removeItem(PENDING_KEY);
+    localStorage.setItem(CACHE_KEY, JSON.stringify(runs));
   } catch {
-    return null;
+    /* storage unavailable — caching is best-effort */
   }
-  if (!raw) return null;
+}
+
+/** Cache a run finished while signed OUT, so a sign-in within 5 min can offer to import it
+ *  (#107). Prunes expired entries and keeps only the most recent few. */
+export function cacheRun(run: Omit<CachedRun, "at">): void {
+  const runs = readCache();
+  runs.push({ ...run, at: Date.now() });
+  writeCache(runs.slice(-CACHE_MAX));
+}
+
+/** The fresh (≤5 min) cached runs, newest last. Prunes expired ones; does NOT clear. */
+export function peekCachedRuns(): CachedRun[] {
+  const runs = readCache();
+  writeCache(runs); // persist the pruned list
+  return runs;
+}
+
+/** Drop every cached run (after importing, or when the player declines). */
+export function clearCachedRuns(): void {
   try {
-    const run = JSON.parse(raw) as PendingRun;
-    if (!run?.payload?.transcript?.length) return null;
-    if (Date.now() - (run.at ?? 0) > PENDING_TTL_MS) return null;
-    return run;
+    localStorage.removeItem(CACHE_KEY);
   } catch {
-    return null;
+    /* ignore */
   }
 }
 

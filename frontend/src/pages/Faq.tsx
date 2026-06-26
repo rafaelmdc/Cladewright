@@ -22,7 +22,7 @@ export function Faq() {
   return (
     <div className="min-h-screen">
       <LeafBackground density={20} />
-      <div className="mx-auto flex min-h-screen max-w-2xl flex-col px-6 py-8">
+      <div className="mx-auto flex min-h-screen max-w-4xl flex-col px-6 py-8">
         <TopBar />
 
         <div className="flex flex-1 flex-col gap-6 py-6">

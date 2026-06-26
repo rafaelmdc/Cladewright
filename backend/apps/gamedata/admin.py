@@ -147,7 +147,10 @@ class AssetVersionAdmin(admin.ModelAdmin):
 
     @admin.display(description="delivery")
     def delivery(self, obj: AssetVersion) -> str:
-        return "blob" if getattr(obj, "_has_blob", obj.blob is not None) else "incremental"
+        # "streamed" = hybrid/remote: a notable blob + a tail resolved over the network. This
+        # build detail lives HERE (admin) on purpose — it's hidden from the player-facing scope
+        # picker, where it only confused users.
+        return "blob" if getattr(obj, "_has_blob", obj.blob is not None) else "streamed"
 
     @admin.action(description="Delete superseded — purge non-current versions of the selected scope(s)")
     def delete_superseded(self, request, queryset):

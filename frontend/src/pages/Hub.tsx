@@ -65,6 +65,12 @@ export function Hub() {
             >
               Leaderboards →
             </Link>
+            <Link
+              to="/faq"
+              className="rounded-full border-2 border-clade-ink/25 px-5 py-2 font-mono text-xs uppercase tracking-widest text-clade-ink/60 transition hover:border-clade-ink/50 hover:text-clade-ink"
+            >
+              FAQ →
+            </Link>
           </div>
         </div>
 

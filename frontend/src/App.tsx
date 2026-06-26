@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { DisplayNamePrompt } from "./components/DisplayNamePrompt";
 import { PendingRunFlusher } from "./components/PendingRunFlusher";
 import { Account } from "./pages/Account";
+import { Faq } from "./pages/Faq";
 import { Hub } from "./pages/Hub";
 import { Leaderboard } from "./pages/Leaderboard";
 import { Lobby } from "./pages/Lobby";
@@ -20,6 +21,7 @@ export function App() {
         <Route path="/marathon" element={<Marathon />} />
         <Route path="/account" element={<Account />} />
         <Route path="/leaderboard" element={<Leaderboard />} />
+        <Route path="/faq" element={<Faq />} />
         <Route path="/login" element={<Login />} />
         <Route path="/r/:id" element={<Result />} />
       </Routes>

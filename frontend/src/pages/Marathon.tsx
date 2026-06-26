@@ -676,6 +676,7 @@ function Game({
           onChange={updateSettings}
           onAutofill={autofill}
           multiplier={runMultiplier}
+          noTree={noTree}
         />
       )}
       {/* End-the-run control sits just left of the settings gear; only while playing. */}

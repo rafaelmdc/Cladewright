@@ -16,6 +16,8 @@ export interface SettingField {
   group: string; // section header in the panel / lobby
   /** Visual-only — stays reachable in the in-game gear and never affects score/rank. */
   visual?: boolean;
+  /** Only meaningful when the cladogram is shown — hidden under the "No tree" modifier. */
+  requiresTree?: boolean;
   // slider
   min?: number;
   max?: number;
@@ -32,6 +34,7 @@ const underInfiniteTime = (s: GameSettings) => s.infiniteTime;
 /** Time Attack (marathon) player controls, grouped as they appear in the panel / lobby. */
 const MARATHON_FIELDS: SettingField[] = [
   { key: "treeLayout", kind: "segmented", label: "Tree layout", group: "Visual", visual: true,
+    requiresTree: true,
     options: [{ value: "radial", label: "Radial" }, { value: "rectangular", label: "Phylogram" }] },
   { key: "showScientific", kind: "toggle", label: "Scientific names", group: "Visual", visual: true,
     hint: "Show the binomial under each species' common name." },
@@ -76,9 +79,10 @@ export function schemaFor(mode: string): SettingField[] {
   return SETTINGS_SCHEMA[mode] ?? SETTINGS_SCHEMA.marathon_free;
 }
 
-/** Visual-only fields (the in-game gear keeps these) vs gameplay fields (the lobby owns). */
-export function visualFields(mode: string): SettingField[] {
-  return schemaFor(mode).filter((f) => f.visual);
+/** Visual-only fields (the in-game gear keeps these) vs gameplay fields (the lobby owns).
+ *  `noTree` drops the cladogram-only dials (e.g. layout) when the No-tree modifier is on. */
+export function visualFields(mode: string, opts?: { noTree?: boolean }): SettingField[] {
+  return schemaFor(mode).filter((f) => f.visual && !(opts?.noTree && f.requiresTree));
 }
 export function gameplayFields(mode: string): SettingField[] {
   return schemaFor(mode).filter((f) => !f.visual);

@@ -14,8 +14,11 @@ import { fetchLeaderboard, type Board, type Difficulty, type LeaderEntry } from 
 import { useTitle } from "../lib/useTitle";
 
 function isoToday(): string {
+  // The daily "day" is defined server-side in UTC (puzzle_date = timezone.localdate(), and the
+  // server runs UTC), so the board's default date must be the UTC day — not the browser's local
+  // day, which would be a day off for anyone west of UTC playing in the evening.
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 function shiftIso(iso: string, days: number): string {
   const [y, m, d] = iso.split("-").map(Number);

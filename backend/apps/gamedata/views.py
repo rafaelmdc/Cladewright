@@ -336,7 +336,11 @@ class ResolveView(APIView):
             lineage_ids, anchor = _trim_to_frontier(lineage_ids, ranks, av.frontier_rank)
         lineage = [
             {"id": nid, "rank": nodes[nid].rank, "sci": nodes[nid].sci,
-             "common": nodes[nid].common, "pool_count": nodes[nid].pool_count}
+             "common": nodes[nid].common, "pool_count": nodes[nid].pool_count,
+             # Living-only "N remaining" denominator. Without it the client falls back to
+             # pool_count, so extinct species (unnameable in living-only mode) inflate a
+             # tail-resolved clade's hidden count (#94). Blob nodes already carry this.
+             "pool_count_extant": nodes[nid].pool_count_extant}
             for nid in lineage_ids
             if nid in nodes
         ]

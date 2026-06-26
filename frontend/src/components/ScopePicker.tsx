@@ -1,9 +1,9 @@
 // The scope selector — pick which slices of the tree of life to play (Mammals, Birds,
-// Fish, …). MULTI-SELECT: scopes are toggles, so a run can mix several at once (their
-// blobs merge into one tree client-side — see lib/asset/merge.ts). A field-notebook
-// dropdown (inked border, Caveat label, mono counts) to match the rest of the HUD. A
-// "remote" scope (too big to download) is tagged and not mixable — picking it replaces
-// the selection.
+// Fish, …). MULTI-SELECT: scopes are toggles, so a run can mix several at once. Any modes
+// mix: blobs merge their whole pools, hybrid/remote ("streamed") packs contribute their
+// notable subset plus a tail that resolves over the network (see lib/asset/load.ts#loadMixed).
+// A field-notebook dropdown (inked border, Caveat label, mono counts) to match the rest of
+// the HUD; "streamed" packs carry a small tag.
 
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
@@ -52,17 +52,16 @@ export function ScopePicker({
         : `${selected.length} clades`;
 
   function toggle(s: ScopeInfo) {
-    // Single-select (leaderboard filter), or a scope with a remote tail (hybrid/remote —
-    // not mergeable): replace the whole selection and close. Only pure blobs merge.
-    if (!multiple || s.mode !== "blob") {
+    // Single-select (e.g. the leaderboard filter): replace the whole selection and close.
+    if (!multiple) {
       onChange([s.key]);
       setOpen(false);
       return;
     }
-    const blobValue = value.filter((k) => scopes.find((x) => x.key === k)?.mode === "blob");
-    const has = blobValue.includes(s.key);
+    // Multi-select: any mode mixes (loadMixed merges local pools + per-pack tails).
+    const has = value.includes(s.key);
     // Never let the selection become empty — toggling the last one off is a no-op.
-    const next = has ? blobValue.filter((k) => k !== s.key) : [...blobValue, s.key];
+    const next = has ? value.filter((k) => k !== s.key) : [...value, s.key];
     if (next.length > 0) onChange(next);
   }
 

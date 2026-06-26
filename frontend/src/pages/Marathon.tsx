@@ -5,7 +5,7 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 
 import { Wordmark } from "../components/Brand";
 import { ComboFx } from "../components/combo/ComboFx";
@@ -15,24 +15,24 @@ import { LeafBackground } from "../components/LeafBackground";
 import { LoadingTree } from "../components/LoadingTree";
 import { OnboardingTour } from "../components/onboarding/OnboardingTour";
 import { GAME_STEPS } from "../components/onboarding/tourSteps";
-import { ScopePicker } from "../components/ScopePicker";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { TreeRenderer } from "../components/TreeRenderer";
-import { createEmptyAsset } from "../lib/asset/growable";
-import { loadAsset, loadAssets, loadHybridAsset, loadRemoteAsset } from "../lib/asset/load";
+import { loadAsset, loadMixed, loadHybridAsset, loadRemoteAsset } from "../lib/asset/load";
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import type { InternedAsset, Target } from "../lib/asset/types";
 import { fetchDaily, type DailyInfo } from "../lib/daily";
+import { decodeConfig } from "../lib/game/config";
 import { RemainingTracker } from "../lib/game/remaining";
 import { clearRun, loadRun, saveRun, secondsAfterAway } from "../lib/game/persist";
 import { startRun, type Difficulty } from "../lib/scores";
 import { resolveTarget } from "../lib/game/resolveTarget";
 import {
+  applyVisualPrefs,
   fetchGameDefaults,
   gameDefaults,
   isRankedSettings,
   loadSettings,
-  saveSettings,
+  saveVisualPrefs,
   type GameSettings,
 } from "../lib/game/settings";
 import { useTitle } from "../lib/useTitle";
@@ -45,8 +45,6 @@ interface FlashItem {
   tone: FlashTone;
 }
 const MAX_FLASHES = 6; // cap the stack so rapid-fire doesn't pile up without bound
-
-const SCOPE_KEY = "cladewright.scope";
 
 // --- Combo / clade-completion tuning (#60, #77). Forgiving by design: a generous keep-alive
 // window, and a wrong/duplicate guess never breaks the streak — only a pause does. Combos +
@@ -91,6 +89,14 @@ export function Marathon() {
   const isDaily = new URLSearchParams(window.location.search).get("daily") === "1";
   useTitle(isDaily ? "Daily" : "Time attack");
 
+  // The lobby threads the whole run setup here as an encoded GameConfig (?c=…) — packs,
+  // difficulty, and settings in one place. Parsed once. Null only for the daily (server-fixed,
+  // bypasses the lobby); a bare /marathon redirects to the lobby (see below).
+  const [cfg] = useState(() => {
+    const code = new URLSearchParams(window.location.search).get("c");
+    return code ? decodeConfig(code) : null;
+  });
+
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
   const [scopeKey, setScopeKey] = useState<string | null>(null);
   const [asset, setAsset] = useState<InternedAsset | null>(null);
@@ -112,33 +118,21 @@ export function Marathon() {
     });
   }, [isDaily]);
 
-  // Discover available scopes; for FREE play pick an initial one (URL ?scope=, last used,
-  // or first). The daily sets its own scope above.
+  // Discover available scopes. FREE play takes its pack(s) from the lobby's config (a bare
+  // /marathon redirects to the lobby, so cfg is always present here); the daily sets its own
+  // scope above. A selection can be several '+'/','-joined keys (a mix).
   useEffect(() => {
     fetchScopes().then((list) => {
       setScopes(list);
       if (isDaily) return;
-      // A selection is one OR several scope keys (comma-joined) — the Hub's scope toggles
-      // pass ?scopes=mammalia,aves; keep only keys this backend actually serves.
-      const params = new URLSearchParams(window.location.search);
-      const fromUrl = params.get("scopes") ?? params.get("scope");
-      const remembered = localStorage.getItem(SCOPE_KEY);
-      const sanitize = (joined: string | null): string => {
-        const valid = new Set(list.map((s) => s.key));
-        return (joined ?? "")
-          .split(",")
-          .map((k) => k.trim())
-          .filter((k) => valid.has(k))
-          .join(",");
-      };
-      const initial = [fromUrl, remembered].map(sanitize).find((v) => v) || list[0]?.key || null;
-      setScopeKey(initial);
+      const valid = new Set(list.map((s) => s.key));
+      const fromConfig = (cfg?.scopes ?? []).filter((k) => valid.has(k));
+      setScopeKey(fromConfig.length ? fromConfig.join(",") : (list[0]?.key ?? null));
     });
-  }, [isDaily]);
+  }, [isDaily, cfg]);
 
   // (Re)load the asset whenever the chosen scope changes. Remote scopes start empty and
-  // grow via /resolve; blob scopes download whole. `?remote=<scope>` forces remote mode
-  // for dev testing even if the catalog says blob.
+  // grow via /resolve; hybrid download a notable blob; blob scopes download whole.
   useEffect(() => {
     // Guard against out-of-order async loads: if the scope changes again before a
     // loadAsset() resolves, the stale result must not clobber the newer one.
@@ -147,11 +141,6 @@ export function Marathon() {
       if (!cancelled) setAsset(a);
     };
 
-    const forcedRemote = new URLSearchParams(window.location.search).get("remote");
-    if (forcedRemote) {
-      apply(createEmptyAsset(forcedRemote, 15));
-      return;
-    }
     if (scopeKey === null) {
       // No catalog (backend down) — fall back to the default blob asset.
       if (scopes.length === 0 && !isDaily) loadAsset().then(apply).catch(console.error);
@@ -159,15 +148,12 @@ export function Marathon() {
         cancelled = true;
       };
     }
-    if (!isDaily) localStorage.setItem(SCOPE_KEY, scopeKey); // don't clobber free-play memory
     const list = scopeKey.split(",").filter(Boolean);
-    // Current version per scope, so the loader can hit the local cache (#43) and skip the
-    // big download when our stored copy is still current.
-    const versions = Object.fromEntries(scopes.map((s) => [s.key, s.version]));
     setAsset(null);
     if (list.length > 1) {
-      // Scope mixing: fetch each blob and merge into one tree (remote scopes aren't mixable).
-      loadAssets(list, versions).then(apply).catch(console.error);
+      // Scope mixing (any modes): merge each pack's local pool + thread its tail. loadMixed
+      // reads each pack's mode/version from the catalog (and its per-scope local cache, #43).
+      loadMixed(list, scopes).then(apply).catch(console.error);
     } else {
       const info = scopes.find((s) => s.key === list[0]);
       if (info?.mode === "remote") {
@@ -185,11 +171,12 @@ export function Marathon() {
     };
   }, [scopeKey, scopes, isDaily]);
 
-  // Difficulty is chosen on the Hub and carried in the URL (?difficulty=). Fixed per game.
-  const difficulty: Difficulty =
-    new URLSearchParams(window.location.search).get("difficulty") === "scientific"
-      ? "scientific"
-      : "common";
+  // Difficulty comes from the lobby's config; the daily is Common. Fixed for the run.
+  const difficulty: Difficulty = cfg?.difficulty ?? "common";
+
+  // The play surface is reached through the lobby (which threads ?c=) or as the daily. A bare
+  // /marathon (no config, not the daily) — an old link or a manual URL — goes to the lobby.
+  if (!isDaily && !cfg) return <Navigate to="/play/marathon_free" replace />;
 
   // Daily gates: loading, unavailable, or already played (one shot a day).
   if (isDaily) {
@@ -219,10 +206,10 @@ export function Marathon() {
       asset={asset}
       scopes={scopes}
       scopeKey={scopeKey}
-      onScope={setScopeKey}
       difficulty={difficulty}
       mode={mode}
       isDaily={isDaily}
+      configSettings={cfg?.settings ?? null}
     />
   );
 }
@@ -260,17 +247,18 @@ function Game({
   scopes,
   difficulty,
   scopeKey,
-  onScope,
   mode,
   isDaily,
+  configSettings,
 }: {
   asset: InternedAsset;
   scopes: ScopeInfo[];
   scopeKey: string | null;
-  onScope: (key: string) => void;
   difficulty: Difficulty;
   mode: string;
   isDaily: boolean;
+  /** Settings from the lobby's GameConfig, frozen for this run; null for the daily. */
+  configSettings: GameSettings | null;
 }) {
   // The induced tree + tracker are mutated in place (O(L)); `rev` triggers re-render.
   const treeRef = useRef<InducedTree>(createInducedTree());
@@ -286,22 +274,21 @@ function Game({
   const runStartedAtRef = useRef<number>(Date.now());
   const runTokenRef = useRef<string | null>(null);
 
-  // The daily is fixed/ranked: default settings, no tuning panel.
+  // Settings come from the lobby's config when present; the daily is fixed to defaults; a
+  // direct/legacy entry falls back to the player's last-saved settings.
+  // Gameplay comes from the lobby's config (or daily defaults / legacy saved settings) and is
+  // FROZEN for the run; the player's global visual prefs (layout, leaves, …) overlay on top.
   const [settings, setSettings] = useState<GameSettings>(() =>
-    isDaily ? { ...gameDefaults() } : loadSettings(),
+    applyVisualPrefs(configSettings ?? (isDaily ? { ...gameDefaults() } : loadSettings())),
   );
-  // Ranked is a property of the WHOLE run, not just the settings at game-over: if a
-  // score-affecting modifier was ever non-default (infinite time, boosted clock, an
-  // extinct-inclusive pool), the run is permanently unranked — resetting to defaults at the
-  // end must NOT relaunder it back onto the leaderboard. Seeded from the starting settings
-  // (a run begun under custom settings is tainted from the first placement).
+  // Ranked status is decided at the lobby (gameplay is frozen here), so it can't change
+  // mid-run. Seeded from the starting settings; a restored run keeps whatever it had.
   const [rankTainted, setRankTainted] = useState(() => !isRankedSettings(settings));
+  // The gear only edits VISUAL prefs now — apply them live and persist them globally (they
+  // never touch gameplay or ranked status).
   function updateSettings(next: GameSettings) {
     setSettings(next);
-    saveSettings(next);
-    if (!isRankedSettings(next)) setRankTainted(true); // one-way: never un-taints
-    // Flipping infinite-time on revives a finished run so you can keep exploring.
-    if (next.infiniteTime && !running) setRunning(true);
+    saveVisualPrefs(next);
   }
 
   const [input, setInput] = useState("");
@@ -652,22 +639,25 @@ function Game({
 
       <div className="absolute left-4 top-4 z-30 flex items-center gap-3">
         <Wordmark size="text-2xl" />
-        {isDaily ? (
-          // Daily: scope is fixed (server-decided) — a badge, not a picker.
-          <span className="rounded-full border-2 border-clade-accent/40 bg-clade-accent/[0.08] px-3 py-1 font-mono text-xs uppercase tracking-wider text-clade-accent">
-            Daily · {scopes.find((s) => s.key === scopeKey)?.label ?? scopeKey}
-          </span>
-        ) : (
-          <ScopePicker
-            scopes={scopes}
-            value={scopeKey ? scopeKey.split(",") : []}
-            onChange={(keys) => onScope(keys.join(","))}
-          />
-        )}
+        {/* Packs are chosen up front in the lobby and fixed for the run — a badge, not a
+            picker (the daily's is server-decided). */}
+        <span
+          className={`rounded-full border-2 px-3 py-1 font-mono text-xs uppercase tracking-wider ${
+            isDaily
+              ? "border-clade-accent/40 bg-clade-accent/[0.08] text-clade-accent"
+              : "border-clade-ink/15 bg-clade-paper/80 text-clade-ink/60"
+          }`}
+        >
+          {isDaily ? "Daily · " : ""}
+          {(scopeKey ? scopeKey.split(",").filter(Boolean) : [])
+            .map((k) => scopes.find((s) => s.key === k)?.label ?? k)
+            .join(" + ") || (scopes.find((s) => s.key === scopeKey)?.label ?? scopeKey)}
+        </span>
       </div>
       {/* No tuning panel on the daily — it's fixed and ranked. */}
       {!isDaily && (
         <SettingsPanel
+          mode={mode}
           settings={settings}
           onChange={updateSettings}
           onAutofill={autofill}

@@ -135,11 +135,11 @@ export function OnboardingTour({
         )}
       </svg>
 
-      {/* The step card. */}
-      <div
-        className={rect ? "absolute w-80" : "absolute inset-0 flex items-center justify-center px-4"}
-        style={rect ? cardStyle : undefined}
-      >
+      {/* The step card. Position lives on the keyed motion.div (not a shared wrapper) so the
+          exiting card keeps its own spot: when a centered mechanic step hands off to a
+          spotlight step, the outgoing card no longer gets dragged to the new anchor — which
+          otherwise read as the animation playing twice / two cards flashing (#93). */}
+      <div className="absolute inset-0">
         <AnimatePresence mode="wait">
           <motion.div
             key={idx}
@@ -147,53 +147,56 @@ export function OnboardingTour({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.22 }}
-            className={`ink-card bg-clade-paper p-5 shadow-xl ${rect ? "" : "w-full max-w-md"}`}
+            className={rect ? "absolute w-80" : "absolute inset-0 flex items-center justify-center px-4"}
+            style={rect ? cardStyle : undefined}
           >
-            {step.variant && (
-              <div className="mb-3 rounded-xl border border-clade-ink/10 bg-clade-bg/40 p-2">
-                <TourTree variant={step.variant} />
-              </div>
-            )}
-            <h3 className="font-hand text-3xl font-bold leading-none text-clade-ink">{step.title}</h3>
-            <p className="mt-2 font-mono text-[13px] leading-relaxed text-clade-ink/70">{step.body}</p>
+            <div className={`ink-card bg-clade-paper p-5 shadow-xl ${rect ? "w-full" : "w-full max-w-md"}`}>
+              {step.variant && (
+                <div className="mb-3 rounded-xl border border-clade-ink/10 bg-clade-bg/40 p-2">
+                  <TourTree variant={step.variant} />
+                </div>
+              )}
+              <h3 className="font-hand text-3xl font-bold leading-none text-clade-ink">{step.title}</h3>
+              <p className="mt-2 font-mono text-[13px] leading-relaxed text-clade-ink/70">{step.body}</p>
 
-            <div className="mt-4 flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                {steps.map((_, n) => (
+              <div className="mt-4 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  {steps.map((_, n) => (
+                    <button
+                      key={n}
+                      aria-label={`Step ${n + 1}`}
+                      onClick={() => setI(n)}
+                      className={`h-1.5 rounded-full transition-all ${
+                        n === idx ? "w-4 bg-clade-accent" : "w-1.5 bg-clade-ink/25 hover:bg-clade-ink/45"
+                      }`}
+                    />
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  {idx > 0 && (
+                    <button
+                      onClick={() => setI((n) => n - 1)}
+                      className="font-mono text-xs uppercase tracking-widest text-clade-ink/45 hover:text-clade-ink"
+                    >
+                      Back
+                    </button>
+                  )}
                   <button
-                    key={n}
-                    aria-label={`Step ${n + 1}`}
-                    onClick={() => setI(n)}
-                    className={`h-1.5 rounded-full transition-all ${
-                      n === idx ? "w-4 bg-clade-accent" : "w-1.5 bg-clade-ink/25 hover:bg-clade-ink/45"
-                    }`}
-                  />
-                ))}
-              </div>
-              <div className="flex items-center gap-2">
-                {idx > 0 && (
-                  <button
-                    onClick={() => setI((n) => n - 1)}
-                    className="font-mono text-xs uppercase tracking-widest text-clade-ink/45 hover:text-clade-ink"
+                    onClick={next}
+                    className="rounded-full border-2 border-clade-ink/80 bg-clade-paper px-4 py-1.5 font-hand text-lg text-clade-ink transition hover:border-clade-accent"
                   >
-                    Back
+                    {last ? "Got it" : "Next →"}
                   </button>
-                )}
-                <button
-                  onClick={next}
-                  className="rounded-full border-2 border-clade-ink/80 bg-clade-paper px-4 py-1.5 font-hand text-lg text-clade-ink transition hover:border-clade-accent"
-                >
-                  {last ? "Got it" : "Next →"}
-                </button>
+                </div>
               </div>
-            </div>
 
-            <button
-              onClick={onClose}
-              className="mt-3 block w-full text-center font-mono text-[10px] uppercase tracking-widest text-clade-ink/35 hover:text-clade-ink/70"
-            >
-              Skip tour
-            </button>
+              <button
+                onClick={onClose}
+                className="mt-3 block w-full text-center font-mono text-[10px] uppercase tracking-widest text-clade-ink/35 hover:text-clade-ink/70"
+              >
+                Skip tour
+              </button>
+            </div>
           </motion.div>
         </AnimatePresence>
       </div>

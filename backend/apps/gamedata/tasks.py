@@ -10,8 +10,10 @@ command stdout is streamed into ``PipelineJob.log`` so the admin shows live prog
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import tempfile
+import threading
 import traceback
 from pathlib import Path
 
@@ -35,7 +37,31 @@ class _JobLog(io.TextIOBase):
 
     def flush(self) -> None:  # noqa: D401 - stream contract
         self._job.log = "".join(self._buf)
-        self._job.save(update_fields=["log"])
+        self._persist()
+
+    def _persist(self) -> None:
+        """Write ``log`` back to the row. The enrich harvest pumps progress ticks through
+        here from inside ``asyncio.run`` (build_gamedata's progress callback -> stdout.write),
+        and Django's guard forbids a synchronous ORM call from a running event loop. When we
+        detect one, do the save on a short-lived thread: that thread has no event loop (the
+        guard passes) and opens its own connection, so the loop isn't blocked on the DB."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self._job.save(update_fields=["log"])
+            return
+
+        def _save() -> None:
+            from django.db import connection
+
+            try:
+                self._job.save(update_fields=["log"])
+            finally:
+                connection.close()  # don't leak this thread's connection across ticks
+
+        t = threading.Thread(target=_save)
+        t.start()
+        t.join()
 
 
 def _parse_scope_filter(scope_filter: str) -> str:

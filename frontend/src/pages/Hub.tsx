@@ -1,6 +1,7 @@
-// Landing hub. One card per game; a shared Common/Scientific difficulty toggle applies to
-// every game that supports it (future games reuse the same toggle). A single site-wide
-// Daily strip sits on top. See docs/games-model.md.
+// Landing hub — a clean game picker. One card per game (links to that game's lobby, where you
+// pick packs + difficulty + settings); a single site-wide Daily strip on top. Difficulty and
+// pack selection used to live here — they moved into the per-game lobby (/play/:mode) so the
+// hub stays uncluttered as more games arrive. See docs/lobby-and-config.md + games-model.md.
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -8,60 +9,17 @@ import { LeafMark, TopBar } from "../components/Brand";
 import { LeafBackground } from "../components/LeafBackground";
 import { OnboardingTour } from "../components/onboarding/OnboardingTour";
 import { HUB_STEPS } from "../components/onboarding/tourSteps";
-import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import { fetchDaily, type DailyInfo } from "../lib/daily";
 import { fetchGames, FALLBACK_GAMES, type Game } from "../lib/games";
-import type { Difficulty } from "../lib/scores";
 import { useTitle } from "../lib/useTitle";
 import { fetchApiVersion, FRONTEND_BUILT, FRONTEND_VERSION } from "../lib/version";
 
-// Shared with Marathon's scope memory: the picked mix carries over either way.
-const SCOPE_KEY = "cladewright.scope";
-
 export function Hub() {
   useTitle();
-  const [difficulty, setDifficulty] = useState<Difficulty>("common");
   const [tourOpen, setTourOpen] = useState(false);
 
-  // Scope mixing: the player toggles which clades to play; the selection rides to the game
-  // as ?scopes=mammalia,aves and the assets merge there. Only blob scopes are mixable.
-  const [scopes, setScopes] = useState<ScopeInfo[]>([]);
-  const [selectedScopes, setSelectedScopes] = useState<string[]>([]);
-  useEffect(() => {
-    let alive = true;
-    fetchScopes().then((list) => {
-      if (!alive) return;
-      const blob = list.filter((s) => s.mode === "blob");
-      setScopes(blob);
-      const remembered = (localStorage.getItem(SCOPE_KEY) ?? "")
-        .split(",")
-        .filter((k) => blob.some((s) => s.key === k));
-      setSelectedScopes(remembered.length ? remembered : blob[0] ? [blob[0].key] : []);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  function toggleScope(key: string) {
-    setSelectedScopes((prev) => {
-      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
-      const result = next.length ? next : prev; // never let the selection go empty
-      localStorage.setItem(SCOPE_KEY, result.join(","));
-      return result;
-    });
-  }
-
-  // A card's link carries the current difficulty (if it supports it) + the scope mix.
-  function gameHref(g: Game): string {
-    const p = new URLSearchParams();
-    if (g.supports_difficulty) p.set("difficulty", difficulty);
-    if (selectedScopes.length) p.set("scopes", selectedScopes.join(","));
-    const qs = p.toString();
-    return qs ? `${g.route}?${qs}` : g.route;
-  }
-  // Enabled games come from the admin-toggled config; start with the built-in fallback so
-  // the cards paint instantly, then reconcile with the server.
+  // Enabled games come from the admin-toggled config; start with the built-in fallback so the
+  // cards paint instantly, then reconcile with the server.
   const [games, setGames] = useState<Game[]>(FALLBACK_GAMES);
   useEffect(() => {
     let alive = true;
@@ -75,10 +33,6 @@ export function Hub() {
 
   // Daily modes are surfaced as the single Daily strip, never as cards.
   const cardGames = games.filter((g) => !g.is_daily);
-  const anyDifficulty = cardGames.some((g) => g.supports_difficulty);
-  const totalSelectedTips = scopes
-    .filter((s) => selectedScopes.includes(s.key))
-    .reduce((n, s) => n + s.tip_count, 0);
 
   return (
     <div className="min-h-screen">
@@ -88,78 +42,12 @@ export function Hub() {
 
         <div className="flex flex-1 flex-col justify-center gap-5 pb-16">
           <div data-tour="daily">
-            <DailyCard difficulty={difficulty} />
+            <DailyCard />
           </div>
-
-          {anyDifficulty && (
-            // One row, never wrapping: a short "Difficulty" label + a two-option segmented
-            // toggle. Shortened labels ("Common"/"Scientific") keep it on a single line down
-            // to the narrowest phones instead of spilling onto two.
-            <div data-tour="difficulty" className="flex flex-nowrap items-center justify-center gap-2">
-              <span className="font-mono text-[11px] uppercase tracking-wider text-clade-ink/45 sm:text-xs">
-                Difficulty
-              </span>
-              <button
-                type="button"
-                onClick={() => setDifficulty("common")}
-                className={`pill whitespace-nowrap ${difficulty === "common" ? "pill-active" : ""}`}
-              >
-                Common
-              </button>
-              <button
-                type="button"
-                onClick={() => setDifficulty("scientific")}
-                className={`pill whitespace-nowrap ${difficulty === "scientific" ? "pill-active" : "border-dashed"}`}
-              >
-                Scientific
-              </button>
-            </div>
-          )}
-
-          {scopes.length > 0 && (
-            // Scope toggles — pick one clade or mix several (their trees merge in-game).
-            // Selected = filled brand-green (on-brand + obvious vs the ghost outline of the
-            // unselected); each shows its species count, with a running mix summary below.
-            <div data-tour="clades" className="flex flex-col items-center gap-1.5">
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <span className="font-mono text-[11px] uppercase tracking-wider text-clade-ink/45 sm:text-xs">
-                  Clades
-                </span>
-                {scopes.map((s) => {
-                  const on = selectedScopes.includes(s.key);
-                  return (
-                    <button
-                      key={s.key}
-                      type="button"
-                      onClick={() => toggleScope(s.key)}
-                      aria-pressed={on}
-                      className={`flex items-center gap-2 whitespace-nowrap rounded-full border-2 px-4 py-1.5 font-mono text-sm transition ${
-                        on
-                          ? "border-clade-accent bg-clade-accent text-clade-paper shadow-sm"
-                          : "border-clade-ink/25 text-clade-ink/70 hover:border-clade-accent/70 hover:text-clade-ink"
-                      }`}
-                    >
-                      <span>{s.label}</span>
-                      <span
-                        className={`font-mono text-[10px] ${on ? "text-clade-paper/65" : "text-clade-ink/35"}`}
-                      >
-                        {s.tip_count.toLocaleString()}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              <span className="font-mono text-[10px] text-clade-ink/40">
-                {selectedScopes.length > 1
-                  ? `mixing ${selectedScopes.length} clades · ${totalSelectedTips.toLocaleString()} species`
-                  : "pick one, or tap several to mix"}
-              </span>
-            </div>
-          )}
 
           <div className="flex flex-wrap justify-center gap-4">
             {cardGames.map((g) => (
-              <ModeCard key={g.mode} to={gameHref(g)} title={g.label} blurb={g.blurb} />
+              <ModeCard key={g.mode} to={`/play/${g.mode}`} title={g.label} blurb={g.blurb} />
             ))}
           </div>
 
@@ -199,9 +87,10 @@ export function Hub() {
   );
 }
 
-/** The single site-wide Daily. The counter is the player's day streak; once today's daily
- * is played, Play is replaced by the score (one shot a day). Reads /api/scores/daily/. */
-function DailyCard({ difficulty }: { difficulty: Difficulty }) {
+/** The single site-wide Daily. The counter is the player's day streak; once today's daily is
+ * played, Play is replaced by the score (one shot a day). The daily bypasses the lobby — its
+ * config is server-fixed and locked — so Play links straight to the board. Reads /api/scores/daily/. */
+function DailyCard() {
   const [daily, setDaily] = useState<DailyInfo | null>(null);
   useEffect(() => {
     let alive = true;
@@ -217,9 +106,8 @@ function DailyCard({ difficulty }: { difficulty: Difficulty }) {
   const played = daily?.played_today ?? false;
 
   return (
-    // The daily is a SECONDARY action, deliberately styled apart from the one primary green
-    // "▶ Play" (Time attack) so it never reads as a second/competing play button (#64): a
-    // distinct label ("Today's puzzle"), an outlined button, and a one-line "what is this".
+    // The daily is a SECONDARY action, deliberately styled apart from the primary green
+    // "▶ Play" cards (#64): a distinct label, an outlined button, and a one-line "what is this".
     <div className="ink-card flex items-center justify-between border-clade-accent/30 px-5 py-4">
       <div className="leading-none">
         <h2 className="font-hand text-3xl font-bold text-clade-ink">Daily</h2>
@@ -248,7 +136,7 @@ function DailyCard({ difficulty }: { difficulty: Difficulty }) {
           </div>
         ) : (
           <Link
-            to={`/marathon?daily=1&difficulty=${difficulty}`}
+            to="/marathon?daily=1"
             className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border-2 border-clade-accent px-4 py-1.5 font-hand text-xl font-bold text-clade-accent transition hover:bg-clade-accent hover:text-clade-paper"
           >
             ▶ Today's puzzle
@@ -261,7 +149,6 @@ function DailyCard({ difficulty }: { difficulty: Difficulty }) {
 
 function ModeCard({ to, title, blurb }: { to: string; title: string; blurb: string }) {
   return (
-    // Same width as the old 2-col grid cell (~half the container) — centered, not widened.
     <div className="ink-card flex w-full flex-col p-5 sm:w-[26rem]">
       <LeafMark className="h-7 w-7 text-clade-accent" />
       <h2 className="mt-2 font-hand text-4xl font-bold leading-none text-clade-ink">{title}</h2>

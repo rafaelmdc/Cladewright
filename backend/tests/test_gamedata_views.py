@@ -83,12 +83,20 @@ HYBRID_ASSET = {
     "version": 5, "schema": "1.0", "scope": "ants", "label": "Ants", "pool_size": 3,
     "pool_size_extant": 3, "thresholds": {"hidden_label_max": 15}, "provenance": {},
     "notable_coverage": 0.9, "notable_min": 1, "notable_max": 1, "frontier_rank": "family",
+    # The rare branch is extinct-only, so its extant denominator is 0 while pool_count is 1
+    # — the tail-resolve must surface pool_count_extant so living-only "N remaining" excludes
+    # the unnameable extinct species (#94).
     "nodes": [
-        {"id": "kng:Animalia", "rank": "kingdom", "sci": "Animalia", "parent": None, "pool_count": 3},
-        {"id": "fam:Aidae", "rank": "family", "sci": "Aidae", "parent": "kng:Animalia", "pool_count": 2},
-        {"id": "gen:Apis", "rank": "genus", "sci": "Apis", "parent": "fam:Aidae", "pool_count": 2},
-        {"id": "fam:Bidae", "rank": "family", "sci": "Bidae", "parent": "kng:Animalia", "pool_count": 1},
-        {"id": "gen:Rarus", "rank": "genus", "sci": "Rarus", "parent": "fam:Bidae", "pool_count": 1},
+        {"id": "kng:Animalia", "rank": "kingdom", "sci": "Animalia", "parent": None,
+         "pool_count": 3, "pool_count_extant": 2},
+        {"id": "fam:Aidae", "rank": "family", "sci": "Aidae", "parent": "kng:Animalia",
+         "pool_count": 2, "pool_count_extant": 2},
+        {"id": "gen:Apis", "rank": "genus", "sci": "Apis", "parent": "fam:Aidae",
+         "pool_count": 2, "pool_count_extant": 2},
+        {"id": "fam:Bidae", "rank": "family", "sci": "Bidae", "parent": "kng:Animalia",
+         "pool_count": 1, "pool_count_extant": 0},
+        {"id": "gen:Rarus", "rank": "genus", "sci": "Rarus", "parent": "fam:Bidae",
+         "pool_count": 1, "pool_count_extant": 0},
     ],
     "tips": [
         {"id": "tip:famous", "sci": "Apis famous", "common": "famous ant", "parent": "gen:Apis",
@@ -168,4 +176,9 @@ class HybridLoadTests(TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["target"]["id"], "tip:rare")
         self.assertEqual(r.json()["anchor"], "fam:Bidae")
-        self.assertEqual([n["id"] for n in r.json()["lineage"]], ["fam:Bidae", "gen:Rarus"])
+        lineage = r.json()["lineage"]
+        self.assertEqual([n["id"] for n in lineage], ["fam:Bidae", "gen:Rarus"])
+        # Each tail node carries the living-only denominator so extinct (unnameable in
+        # living-only mode) species don't inflate the clade's "N remaining" count (#94).
+        self.assertEqual([n["pool_count_extant"] for n in lineage], [0, 0])
+        self.assertEqual([n["pool_count"] for n in lineage], [1, 1])

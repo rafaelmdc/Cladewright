@@ -178,7 +178,6 @@ def _run_build(job, stream, emit) -> str:
             build_args += ["--fame-dump", job.fame_dump]
         if job.fame_year and job.fame_month:
             build_args += ["--fame-year", str(job.fame_year), "--fame-month", str(job.fame_month)]
-        build_args += ["--fame-source", job.fame_source]
         call_command("build_gamedata", *build_args, stdout=stream, stderr=stream)
 
         load_args = ["--asset", str(out)]

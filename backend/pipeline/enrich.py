@@ -24,19 +24,16 @@ from typing import Protocol
 
 from .types import EnrichedTip, Taxon, Tree
 
-# Valid --fame-source / PipelineJob.fame_source values.
-FAME_SOURCES = ("auto", "prebuilt", "rest")
-
-
 def prebuilt_fame_db() -> tuple[Path | None, str]:
-    """Locate a prebuilt local Wikipedia pageview DB. Returns ``(path_or_None, reason)``.
+    """Locate THE local Wikipedia pageview DB (one DB, downloaded once, like the CoL dump).
+    Returns ``(path_or_None, reason)``.
 
-    The SINGLE source of truth for "is there a local pageview DB to use": both the
-    build_gamedata log line and ``harvest_fame``'s backend selection call this, so the admin
-    job log can never disagree with the backend actually used. The ``reason`` names the EXACT
-    path checked — the thing you need to debug "why REST instead of my dump DB", which is
-    almost always that the build pod doesn't see the volume the 'Download pageview dump' job
-    wrote to (different replica / non-shared PVC / unset BRAIDWORKS_DATA_DIR).
+    The SINGLE source of truth for "is the local pageview DB present": both the build_gamedata
+    log line and ``harvest_fame``'s backend selection call this, so the admin job log can never
+    disagree with the backend actually used. The ``reason`` names the EXACT path checked — the
+    thing you need to debug "why REST instead of my dump DB", which is almost always that the
+    build pod doesn't see the volume the 'Download pageview dump' job wrote to (different
+    replica / non-shared PVC / unset BRAIDWORKS_DATA_DIR).
     """
     try:
         from wikipedia_weaver.setup import db_is_valid, default_db_path
@@ -180,7 +177,6 @@ class BraidworksProvider:
         fame_dump_path: str | None = None,
         fame_year: int | None = None,
         fame_month: int | None = None,
-        fame_source: str = "auto",
         progress: Callable[[str, int, int], None] | None = None,
     ) -> None:
         self._cache: dict[str, list[str]] = {}  # scientific_name -> [name strings]
@@ -193,11 +189,6 @@ class BraidworksProvider:
         self._fame_dump_path = fame_dump_path
         self._fame_year = fame_year
         self._fame_month = fame_month
-        # Explicit override of the pageview backend: "auto" (prebuilt DB → dump → REST),
-        # "prebuilt" (the local DB only — build_gamedata fails fast if it's missing, so a huge
-        # scope never silently starts a multi-day per-title REST crawl), or "rest" (force the
-        # keyless REST api even when a DB exists). See prebuilt_fame_db / docs/pipeline-jobs.md.
-        self._fame_source = fame_source
         # Optional progress sink (phase, done, total) so a long network harvest reports
         # incrementally instead of going silent for minutes. Set by build_gamedata so the
         # admin job log ticks up.
@@ -299,24 +290,18 @@ class BraidworksProvider:
         if not todo:
             return
 
-        # Pageview source, in preference order (unless fame_source forces one):
+        # Pageview source, in preference order:
         #  1. an explicit dump on this build (fame_dump / year+month) → local backend, built
         #     once at the shared DB path (persists when BRAIDWORKS_DATA_DIR → the PVC);
-        #  2. a prebuilt local DB already on disk (the "Download pageview dump" action ran) →
+        #  2. THE prebuilt local DB already on disk (the "Download pageview dump" action ran) →
         #     reuse it, no per-title web calls — the scalable path for huge scopes;
         #  3. otherwise the keyless per-title REST api (fine only for a few-thousand-tip scope).
-        # fame_source="rest" skips 1+2 (force REST); "prebuilt" is enforced upstream in
-        # build_gamedata (fail fast before the long names harvest), so here it behaves like auto.
         explicit_dump = bool(self._fame_dump_path or (self._fame_year and self._fame_month))
         prebuilt_db = None
-        if self._fame_source != "rest" and not explicit_dump:
-            prebuilt_db, _ = prebuilt_fame_db()
+        if not explicit_dump:
+            prebuilt_db, _ = prebuilt_fame_db()  # same detector the build log reports
 
-        if self._fame_source == "rest":
-            registry = build_registry_from_entry_points(
-                only=frozenset({"wikidata", "wikipedia"})
-            )
-        elif prebuilt_db is not None:
+        if prebuilt_db is not None:
             # Reuse the already-built DB directly: the factory's build path insists on a
             # dump month even to reuse, but the local backend reads its month from the DB —
             # so wire it straight (the dump backend is self-describing once built).

@@ -87,19 +87,6 @@ class PipelineJob(models.Model):
                   "(pageviews-YYYYMM-user.bz2). Usually blank: once a 'Download pageview dump' "
                   "job has built the local DB, every fame build reuses it automatically; blank "
                   "with no prebuilt DB falls back to the per-title pageviews REST api.")
-
-    class FameSource(models.TextChoices):
-        AUTO = "auto", "Auto (prebuilt DB → dump → REST)"
-        PREBUILT = "prebuilt", "Prebuilt DB only (fail if missing)"
-        REST = "rest", "REST api (force)"
-
-    fame_source = models.CharField(
-        max_length=16, choices=FameSource.choices, default=FameSource.AUTO,
-        help_text="Which pageview backend fame uses. AUTO: prebuilt local DB if present, else a "
-                  "configured dump, else the slow per-title REST api. PREBUILT: the local DB ONLY "
-                  "— the build FAILS FAST if it's missing (so a huge scope never silently starts a "
-                  "multi-day REST crawl); use this for million-tip scopes after a 'Download "
-                  "pageview dump' job. REST: force the per-title api even when a DB exists.")
     # Which monthly pageview dump to fetch/build (the 'Download pageview dump' kind, and the
     # month a build's fame is dated to). 0/0 = infer from fame_dump's filename, else the
     # pageviews REST api.

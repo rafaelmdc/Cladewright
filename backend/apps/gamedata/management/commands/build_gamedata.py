@@ -68,12 +68,6 @@ class Command(BaseCommand):
                             help="Dump year (with --fame-month), if not inferable from --fame-dump.")
         parser.add_argument("--fame-month", type=int, default=0,
                             help="Dump month 1-12 (with --fame-year).")
-        parser.add_argument("--fame-source", choices=list(enrich.FAME_SOURCES), default="auto",
-                            help="Which pageview backend fame uses: 'auto' (prebuilt local DB → "
-                                 "configured dump → REST api, in that order), 'prebuilt' (the "
-                                 "local DB ONLY — fail fast if it's missing, so a huge scope never "
-                                 "silently starts a multi-day per-title REST crawl), or 'rest' "
-                                 "(force the keyless REST api even when a DB exists).")
         parser.add_argument("--notable-max", type=int, default=0,
                             help="Hard ceiling on tips shipped in the client blob; 0 (default) = "
                                  "ship the WHOLE pool (no remote tail). Above it the scope is served "
@@ -123,41 +117,27 @@ class Command(BaseCommand):
                 fame_dump_path=opts["fame_dump"] or None,
                 fame_year=opts["fame_year"] or None,
                 fame_month=opts["fame_month"] or None,
-                fame_source=opts["fame_source"],
                 progress=harvest_progress,
             )
             if opts["enrich"] == "braidworks"
             else enrich.OfflineProvider()
         )
         # Surface where fame (popularity) comes from, so the admin log shows at a glance
-        # whether this build will rank by real pageviews or fall back to nothing — and, when it
-        # DOESN'T find the prebuilt DB, the exact path it checked (the usual culprit is the build
-        # pod not sharing the volume the 'Download pageview dump' job wrote to). One detector
-        # (enrich.prebuilt_fame_db) feeds both this log line and the actual backend pick, so the
-        # log can't lie about what ran.
-        fame_source = opts["fame_source"]
+        # whether this build ranks by real pageviews or falls back to the slow REST api. The ONE
+        # pageview DB (downloaded once, like the CoL dump) is auto-used if present; when it ISN'T
+        # found we print the exact path checked — the usual culprit is the build pod not sharing
+        # the volume the 'Download pageview dump' job wrote to. enrich.prebuilt_fame_db feeds both
+        # this log line and harvest_fame's actual backend pick, so the log can't lie about what ran.
         explicit_dump = bool(opts["fame_dump"] or (opts["fame_year"] and opts["fame_month"]))
         if opts["enrich"] != "braidworks":
             self.stdout.write("      fame: disabled (offline enrich — every tip scores 0)")
-        elif fame_source == "rest":
-            self.stdout.write("      fame source: REST api (forced via --fame-source rest) — "
-                              "per-title, slow; only sane for a few-thousand-tip scope")
         elif explicit_dump:
             self.stdout.write("      fame source: pageview dump → local DB (built once, then reused)")
         else:
             db_path, reason = enrich.prebuilt_fame_db()
             if db_path is not None:
                 self.stdout.write(f"      fame source: {reason} (local, fast)")
-            elif fame_source == "prebuilt":
-                # Fail BEFORE the long names harvest — never let a million-tip build silently
-                # fall through to the per-title REST crawl when the admin asked for the DB.
-                raise CommandError(
-                    f"--fame-source prebuilt but no usable pageview DB: {reason}. Run a "
-                    "'Download pageview dump' job on the SAME worker/volume first (it must see "
-                    "$BRAIDWORKS_DATA_DIR), pass --fame-dump/--fame-year/--fame-month, or use "
-                    "--fame-source rest to accept the slow per-title api."
-                )
-            else:  # auto: no DB → fall back to REST, but say loudly WHY it didn't find one
+            else:  # no DB → REST fallback, but say loudly WHY it didn't find one
                 self.stdout.write(
                     f"      fame source: REST api ({reason}) — per-title, slow; run a 'Download "
                     "pageview dump' job (same worker/volume) once for scale"

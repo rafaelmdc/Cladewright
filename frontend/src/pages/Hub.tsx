@@ -72,11 +72,18 @@ export function Hub() {
 
         <p className="text-center font-mono text-[11px] uppercase tracking-wider text-clade-ink/35">
           data: Catalogue of Life · common + scientific ·{" "}
+          <Link
+            to="/faq"
+            className="rounded-full border-2 border-clade-accent/60 px-2.5 py-0.5 font-bold text-clade-accent transition hover:border-clade-accent hover:bg-clade-accent hover:text-clade-paper"
+          >
+            FAQ
+          </Link>{" "}
+          ·{" "}
           <a
             href="https://github.com/rafaelmdc/Cladewright/issues/new"
             target="_blank"
             rel="noopener noreferrer"
-            className="underline decoration-clade-ink/25 underline-offset-2 transition hover:text-clade-ink/70 hover:decoration-clade-ink/50"
+            className="rounded-full border-2 border-clade-ink/40 px-2.5 py-0.5 font-bold text-clade-ink/60 transition hover:border-clade-ink hover:text-clade-ink"
           >
             report a bug ↗
           </a>{" "}

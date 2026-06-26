@@ -37,6 +37,31 @@ against its own admin-tunable modifier/settings definitions — never trusting a
 exactly as it already re-derives combo/clade bonuses from the signed session. The resolved
 `GameConfig` and the computed `score_multiplier` are stored on the `Run` for audit/replay.
 
+**Built (#101).** `final = base × ∏(modifier multipliers) × ∏(setting derates)`:
+- **Modifiers** are admin rows (`GameModifier`: key, label, multiplier, `incompatible_with`),
+  served by `GET /api/scores/modifiers/?mode=`. A harder one is >1.0×, an easier one <1.0×.
+  *A modifier is only added once its in-game effect exists* — otherwise it multiplies a score
+  without changing the game. First shipped: **`no_tree`** (1.3×) — hide the cladogram and play
+  off a plain scrollable list of what you've named (`components/PlacedList.tsx`); a real memory
+  challenge with the loop otherwise unchanged.
+- **Modifier ↔ settings coupling is admin DATA, not hardcoded UI.** A modifier row carries
+  `hides_settings` (dials it makes irrelevant — dropped from lobby/gear) and `forces_settings`
+  (dials it pins — shown locked, and applied server-side so the multiplier always reflects them).
+  `lib/game/multipliers.ts#modifierEffects` derives the hidden/forced sets from the active
+  modifiers; the schema/controls just consume them. Adding a coupling needs no frontend change.
+  Only a modifier's *gameplay* effect (e.g. `no_tree` swapping the board for a list) is keyed in
+  code — that part is irreducible.
+- **Setting factors** move the multiplier BOTH ways: easing a dial (infinite time, a longer
+  clock) scores <1.0×, tightening it past the default (less time) scores >1.0× — so a harder
+  setup is rewarded, not just a relaxed one penalised. Per-setting `linear` rules carry a
+  `floor`/`cap` for the two directions; live in `apps/scores/multipliers.py` (admin-overridable
+  via `GameDefaults.setting_multipliers`).
+- `ranked` no longer means "default settings" — it means **anti-cheat-eligible** only (valid
+  signed session + plausible placement rate). Every other run is on the board at its multiplier.
+- The server resolver (`multipliers.py`) is mirrored on the client (`lib/game/multipliers.ts`)
+  for the lobby's live multiplier preview; the server re-resolves authoritatively at submit.
+- `Run` stores `base_score`, `score_multiplier`, and the resolved `config`.
+
 ## Per game, always
 
 A **game owns its config**: its settings schema, its defaults, and (later) its modifier set.
@@ -98,16 +123,17 @@ and real-time lobby invites. Keep it stable and versioned.
 5. Unclutter the hub to one card per game; route hub → lobby → play.
 6. Thread `GameConfig` into Marathon; gear → visual-only & frozen-at-start; Daily bypasses.
 
-**Later (the modifier feature — backend authority):**
-7. Admin-tunable, per-game **modifier model** (id, label, multiplier, incompatibilities);
-   `/api/.../modifiers?mode=`. Server resolves `score_multiplier` from the config; board ranks
-   by `base × multiplier`; store `GameConfig` + `score_multiplier` on `Run`; retire the
-   `ranked`-as-default-settings taint (keep `ranked` = anti-cheat-eligible).
+**Done (the modifier feature — backend authority, #101):**
+7. ✅ Admin-tunable, per-game **modifier model** (id, label, multiplier, incompatibilities);
+   `/api/scores/modifiers/?mode=`. Server resolves `score_multiplier` from the config; board
+   ranks by `base × multiplier`; stores `config` + `base_score` + `score_multiplier` on `Run`;
+   `ranked` retired to anti-cheat-only. Score-easing settings derate via `setting_multipliers`.
+   (Specific modifiers ship later, each with its in-game effect.)
 
 **Much later (multiplayer — do not build any backend now):**
-8. Shareable config codes + async "beat my run" challenges (built on the encodable config).
+8. ~~Shareable config codes + async "beat my run" challenges~~ — won't build (closed, #102).
 9. Real-time lobby/match: server room model + realtime transport; the lobby component becomes
-   shared (synced config, ready-up, start signal, live scores). Designed-for, not built.
+   shared (synced config, ready-up, start signal, live scores). Designed-for, not built (#103).
 
 ## Name collisions across mixed packs — *smaller pack wins*
 

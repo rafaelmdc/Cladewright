@@ -20,7 +20,15 @@ import {
   type GameConfig,
 } from "../lib/game/config";
 import { gameplayFields } from "../lib/game/schema";
-import { fetchGameDefaults, gameDefaults, isRankedSettings } from "../lib/game/settings";
+import { fetchGameDefaults, gameDefaults, type GameSettings } from "../lib/game/settings";
+import {
+  conflictingModifiers,
+  fetchModifiers,
+  formatMultiplier,
+  modifierEffects,
+  previewMultiplier,
+  type ModifierInfo,
+} from "../lib/game/multipliers";
 import type { Difficulty } from "../lib/scores";
 import { useTitle } from "../lib/useTitle";
 
@@ -32,6 +40,7 @@ export function Lobby() {
   const navigate = useNavigate();
   const [games, setGames] = useState<Game[]>(FALLBACK_GAMES);
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
+  const [modInfo, setModInfo] = useState<ModifierInfo | null>(null);
   const [cfg, setCfg] = useState<GameConfig>(() => seedConfig(mode));
 
   const game = games.find((g) => g.mode === mode);
@@ -45,6 +54,18 @@ export function Lobby() {
       if (!localStorage.getItem(configKey(mode))) {
         setCfg((c) => ({ ...c, settings: { ...gameDefaults() } }));
       }
+    });
+  }, [mode]);
+
+  // The game's modifiers + multiplier rules, for the chips + the live multiplier preview.
+  useEffect(() => {
+    fetchModifiers(mode).then((info) => {
+      setModInfo(info);
+      // Drop any remembered modifier the backend no longer serves.
+      setCfg((c) => {
+        const valid = c.modifiers.filter((k) => info.modifiers.some((m) => m.key === k));
+        return valid.length === c.modifiers.length ? c : { ...c, modifiers: valid };
+      });
     });
   }, [mode]);
 
@@ -64,11 +85,36 @@ export function Lobby() {
   }, []);
 
   const supportsDifficulty = game?.supports_difficulty ?? true;
-  const fields = useMemo(() => gameplayFields(mode), [mode]);
-  const ranked = isRankedSettings(cfg.settings);
   const totalTips = scopes
     .filter((s) => cfg.scopes.includes(s.key))
     .reduce((n, s) => n + s.tip_count, 0);
+  // What the active modifiers do to the settings (admin data): drop `hidden` dials, pin `forced`
+  // ones. Forced values are shown as a locked overlay — the player's own cfg.settings is left
+  // intact, so toggling the modifier off restores them.
+  const effects = modInfo
+    ? modifierEffects(cfg.modifiers, modInfo)
+    : { hidden: new Set<keyof GameSettings>(), forced: {} as Partial<GameSettings> };
+  const fields = useMemo(() => gameplayFields(mode, effects.hidden), [mode, effects.hidden]);
+  const shownSettings = { ...cfg.settings, ...effects.forced };
+  const lockedKeys = new Set(Object.keys(effects.forced) as (keyof GameSettings)[]);
+  // Live score multiplier the run will score at (∏ active modifiers × ∏ eased settings, #101).
+  const multiplier = modInfo ? previewMultiplier(cfg.modifiers, cfg.settings, modInfo) : 1;
+  const conflicts = modInfo ? conflictingModifiers(cfg.modifiers, modInfo.modifiers) : new Set<string>();
+  // Whether the gameplay settings are still at the (admin-overlaid) defaults — the reset button
+  // only appears once the player has changed something.
+  const atDefaults = (() => {
+    const def = gameDefaults() as unknown as Record<string, unknown>;
+    const cur = cfg.settings as unknown as Record<string, unknown>;
+    return Object.keys(def).every((k) => def[k] === cur[k]);
+  })();
+
+  function toggleModifier(key: string) {
+    setCfg((c) => {
+      const has = c.modifiers.includes(key);
+      const next = has ? c.modifiers.filter((k) => k !== key) : [...c.modifiers, key];
+      return { ...c, modifiers: next.sort() };
+    });
+  }
 
   function start() {
     const code = encodeConfig(cfg);
@@ -84,7 +130,7 @@ export function Lobby() {
   return (
     <div className="min-h-screen">
       <LeafBackground density={20} />
-      <div className="mx-auto flex min-h-screen max-w-2xl flex-col px-6 py-8">
+      <div className="mx-auto flex min-h-screen max-w-4xl flex-col px-6 py-8">
         <TopBar />
 
         <div className="flex flex-1 flex-col gap-6 py-6">
@@ -101,56 +147,119 @@ export function Lobby() {
             <p className="font-hand text-xl text-clade-ink/70">Set up your run, then play.</p>
           </div>
 
-          {/* Packs */}
-          <Section label="Packs">
-            <div className="flex items-center gap-3">
-              <ScopePicker
-                scopes={scopes}
-                value={cfg.scopes}
-                onChange={(keys) => setCfg((c) => ({ ...c, scopes: [...keys].sort() }))}
-              />
-              <span className="font-mono text-[11px] text-clade-ink/45">
-                {cfg.scopes.length > 1
-                  ? `mixing ${cfg.scopes.length} · ${totalTips.toLocaleString()} species`
-                  : `${totalTips.toLocaleString()} species`}
-              </span>
-            </div>
-          </Section>
+          {/* Left: packs, then difficulty + modifiers. Right: the big settings panel. */}
+          <div className="grid items-start gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
+            <div className="flex flex-col gap-5">
+              {/* Packs */}
+              <Panel title="Packs">
+                <ScopePicker
+                  scopes={scopes}
+                  value={cfg.scopes}
+                  onChange={(keys) => setCfg((c) => ({ ...c, scopes: [...keys].sort() }))}
+                />
+                <p className="mt-2 font-mono text-[11px] text-clade-ink/45">
+                  {scopes.length === 0
+                    ? "No packs available — seed one (see docs)."
+                    : cfg.scopes.length > 1
+                      ? `mixing ${cfg.scopes.length} · ${totalTips.toLocaleString()} species`
+                      : `${totalTips.toLocaleString()} species`}
+                </p>
+              </Panel>
 
-          {/* Difficulty (the lens) */}
-          {supportsDifficulty && (
-            <Section label="Difficulty">
-              <div className="flex gap-2">
-                <DiffPill active={cfg.difficulty === "common"} onClick={() => setDiff(setCfg, "common")}>
-                  Common
-                </DiffPill>
-                <DiffPill
-                  active={cfg.difficulty === "scientific"}
-                  onClick={() => setDiff(setCfg, "scientific")}
+              {/* Difficulty (the lens) */}
+              {supportsDifficulty && (
+                <Panel title="Difficulty">
+                  <div className="flex gap-2">
+                    <DiffPill active={cfg.difficulty === "common"} onClick={() => setDiff(setCfg, "common")}>
+                      Common
+                    </DiffPill>
+                    <DiffPill
+                      active={cfg.difficulty === "scientific"}
+                      onClick={() => setDiff(setCfg, "scientific")}
+                    >
+                      Scientific
+                    </DiffPill>
+                  </div>
+                </Panel>
+              )}
+
+              {/* Modifiers — opt-in mutators, each carrying a score multiplier (#101). */}
+              {modInfo && modInfo.modifiers.length > 0 && (
+                <Panel title="Modifiers">
+                  <div className="flex flex-wrap gap-2">
+                    {modInfo.modifiers.map((m) => {
+                      const on = cfg.modifiers.includes(m.key);
+                      // Grey out a modifier incompatible with the current selection (unless it's
+                      // the one already on, so it can be toggled off).
+                      const blocked =
+                        !on && (m.incompatible_with ?? []).some((k) => cfg.modifiers.includes(k));
+                      return (
+                        <button
+                          key={m.key}
+                          type="button"
+                          disabled={blocked}
+                          onClick={() => toggleModifier(m.key)}
+                          title={m.blurb || undefined}
+                          className={`pill ${on ? "pill-active" : "border-dashed"} ${
+                            blocked ? "cursor-not-allowed opacity-40" : ""
+                          } ${conflicts.has(m.key) ? "!border-red-500" : ""}`}
+                        >
+                          {m.label}
+                          <span className="ml-1.5 font-mono text-[10px] opacity-70">
+                            {formatMultiplier(m.multiplier)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Panel>
+              )}
+            </div>
+
+            {/* Right: settings (the big panel). */}
+            <div className="ink-card flex h-full flex-col gap-5 bg-clade-paper p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-baseline gap-3">
+                  <h2 className="font-hand text-2xl font-bold text-clade-ink">Settings</h2>
+                  {!atDefaults && (
+                    <button
+                      type="button"
+                      onClick={() => setCfg((c) => ({ ...c, settings: { ...gameDefaults() } }))}
+                      className="font-mono text-[11px] uppercase tracking-wide text-clade-ink/45 underline-offset-2 transition hover:text-clade-ink hover:underline"
+                    >
+                      ↺ Reset
+                    </button>
+                  )}
+                </div>
+                <span
+                  className={`font-mono text-[11px] uppercase tracking-wide ${
+                    multiplier === 1
+                      ? "text-clade-ink/45"
+                      : multiplier > 1
+                        ? "text-clade-accent"
+                        : "text-clade-ink/55"
+                  }`}
+                  title="Score multiplier from your modifiers + settings"
                 >
-                  Scientific
-                </DiffPill>
+                  ● {formatMultiplier(multiplier)} run
+                </span>
               </div>
-            </Section>
-          )}
-
-          {/* Settings */}
-          <div className="ink-card flex flex-col gap-5 bg-clade-paper p-5">
-            <div className="flex items-center justify-between">
-              <h2 className="font-hand text-2xl font-bold text-clade-ink">Settings</h2>
-              <span
-                className={`font-mono text-[11px] uppercase tracking-wide ${
-                  ranked ? "text-clade-accent" : "text-clade-ink/45"
-                }`}
-              >
-                {ranked ? "● Ranked" : "○ Custom"}
-              </span>
+              <SettingsFields
+                fields={fields}
+                settings={shownSettings}
+                locked={lockedKeys}
+                onChange={(next) =>
+                  setCfg((c) => {
+                    // Don't bake the forced overlay into the stored config — keep the player's
+                    // own value for locked keys, so removing the modifier restores it.
+                    const merged = { ...next } as unknown as Record<string, unknown>;
+                    const own = c.settings as unknown as Record<string, unknown>;
+                    for (const k of lockedKeys) merged[k] = own[k];
+                    return { ...c, settings: merged as unknown as GameSettings };
+                  })
+                }
+              />
             </div>
-            <SettingsFields
-              fields={fields}
-              settings={cfg.settings}
-              onChange={(settings) => setCfg((c) => ({ ...c, settings }))}
-            />
           </div>
 
           <button type="button" onClick={start} className="btn-play self-start text-2xl">
@@ -158,6 +267,16 @@ export function Lobby() {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** A titled field-notebook card — the lobby's left-column sections. */
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="ink-card bg-clade-paper p-5">
+      <h2 className="mb-3 font-hand text-2xl font-bold text-clade-ink">{title}</h2>
+      {children}
     </div>
   );
 }
@@ -181,15 +300,6 @@ function setDiff(
   d: Difficulty,
 ) {
   setCfg((c) => ({ ...c, difficulty: d }));
-}
-
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <span className="font-mono text-[11px] uppercase tracking-wider text-clade-ink/45">{label}</span>
-      {children}
-    </div>
-  );
 }
 
 function DiffPill({

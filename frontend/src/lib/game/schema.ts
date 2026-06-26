@@ -1,8 +1,8 @@
 // Declarative, per-game settings schema — the single description the lobby (and the in-game
 // gear, for the visual subset) render from, instead of hardcoding controls. A new game ships
-// its schema here; no bespoke UI. Score-affecting semantics still live in settings.ts
-// (RANKED_FIELDS / isRankedSettings) for now; the modifier feature (#101) folds rendering and
-// scoring into one per-field multiplier model. See docs/lobby-and-config.md.
+// its schema here; no bespoke UI. Score-easing settings resolve to a multiplier server-side
+// (apps/scores/multipliers.py, mirrored in lib/game/multipliers.ts for the lobby preview).
+// See docs/lobby-and-config.md.
 
 import type { GameSettings } from "./settings";
 
@@ -76,10 +76,12 @@ export function schemaFor(mode: string): SettingField[] {
   return SETTINGS_SCHEMA[mode] ?? SETTINGS_SCHEMA.marathon_free;
 }
 
-/** Visual-only fields (the in-game gear keeps these) vs gameplay fields (the lobby owns). */
-export function visualFields(mode: string): SettingField[] {
-  return schemaFor(mode).filter((f) => f.visual);
+/** Visual-only fields (the in-game gear keeps these) vs gameplay fields (the lobby owns).
+ *  `hidden` (the active modifiers' hidden set, see lib/game/multipliers.ts#modifierEffects)
+ *  drops dials a modifier has made irrelevant. */
+export function visualFields(mode: string, hidden?: Set<keyof GameSettings>): SettingField[] {
+  return schemaFor(mode).filter((f) => f.visual && !hidden?.has(f.key));
 }
-export function gameplayFields(mode: string): SettingField[] {
-  return schemaFor(mode).filter((f) => !f.visual);
+export function gameplayFields(mode: string, hidden?: Set<keyof GameSettings>): SettingField[] {
+  return schemaFor(mode).filter((f) => !f.visual && !hidden?.has(f.key));
 }

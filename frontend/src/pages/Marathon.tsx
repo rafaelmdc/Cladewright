@@ -30,11 +30,17 @@ import {
   applyVisualPrefs,
   fetchGameDefaults,
   gameDefaults,
-  isRankedSettings,
   loadSettings,
   saveVisualPrefs,
   type GameSettings,
 } from "../lib/game/settings";
+import {
+  fetchModifiers,
+  modifierEffects,
+  previewMultiplier,
+  type ModifierInfo,
+} from "../lib/game/multipliers";
+import { PlacedList, buildPlacedList } from "../components/PlacedList";
 import { useTitle } from "../lib/useTitle";
 import { createInducedTree, place, type InducedTree, type Placement } from "../lib/tree/induced";
 
@@ -210,6 +216,7 @@ export function Marathon() {
       mode={mode}
       isDaily={isDaily}
       configSettings={cfg?.settings ?? null}
+      configModifiers={cfg?.modifiers ?? []}
     />
   );
 }
@@ -250,6 +257,7 @@ function Game({
   mode,
   isDaily,
   configSettings,
+  configModifiers,
 }: {
   asset: InternedAsset;
   scopes: ScopeInfo[];
@@ -259,6 +267,8 @@ function Game({
   isDaily: boolean;
   /** Settings from the lobby's GameConfig, frozen for this run; null for the daily. */
   configSettings: GameSettings | null;
+  /** Active modifier keys from the lobby's GameConfig, frozen for this run (empty for the daily). */
+  configModifiers: string[];
 }) {
   // The induced tree + tracker are mutated in place (O(L)); `rev` triggers re-render.
   const treeRef = useRef<InducedTree>(createInducedTree());
@@ -281,15 +291,36 @@ function Game({
   const [settings, setSettings] = useState<GameSettings>(() =>
     applyVisualPrefs(configSettings ?? (isDaily ? { ...gameDefaults() } : loadSettings())),
   );
-  // Ranked status is decided at the lobby (gameplay is frozen here), so it can't change
-  // mid-run. Seeded from the starting settings; a restored run keeps whatever it had.
-  const [rankTainted, setRankTainted] = useState(() => !isRankedSettings(settings));
   // The gear only edits VISUAL prefs now — apply them live and persist them globally (they
-  // never touch gameplay or ranked status).
+  // never touch gameplay or the multiplier).
   function updateSettings(next: GameSettings) {
     setSettings(next);
     saveVisualPrefs(next);
   }
+
+  // The run's active modifiers + the score multiplier they (and any eased settings) resolve to,
+  // for the in-game badge (#101). The server re-resolves authoritatively at submit. The daily is
+  // always a default 1.0× run. Modifiers come from the frozen lobby config.
+  const modifiers = useMemo(() => (isDaily ? [] : configModifiers), [isDaily, configModifiers]);
+  // "No tree" modifier (#101): the one IRREDUCIBLY-coded gameplay effect — swap the cladogram
+  // for a plain list. (Its settings coupling — hiding the layout dial — is data, see below.)
+  const noTree = modifiers.includes("no_tree");
+  const [modInfo, setModInfo] = useState<ModifierInfo | null>(null);
+  useEffect(() => {
+    fetchModifiers(mode).then((info) => {
+      setModInfo(info);
+      // Apply any modifier-forced settings to the live run (the server forces them too, so the
+      // multiplier matches). Forced keys are gameplay, not visual, so this won't fight the gear.
+      const { forced } = modifierEffects(modifiers, info);
+      if (Object.keys(forced).length) setSettings((s) => ({ ...s, ...forced }));
+    });
+  }, [mode, modifiers]);
+  // What the active modifiers do to the settings (admin data): `hidden` dials the gear drops.
+  const effects = useMemo(
+    () => (modInfo ? modifierEffects(modifiers, modInfo) : { hidden: new Set<keyof GameSettings>(), forced: {} }),
+    [modifiers, modInfo],
+  );
+  const runMultiplier = isDaily || !modInfo ? 1 : previewMultiplier(modifiers, settings, modInfo);
 
   const [input, setInput] = useState("");
   // The in-game "how to play" tour (Time Attack's own help). Opening it pauses the clock so
@@ -401,7 +432,6 @@ function Game({
     setSeconds(settings.infiniteTime ? saved.seconds : secs);
     setRunning(settings.infiniteTime ? true : secs > 0);
     setStarted(true); // a restored run was already underway — keep the clock live
-    if (saved.tainted) setRankTainted(true); // a restored run keeps its unranked status
     setRev((n) => n + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -441,13 +471,12 @@ function Game({
         count,
         seconds,
         infiniteTime: settings.infiniteTime,
-        tainted: rankTainted,
         savedAt: Date.now(),
       });
     } else {
       clearRun();
     }
-  }, [rev, score, count, seconds, running, settings.infiniteTime, rankTainted, mode, persistScope, difficulty, asset.raw.version]);
+  }, [rev, score, count, seconds, running, settings.infiniteTime, mode, persistScope, difficulty, asset.raw.version]);
 
   // Keep typing flowing into the search no matter where focus is, and — crucially — stop
   // Backspace from triggering the browser's "back" navigation when the input isn't focused,
@@ -617,9 +646,6 @@ function Game({
   // re-scores it against each component scope's current build and ranks it on its own
   // combined board, so mixed runs are first-class (submitted + ranked) like single ones.
   const scopeId = asset.scope ?? scopeKey ?? "";
-  // Run-level ranked: tainted-once-custom (not just the settings at game-over), so the live
-  // badge and what's actually submitted can't disagree.
-  const runRanked = !rankTainted;
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-clade-bg">
@@ -661,7 +687,8 @@ function Game({
           settings={settings}
           onChange={updateSettings}
           onAutofill={autofill}
-          runRanked={runRanked}
+          multiplier={runMultiplier}
+          hidden={effects.hidden}
         />
       )}
       {/* End-the-run control sits just left of the settings gear; only while playing. */}
@@ -756,18 +783,27 @@ function Game({
         />
       )}
 
-      <TreeRenderer
-        asset={asset}
-        tree={treeRef.current}
-        tracker={tracker}
-        rev={rev}
-        layout={settings.treeLayout}
-        showScientific={settings.showScientific}
-        scientificPrimary={difficulty === "scientific"}
-        pulse={pulse}
-        pulseCombo={combo}
-        reveal={!running}
-      />
+      {noTree ? (
+        <PlacedList
+          entries={buildPlacedList(asset, transcriptRef.current, {
+            showScientific: settings.showScientific,
+            scientificPrimary: difficulty === "scientific",
+          })}
+        />
+      ) : (
+        <TreeRenderer
+          asset={asset}
+          tree={treeRef.current}
+          tracker={tracker}
+          rev={rev}
+          layout={settings.treeLayout}
+          showScientific={settings.showScientific}
+          scientificPrimary={difficulty === "scientific"}
+          pulse={pulse}
+          pulseCombo={combo}
+          reveal={!running}
+        />
+      )}
 
       {!running && (
         // Game over: DON'T blanket the canvas — dock the card (right on desktop, top on
@@ -786,12 +822,12 @@ function Game({
             }
             difficulty={difficulty}
             assetVersion={asset.raw.version}
-            ranked={runRanked}
+            settings={settings}
+            modifiers={modifiers}
             allowReplay={!isDaily}
             transcript={transcriptRef.current}
             timings={timingsRef.current}
             runToken={runTokenRef.current}
-            extantOnly={settings.extantOnly}
             onPlayAgain={() => {
               treeRef.current = createInducedTree();
               tracker.reset();
@@ -805,9 +841,6 @@ function Game({
               setPulse(null);
               resetCombo();
               setRev((n) => n + 1);
-              // Fresh run: ranked again iff the current settings are default (a new run
-              // started under custom settings stays tainted from the start).
-              setRankTainted(!isRankedSettings(settings));
               setRunning(true);
             }}
           />

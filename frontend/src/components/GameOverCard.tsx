@@ -9,8 +9,8 @@ import { Link } from "react-router-dom";
 
 import { fetchMe, type Me } from "../lib/auth";
 import {
+  cacheRun,
   fetchLeaderboard,
-  stashPendingRun,
   submitRun,
   type Difficulty,
   type LeaderEntry,
@@ -18,6 +18,8 @@ import {
   type SubmitResult,
 } from "../lib/scores";
 import type { ShareData } from "../lib/share";
+import { formatMultiplier } from "../lib/game/multipliers";
+import type { GameSettings } from "../lib/game/settings";
 import { ShareResult } from "./ShareResult";
 
 export function GameOverCard({
@@ -28,12 +30,12 @@ export function GameOverCard({
   scopeLabel,
   difficulty,
   assetVersion,
-  ranked,
+  settings,
+  modifiers,
   allowReplay = true,
   transcript,
   timings,
   runToken,
-  extantOnly,
   onPlayAgain,
 }: {
   mode?: string;
@@ -43,16 +45,20 @@ export function GameOverCard({
   scopeLabel: string;
   difficulty: Difficulty;
   assetVersion: number;
-  ranked: boolean;
+  /** The run's gameplay settings + active modifiers — the server resolves the score multiplier
+   *  from these (#101); a default setup is 1.0×. */
+  settings: GameSettings;
+  modifiers: string[];
   allowReplay?: boolean;
   transcript: string[];
-  /** Combo timings + signed session token + living-only flag (#77) — threaded through so the
-   *  server can re-derive the combo/clade score and verify the run. */
+  /** Combo timings + signed session token (#77) — threaded through so the server can re-derive
+   *  the combo/clade score and verify the run. */
   timings?: number[];
   runToken?: string | null;
-  extantOnly?: boolean;
   onPlayAgain: () => void;
 }) {
+  // The submit payload's settings field is an open record; GameSettings has no index signature.
+  const settingsRecord = settings as unknown as Record<string, unknown>;
   const [me, setMe] = useState<Me | null>(null);
   const [submit, setSubmit] = useState<SubmitOutcome | null>(null);
   const [board, setBoard] = useState<LeaderEntry[]>([]);
@@ -66,13 +72,14 @@ export function GameOverCard({
       const who = await fetchMe();
       if (!live) return;
       setMe(who);
-      // EVERY finished run is submitted so it counts toward the player's stats; the
-      // `ranked` flag tells the server whether it's also eligible for the leaderboard.
+      const payload = {
+        mode, scope, difficulty, asset_version: assetVersion, transcript,
+        timings, run_token: runToken, settings: settingsRecord, modifiers,
+      };
       if (who.authenticated && transcript.length > 0) {
-        const outcome = await submitRun({
-          mode, scope, difficulty, asset_version: assetVersion, transcript, ranked,
-          timings, run_token: runToken, extant_only: extantOnly,
-        });
+        // Signed in: submit now. The server scores it as base × multiplier and places it on the
+        // board unless it fails anti-cheat (#101).
+        const outcome = await submitRun(payload);
         if (!live) return;
         setSubmit(outcome);
         if (outcome.ok) {
@@ -85,6 +92,10 @@ export function GameOverCard({
             rank: outcome.result.rank,
           });
         }
+      } else if (!who.authenticated && transcript.length > 0) {
+        // Signed out: cache the run for 5 min so signing in shortly after can offer to import
+        // it (#107). Survives the OAuth redirect via localStorage.
+        cacheRun({ payload, count, score, scopeLabel });
       }
       const result = await fetchLeaderboard(mode, scope, difficulty);
       if (live) setBoard(result.entries);
@@ -103,20 +114,7 @@ export function GameOverCard({
         {count} placed · {score} points · {scopeLabel}
       </p>
 
-      <div className="mt-4 w-full">
-        {renderSubmitStatus(me, submit, ranked, () =>
-          // Stash the run so it survives the OAuth redirect and auto-saves on return (#78).
-          stashPendingRun({
-            payload: {
-              mode, scope, difficulty, asset_version: assetVersion, transcript, ranked,
-              timings, run_token: runToken, extant_only: extantOnly,
-            },
-            count,
-            score,
-            scopeLabel,
-          }),
-        )}
-      </div>
+      <div className="mt-4 w-full">{renderSubmitStatus(me, submit)}</div>
 
       <Leaderboard board={board} label={`${scopeLabel} · ${difficulty}`} me={me} />
 
@@ -147,19 +145,14 @@ export function GameOverCard({
   );
 }
 
-function renderSubmitStatus(
-  me: Me | null,
-  submit: SubmitOutcome | null,
-  ranked: boolean,
-  onSignIn: () => void,
-) {
+function renderSubmitStatus(me: Me | null, submit: SubmitOutcome | null) {
   if (me === null) return <p className="font-mono text-xs text-clade-ink/40">Checking…</p>;
 
   if (!me.authenticated) {
+    // The run is cached for 5 min (#107); signing in now offers to import it on return.
     return (
       <Link
         to="/login"
-        onClick={onSignIn}
         className="inline-flex items-center gap-2 rounded-full border-2 border-clade-ink/80 bg-clade-paper px-4 py-1.5 font-hand text-xl text-clade-ink transition hover:border-clade-accent"
       >
         Sign in to save your score
@@ -167,8 +160,8 @@ function renderSubmitStatus(
     );
   }
   if (submit?.ok) {
-    // Ranked → a board place; unranked → counted toward stats but off the board.
-    if (ranked && submit.result.rank != null) {
+    // Every run is on the board now (#101); only an anti-cheat failure keeps it off.
+    if (submit.result.ranked && submit.result.rank != null) {
       return (
         <p className="font-hand text-2xl text-clade-accent">
           Saved — rank #{submit.result.rank}
@@ -181,7 +174,7 @@ function renderSubmitStatus(
         Saved to your stats
         {scoreBreakdown(submit.result)}
         <span className="mt-0.5 block font-mono text-[11px] text-clade-ink/45">
-          Custom settings — not ranked on the leaderboard.
+          Couldn't verify this run for the leaderboard.
         </span>
       </p>
     );
@@ -192,17 +185,20 @@ function renderSubmitStatus(
   return <p className="font-mono text-xs text-clade-ink/40">Saving…</p>;
 }
 
-/** A subtle "base +combo +clade" line under the saved message, shown only when a bonus was
- *  earned — so the combo/clade scoring (#77) is visible without cluttering a plain run. */
+/** A subtle "base +combo +clade ×mult = final" line under the saved message — shown when a
+ *  bonus was earned OR the run carried a non-1.0 multiplier (modifiers / eased settings, #101). */
 function scoreBreakdown(r: SubmitResult) {
   const combo = r.combo_bonus ?? 0;
   const clade = r.clade_bonus ?? 0;
-  if (combo <= 0 && clade <= 0) return null;
+  const mult = r.score_multiplier ?? 1;
+  const base = r.base_score ?? r.base ?? r.score;
+  if (combo <= 0 && clade <= 0 && mult === 1) return null;
   return (
     <span className="mt-0.5 block font-mono text-[11px] font-normal text-clade-ink/45">
-      {r.base ?? r.score} base
+      {r.base ?? base} base
       {combo > 0 ? ` · +${combo} combo` : ""}
       {clade > 0 ? ` · +${clade} clade` : ""}
+      {mult !== 1 ? ` · ${formatMultiplier(mult)}` : ""}
       {" = "}
       {r.score}
     </span>

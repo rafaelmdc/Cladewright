@@ -100,6 +100,16 @@ class GameDefaults(models.Model):
         default=3, help_text="Smallest clade size that earns a completion bonus."
     )
 
+    # Score multiplier for score-EASING settings (#101). Every run is on the board, ranked by
+    # base × multiplier; a relaxed setting (infinite time, a longer clock) derates the run
+    # rather than hard-banning it. Per-setting rules, admin-tunable; empty/absent → no derate
+    # (only modifiers apply). See apps/scores/multipliers.py for the rule shapes + the default.
+    setting_multipliers = models.JSONField(
+        default=dict, blank=True,
+        help_text="Per-setting score derates: {settingKey: {kind: 'bool'|'linear', ...}}. "
+                  "Empty uses the built-in default ruleset (see multipliers.py).",
+    )
+
     class Meta:
         verbose_name = "Game defaults"
         verbose_name_plural = "Game defaults"
@@ -131,6 +141,51 @@ class GameDefaults(models.Model):
             "cladeScoreMultiplier": self.clade_score_multiplier,
             "cladeMinSize": self.clade_min_size,
         }
+
+
+class GameModifier(models.Model):
+    """An admin-tunable gameplay MODIFIER for a game (#101) — a mutator the player opts into in
+    the lobby (e.g. "blind", "no tree") that changes the challenge and so the score. Every run is
+    on one board, ranked by ``base × multiplier``; a modifier *declares its own multiplier* (a
+    harder one >1.0, an easier one <1.0) and the run's multiplier is the product of its actives
+    (× any setting derates). The server resolves the multiplier from the submitted config against
+    THESE rows — never a client number. The SPA reads enabled rows from
+    ``GET /api/scores/modifiers/?mode=``; adding/retuning a modifier is data, not a deploy."""
+
+    # The game these apply to (a base mode key like "marathon"), matching GameDefaults.game.
+    game = models.CharField(max_length=32, default="marathon",
+                            help_text="Game key, e.g. 'marathon'.")
+    key = models.CharField(max_length=32, help_text="Stable id, e.g. 'blind'. Sent in the config.")
+    label = models.CharField(max_length=64, help_text="Lobby chip title, e.g. 'Blind'.")
+    blurb = models.CharField(max_length=200, blank=True, help_text="One-line description.")
+    multiplier = models.FloatField(
+        default=1.0, help_text="Score multiplier when active. >1 harder/bonus, <1 easier."
+    )
+    # Other modifier KEYS (same game) this one can't combine with — the lobby greys them out and
+    # the server rejects a config that posts an incompatible pair.
+    incompatible_with = models.JSONField(
+        default=list, blank=True, help_text="List of modifier keys incompatible with this one."
+    )
+    # Settings this modifier interacts with (admin-tunable, so a modifier's UI/gameplay coupling
+    # is data, not code — see lib/game/modifierEffects.ts). HIDES: setting keys made irrelevant
+    # (removed from the lobby/gear). FORCES: settings pinned to a value when active — shown locked
+    # in the UI AND applied server-side in the multiplier resolution, so the client can't dodge
+    # an eased setting's derate. Setting keys are the camelCase GameSettings names.
+    hides_settings = models.JSONField(
+        default=list, blank=True, help_text="Setting keys hidden when active, e.g. ['treeLayout']."
+    )
+    forces_settings = models.JSONField(
+        default=dict, blank=True, help_text="Settings pinned when active, e.g. {'infiniteTime': true}."
+    )
+    enabled = models.BooleanField(default=True)
+    sort_order = models.IntegerField(default=0, help_text="Lower sorts first in the lobby.")
+
+    class Meta:
+        ordering = ["sort_order", "key"]
+        unique_together = ("game", "key")
+
+    def __str__(self) -> str:
+        return f"{self.label} ({self.game}:{self.key}) ×{self.multiplier}{'' if self.enabled else ' — off'}"
 
 
 class DailyRotationEntry(models.Model):
@@ -212,17 +267,29 @@ class Run(models.Model):
     difficulty = models.CharField(
         max_length=16, choices=Difficulty.choices, default=Difficulty.COMMON
     )
-    # Canonical, server-re-scored result (never the client's posted number).
+    # Canonical leaderboard score = base × multiplier, server-computed (never the client's
+    # posted number). This is what the board orders by, so a default run and a modified run
+    # are directly comparable on one board (#101).
     score = models.IntegerField(default=0)
+    # The server-re-scored result BEFORE the multiplier (placements + combo/clade bonuses),
+    # kept for audit/replay alongside the resolved multiplier.
+    base_score = models.IntegerField(default=0)
+    # Multiplier the server resolved from this run's config (∏ active modifiers × ∏ setting
+    # derates). 1.0 = default setup. score = round(base_score × score_multiplier).
+    score_multiplier = models.FloatField(default=1.0)
+    # The resolved GameConfig this run was played + scored under (mode, difficulty, scopes,
+    # settings delta, modifiers) — the audit/replay seed. See docs/lobby-and-config.md.
+    config = models.JSONField(default=dict, blank=True)
     asset_version = models.IntegerField()
     # Daily modes: the puzzle date this run belongs to (null for free play).
     puzzle_date = models.DateField(null=True, blank=True)
     # The validated run transcript (ordered placed target ids) the server re-scored from,
     # kept so a run is reproducible/auditable.
     transcript = models.JSONField(default=list, blank=True)
-    # Whether this run used the default ("ranked") settings. EVERY finished run counts
-    # toward the player's stats, but only ranked runs appear on the leaderboard — a custom
-    # run (more time, infinite clock, …) isn't comparable to others.
+    # ANTI-CHEAT eligibility (#101: no longer "used default settings"). A run reaches the
+    # leaderboard only if it came from a valid signed session at a humanly-plausible pace;
+    # a failed check still records to stats but stays off the board. Custom settings/modifiers
+    # NO LONGER un-rank a run — they resolve to a multiplier instead.
     ranked = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

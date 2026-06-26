@@ -5,15 +5,18 @@
 import type { GameSettings } from "../../lib/game/settings";
 import type { SettingField } from "../../lib/game/schema";
 
-/** Render a list of schema fields against a settings object, grouped by `field.group`. */
+/** Render a list of schema fields against a settings object, grouped by `field.group`.
+ *  `locked` keys (e.g. settings a modifier forces) render disabled — shown but not editable. */
 export function SettingsFields({
   fields,
   settings,
   onChange,
+  locked,
 }: {
   fields: SettingField[];
   settings: GameSettings;
   onChange: (next: GameSettings) => void;
+  locked?: Set<keyof GameSettings>;
 }) {
   // Preserve first-seen group order from the schema.
   const groups: string[] = [];
@@ -27,7 +30,13 @@ export function SettingsFields({
           {fields
             .filter((f) => f.group === group)
             .map((f) => (
-              <FieldControl key={f.key} field={f} settings={settings} onChange={onChange} />
+              <FieldControl
+                key={f.key}
+                field={f}
+                settings={settings}
+                onChange={onChange}
+                locked={locked?.has(f.key) ?? false}
+              />
             ))}
         </div>
       ))}
@@ -39,14 +48,18 @@ function FieldControl({
   field,
   settings,
   onChange,
+  locked = false,
 }: {
   field: SettingField;
   settings: GameSettings;
   onChange: (next: GameSettings) => void;
+  locked?: boolean;
 }) {
+  // Locked (a modifier forces this setting) or conditionally disabled (e.g. time dials under
+  // infinite time) — either way the control is shown but inert.
+  const disabled = locked || (field.disabledWhen?.(settings) ?? false);
   const set = (value: GameSettings[keyof GameSettings]) =>
-    onChange({ ...settings, [field.key]: value });
-  const disabled = field.disabledWhen?.(settings) ?? false;
+    disabled ? undefined : onChange({ ...settings, [field.key]: value });
   const value = settings[field.key];
 
   switch (field.kind) {
@@ -57,6 +70,7 @@ function FieldControl({
             label={field.label}
             hint={field.hint}
             checked={value as boolean}
+            disabled={disabled}
             onChange={(v) => set(v)}
           />
         </div>
@@ -82,6 +96,7 @@ function FieldControl({
             label={field.label}
             value={value as string}
             options={field.options ?? []}
+            disabled={disabled}
             onChange={(v) => set(v as GameSettings[keyof GameSettings])}
           />
         </div>
@@ -93,21 +108,24 @@ export function Segmented<T extends string>({
   label,
   value,
   options,
+  disabled,
   onChange,
 }: {
   label: string;
   value: T;
   options: { value: T; label: string }[];
+  disabled?: boolean;
   onChange: (v: T) => void;
 }) {
   return (
-    <div>
+    <div className={disabled ? "opacity-40" : ""}>
       <span className="text-sm font-medium">{label}</span>
       <div className="mt-1.5 flex rounded-lg border border-clade-ink/15 p-0.5">
         {options.map((o) => (
           <button
             key={o.value}
             type="button"
+            disabled={disabled}
             onClick={() => onChange(o.value)}
             aria-pressed={value === o.value}
             className={`flex-1 rounded-md px-3 py-1.5 text-sm transition ${
@@ -126,15 +144,17 @@ export function Toggle({
   label,
   hint,
   checked,
+  disabled,
   onChange,
 }: {
   label: string;
   hint?: string;
   checked: boolean;
+  disabled?: boolean;
   onChange: (v: boolean) => void;
 }) {
   return (
-    <label className="flex cursor-pointer items-start justify-between gap-3">
+    <label className={`flex items-start justify-between gap-3 ${disabled ? "opacity-40" : "cursor-pointer"}`}>
       <span>
         <span className="text-sm font-medium">{label}</span>
         {hint && <span className="block text-xs text-clade-ink/45">{hint}</span>}
@@ -143,6 +163,7 @@ export function Toggle({
         type="button"
         role="switch"
         aria-checked={checked}
+        disabled={disabled}
         onClick={() => onChange(!checked)}
         className={`mt-0.5 h-6 w-11 shrink-0 rounded-full p-0.5 transition ${
           checked ? "bg-clade-accent" : "bg-clade-ink/20"

@@ -53,11 +53,19 @@ class GameModeConfig(models.Model):
 
 
 class GameDefaults(models.Model):
-    """Singleton: the default tuning values a fresh run starts from. The SPA fetches these
-    from ``GET /api/scores/game-defaults/`` and overlays them on its hardcoded fallbacks, so an
-    admin can retune the game (start clock, time-per-organism, combo feel, …) without a deploy.
-    Per-player tweaks in the in-game panel still ride on top, in localStorage. Mirrors the
-    frontend GameSettings shape (see frontend/src/lib/game/settings.ts)."""
+    """Per-GAME default tuning a fresh run starts from — one row per game (Marathon's free +
+    daily cadences are the same game, so they share a row, keyed by the game base e.g.
+    ``marathon``). The SPA fetches these from ``GET /api/scores/game-defaults/?mode=`` and
+    overlays them on its hardcoded fallbacks, so an admin can retune a game (start clock,
+    time-per-organism, combo feel, …) without a deploy. Per-player tweaks in the in-game panel
+    still ride on top, in localStorage. Mirrors the frontend GameSettings shape (see
+    frontend/src/lib/game/settings.ts)."""
+
+    # The game these defaults apply to (a base mode key like "marathon"). One row per game.
+    game = models.CharField(
+        max_length=32, unique=True, default="marathon",
+        help_text="Game key these defaults apply to, e.g. 'marathon'.",
+    )
 
     LAYOUT_CHOICES = [("radial", "Radial"), ("rectangular", "Phylogram")]
 
@@ -97,15 +105,11 @@ class GameDefaults(models.Model):
         verbose_name_plural = "Game defaults"
 
     def __str__(self) -> str:
-        return "Game defaults"
-
-    def save(self, *args, **kwargs):
-        self.pk = 1  # singleton — there is only ever one row
-        super().save(*args, **kwargs)
+        return f"Game defaults ({self.game})"
 
     @classmethod
-    def load(cls) -> "GameDefaults":
-        obj, _ = cls.objects.get_or_create(pk=1)
+    def load(cls, game: str = "marathon") -> "GameDefaults":
+        obj, _ = cls.objects.get_or_create(game=game)
         return obj
 
     def as_settings(self) -> dict:
@@ -169,6 +173,28 @@ class DailyPin(models.Model):
 
     def __str__(self) -> str:
         return f"{self.date}: {self.scope} [{self.mode}]"
+
+
+class FrozenDaily(models.Model):
+    """The RESOLVED daily for a date, frozen the first time that day goes live (served by
+    /daily, or a run submitted for it). Once written it is immutable: the rotation and admin
+    pins are only ever *generators* for a not-yet-seen day — so promoting a build or editing
+    the rotation can never re-bucket a day that's already been played and orphan its runs.
+
+    Distinct from DailyPin (admin INTENT) on purpose: this is system RESOLUTION, and it must
+    win over a later pin edit for an already-live date. _daily_plan consults this first."""
+
+    date = models.DateField(unique=True, help_text="The day this resolution applies to.")
+    mode = models.CharField(max_length=32, choices=GameMode.choices, default=GameMode.MARATHON_DAILY)
+    scope = models.CharField(max_length=128, help_text="The scope key this day was frozen to.")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-date"]
+        verbose_name_plural = "Frozen dailies"
+
+    def __str__(self) -> str:
+        return f"{self.date}: {self.scope} [{self.mode}] (frozen)"
 
 
 class Run(models.Model):

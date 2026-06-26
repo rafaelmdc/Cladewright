@@ -18,32 +18,25 @@ export interface TourStep {
 // come. So the MENU tour stays game-agnostic (what this is + the setup controls on this
 // screen), and the gameplay how-to lives with the game it describes.
 
-/** Hub / main menu: what Cladewright is, then a tour of the setup controls on this screen. */
+/** Hub / main menu: what Cladewright is, and the one shared Daily. Setup choices (difficulty,
+ *  packs, settings) now live in each game's lobby, so the hub tour stays about the menu itself. */
 export const HUB_STEPS: TourStep[] = [
   {
     variant: "welcome",
     title: "Welcome to Cladewright",
-    body: "The tree of life, as a game — a growing collection of them. This is the menu: set things up here, then pick a game below. (Each game has its own how-to once you're in.)",
-  },
-  {
-    anchor: "difficulty",
-    title: "Common or scientific",
-    body: "Play with everyday names, or switch to scientific binomials when you want a real challenge. Applies to every game that supports it.",
-  },
-  {
-    anchor: "clades",
-    title: "Pick your world",
-    body: "Choose which group to explore — mammals, birds, fish… or tap several to mix their trees together.",
+    body: "The tree of life, as a game — a growing collection of them. This is the menu: pick a game below, then set up your run (packs, difficulty, settings) on its own screen.",
   },
   {
     anchor: "daily",
     title: "Daily & leaderboards",
-    body: "Everyone gets the same puzzle once a day — keep a streak alive. Default settings are “ranked” and post to the leaderboards.",
+    body: "Everyone gets the same puzzle once a day — keep a streak alive. It posts to the leaderboards; default settings are “ranked”.",
   },
 ];
 
-/** Time Attack: the four gameplay guides — how this game is actually played. Illustrated with
- *  the mini-cladogram (the live board fills the screen, so it can't be usefully spotlighted). */
+/** Time Attack: the gameplay guides — how this game is actually played (placing names,
+ *  claiming clades, combos, completing clades), then the on-page settings + end controls.
+ *  Mechanic steps use the mini-cladogram; the live board fills the screen, so it can't be
+ *  usefully spotlighted. */
 export const GAME_STEPS: TourStep[] = [
   {
     variant: "welcome",
@@ -62,8 +55,13 @@ export const GAME_STEPS: TourStep[] = [
   },
   {
     variant: "score",
-    title: "Scoring & combos",
-    body: "Each new placement scores; refining a clade you already have scores less; repeats score nothing. Name several fast to build a combo and finish whole clades for bonus time.",
+    title: "Build a combo",
+    body: "Every name you place is a point — and if you keep them coming without pausing, your combo climbs, stacking bonus seconds and bonus points onto each placement. Wrong guesses and repeats don't break the chain; only stopping does. So keep naming.",
+  },
+  {
+    variant: "clade",
+    title: "Fill up a clade",
+    body: "Name every living species under a branch and you complete that clade — banking a burst of bonus time and bonus points that grow with how big it was. Clearing a whole group out is where the big scores come from.",
   },
   {
     anchor: "settings",

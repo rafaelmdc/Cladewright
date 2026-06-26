@@ -13,6 +13,7 @@ import re
 import time
 
 from django.db import transaction
+from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -25,6 +26,7 @@ from .models import (
     GameMode,
     DailyPin,
     DailyRotationEntry,
+    FrozenDaily,
     GameDefaults,
     GameModeConfig,
     PlayerStat,
@@ -101,15 +103,23 @@ class GamesView(APIView):
         return Response({"games": games})
 
 
+def _defaults_game(mode: str | None) -> str:
+    """The GAME a mode's defaults belong to. Marathon's free + daily cadences are one game, so
+    they share a GameDefaults row keyed by the base ("marathon_free"/"marathon_daily" →
+    "marathon"; "classic" → "classic")."""
+    return (mode or "marathon").split("_")[0]
+
+
 class GameDefaultsView(APIView):
-    """GET /api/scores/game-defaults/ -> the admin-configured default tuning values, in the
-    frontend GameSettings shape. Public; the SPA overlays them on its hardcoded fallbacks so
-    a fresh run starts from whatever the admin set (see docs/admin.md)."""
+    """GET /api/scores/game-defaults/?mode= -> a game's admin-configured default tuning values,
+    in the frontend GameSettings shape. Public; the SPA overlays them on its hardcoded
+    fallbacks so a fresh run starts from whatever the admin set (see docs/admin.md)."""
 
     permission_classes: list = []
 
     def get(self, request: Request) -> Response:
-        return Response(GameDefaults.load().as_settings())
+        game = _defaults_game(request.query_params.get("mode"))
+        return Response(GameDefaults.load(game).as_settings())
 
 
 DAILY_MODE = GameMode.MARATHON_DAILY
@@ -119,28 +129,35 @@ DAILY_MODE = GameMode.MARATHON_DAILY
 DAILY_STREAK_KEY = "daily"
 
 
-def _daily_plan(day: dt.date) -> tuple[str, str, str] | None:
-    """The daily for `day` as (mode, scope, scope_label) — admin-driven:
+def _scope_display(scope: str) -> str:
+    lbl = (
+        AssetVersion.objects.filter(scope=scope, is_current=True)
+        .values_list("label", flat=True)
+        .first()
+    )
+    return lbl or scope
 
-      1. a manual DailyPin for that exact date wins;
-      2. else the active DailyRotationEntry pool cycles by date (game + clade rotation,
-         both admin-tunable);
+
+def _daily_plan(day: dt.date) -> tuple[str, str, str] | None:
+    """The daily for `day` as (mode, scope, scope_label) — resolved in precedence order:
+
+      0. a FrozenDaily for that date wins, ALWAYS. Once a day has gone live it's immutable,
+         so promoting a build / editing the rotation can't re-bucket it and orphan its runs;
+      1. else a manual DailyPin for that exact date (admin intent);
+      2. else the active DailyRotationEntry pool cycles by date (game + clade rotation);
       3. else fall back to rotating the currently-served scopes (so the daily works before
          the admin configures a pool).
 
-    None if nothing is served yet.
+    This is a pure READ — steps 1–3 are only *generators* for a not-yet-frozen day. Call
+    freeze_daily() to pin the result the moment a day becomes real. None if nothing is served.
     """
-    def label_for(scope: str) -> str:
-        lbl = (
-            AssetVersion.objects.filter(scope=scope, is_current=True)
-            .values_list("label", flat=True)
-            .first()
-        )
-        return lbl or scope
+    frozen = FrozenDaily.objects.filter(date=day).values_list("mode", "scope").first()
+    if frozen:
+        return frozen[0], frozen[1], _scope_display(frozen[1])
 
     pin = DailyPin.objects.filter(date=day).first()
     if pin:
-        return pin.mode, pin.scope, label_for(pin.scope)
+        return pin.mode, pin.scope, _scope_display(pin.scope)
 
     pool = list(DailyRotationEntry.objects.filter(active=True).values_list("mode", "scope"))
     if not pool:
@@ -152,7 +169,24 @@ def _daily_plan(day: dt.date) -> tuple[str, str, str] | None:
         pool = [(DAILY_MODE, s) for s in scopes]
 
     mode, scope = pool[day.toordinal() % len(pool)]
-    return mode, scope, label_for(scope)
+    return mode, scope, _scope_display(scope)
+
+
+def freeze_daily(day: dt.date) -> tuple[str, str, str] | None:
+    """Resolve `day`'s daily and FREEZE it (idempotent). The first caller for a date writes
+    the FrozenDaily row from the live rotation/pin; every later call — and every _daily_plan
+    read, for any purpose — returns that same frozen value. Called at the two moments a day
+    becomes real: served as today's daily (/daily) and a run submitted for it. Bounded to the
+    day in question, so a public read can never freeze an arbitrary browsed date."""
+    plan = _daily_plan(day)
+    if plan is None:
+        return None
+    # _daily_plan already returns the frozen row if it exists; otherwise create from the plan.
+    # get_or_create on the unique date settles concurrent first-hits to one winner.
+    FrozenDaily.objects.get_or_create(
+        date=day, defaults={"mode": plan[0], "scope": plan[1]}
+    )
+    return plan
 
 
 class DailyView(APIView):
@@ -163,8 +197,10 @@ class DailyView(APIView):
     permission_classes: list = []
 
     def get(self, request: Request) -> Response:
-        today = dt.date.today()
-        plan = _daily_plan(today)
+        today = timezone.localdate()
+        # Serving today's daily is the moment it becomes real → freeze it. Every later
+        # read (submit, leaderboard) then matches this exact (mode, scope) forever.
+        plan = freeze_daily(today)
         mode = plan[0] if plan else DAILY_MODE
         enabled = GameModeConfig.objects.filter(mode=mode, enabled=True).exists()
         data: dict = {
@@ -268,15 +304,19 @@ class SubmitRunView(APIView):
         # For the daily, the scope is server-decided (today's rotation) — pin it so every
         # daily run lands on the same board regardless of what the client posts.
         is_daily = mode in (GameMode.MARATHON_DAILY, GameMode.CLASSIC)
+        today = timezone.localdate()
         if is_daily:
-            plan = _daily_plan(dt.date.today())
+            # freeze_daily pins (mode, scope) for today if /daily hasn't already — so a run is
+            # ALWAYS stored under the same scope the board will read, immune to a build promote
+            # or rotation edit between now and the read.
+            plan = freeze_daily(today)
             if plan is None:
                 return Response({"error": "no daily available"}, status=400)
             scope = plan[1]
             # One shot per day: the daily locks after a single play (no grinding a better
             # number). The card then shows the result instead of Play.
             if Run.objects.filter(
-                user=request.user, mode=mode, puzzle_date=dt.date.today()
+                user=request.user, mode=mode, puzzle_date=today
             ).exists():
                 return Response({"error": "already played today"}, status=409)
         difficulty = data.get("difficulty") or Difficulty.COMMON
@@ -322,7 +362,7 @@ class SubmitRunView(APIView):
             for r in TaxonNode.objects.filter(asset=av, key__in=ids).values("key", "lineage"):
                 node_lineages[r["key"]] = r["lineage"]
 
-        defaults = GameDefaults.load()
+        defaults = GameDefaults.load(_defaults_game(mode))
         combo_kwargs = _combo_bonus_args(timings, ids, token_payload, defaults)
 
         # Clade-completion bonus: pull the species denominator for every ANCESTOR clade of a
@@ -352,8 +392,7 @@ class SubmitRunView(APIView):
         if ranked and not _rate_plausible(token_payload, result.base):
             ranked = False
 
-        is_daily = mode in (GameMode.MARATHON_DAILY, GameMode.CLASSIC)
-        puzzle_date = dt.date.today() if is_daily else None
+        puzzle_date = today if is_daily else None
 
         with transaction.atomic():
             run = Run.objects.create(
@@ -416,8 +455,8 @@ class LeaderboardView(APIView):
         day = None
         scope_label = _scope_label(scope) if scope else ""
         if is_daily:
-            day = _parse_date(request.query_params.get("date")) or dt.date.today()
-            plan = _daily_plan(day)
+            day = _parse_date(request.query_params.get("date")) or timezone.localdate()
+            plan = _daily_plan(day)  # read-only: never freezes a browsed/empty date
             if plan is None:
                 return Response({
                     "mode": mode, "scope": "", "scope_label": "", "difficulty": difficulty,

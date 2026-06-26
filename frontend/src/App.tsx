@@ -5,6 +5,7 @@ import { PendingRunFlusher } from "./components/PendingRunFlusher";
 import { Account } from "./pages/Account";
 import { Hub } from "./pages/Hub";
 import { Leaderboard } from "./pages/Leaderboard";
+import { Lobby } from "./pages/Lobby";
 import { Login } from "./pages/Login";
 import { Marathon } from "./pages/Marathon";
 import { Result } from "./pages/Result";
@@ -15,6 +16,7 @@ export function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Hub />} />
+        <Route path="/play/:mode" element={<Lobby />} />
         <Route path="/marathon" element={<Marathon />} />
         <Route path="/account" element={<Account />} />
         <Route path="/leaderboard" element={<Leaderboard />} />

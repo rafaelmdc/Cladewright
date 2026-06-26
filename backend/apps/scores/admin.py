@@ -7,6 +7,7 @@ from django.contrib import admin
 from .models import (
     DailyPin,
     DailyRotationEntry,
+    FrozenDaily,
     GameDefaults,
     GameModeConfig,
     NamedSpeciesSet,
@@ -19,10 +20,14 @@ from .models import (
 @admin.register(GameDefaults)
 class GameDefaultsAdmin(admin.ModelAdmin):
     """The default tuning values a fresh run starts from (start clock, time-per-organism,
-    combo feel, visuals). Singleton: edit the one row; the SPA reads it from
-    /api/scores/game-defaults/. Per-player tweaks still ride on top in localStorage."""
+    combo feel, visuals) — one row per GAME (Marathon's free + daily share one). The SPA reads
+    these from /api/scores/game-defaults/?mode=. Per-player tweaks still ride on top in
+    localStorage."""
+
+    list_display = ("game",)
 
     fieldsets = (
+        (None, {"fields": ("game",)}),
         ("Visual (don't affect ranked)", {
             "fields": ("tree_layout", "show_scientific", "falling_leaves", "flash_fade_seconds"),
         }),
@@ -38,11 +43,8 @@ class GameDefaultsAdmin(admin.ModelAdmin):
         }),
     )
 
-    def has_add_permission(self, request) -> bool:
-        return not GameDefaults.objects.exists()  # singleton — only ever one row
-
     def has_delete_permission(self, request, obj=None) -> bool:
-        return False
+        return False  # a game's defaults are edited, never deleted
 
 
 @admin.register(DailyRotationEntry)
@@ -63,6 +65,21 @@ class DailyPinAdmin(admin.ModelAdmin):
     list_display = ("date", "scope", "mode", "note")
     list_editable = ("scope", "mode", "note")
     ordering = ("-date",)
+
+
+@admin.register(FrozenDaily)
+class FrozenDailyAdmin(admin.ModelAdmin):
+    """The RESOLVED daily for a date, frozen the first time it went live. Immutable by design
+    so a build promote / rotation edit can't orphan that day's runs. Read-only: to change a
+    FUTURE daily use a Daily pin; deleting a frozen row (only safe before anyone has played it)
+    lets that date re-resolve from the rotation."""
+
+    list_display = ("date", "scope", "mode", "created_at")
+    ordering = ("-date",)
+    readonly_fields = ("date", "mode", "scope", "created_at")
+
+    def has_add_permission(self, request) -> bool:
+        return False  # written only when a day goes live (/daily or a submit)
 
 
 @admin.register(GameModeConfig)

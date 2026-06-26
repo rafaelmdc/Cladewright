@@ -103,10 +103,12 @@ export function setGameDefaults(partial: Partial<GameSettings>): void {
   runtimeDefaults = { ...DEFAULT_SETTINGS, ...clean };
 }
 
-/** Fetch admin-configured defaults and apply them. Safe to call early; no-op on failure. */
-export async function fetchGameDefaults(): Promise<void> {
+/** Fetch a game's admin-configured defaults and apply them. Safe to call early; no-op on
+ *  failure. `mode` selects the game (Marathon's free + daily share one set); omit for Marathon. */
+export async function fetchGameDefaults(mode?: string): Promise<void> {
   try {
-    const res = await fetch("/api/scores/game-defaults/");
+    const qs = mode ? `?mode=${encodeURIComponent(mode)}` : "";
+    const res = await fetch(`/api/scores/game-defaults/${qs}`);
     if (!res.ok) return;
     setGameDefaults((await res.json()) as Partial<GameSettings>);
   } catch {
@@ -136,4 +138,46 @@ export function saveSettings(s: GameSettings): void {
   } catch {
     /* ignore */
   }
+}
+
+// Visual prefs are GLOBAL — cross-run, cross-game — and never affect score. They live apart
+// from a run's GameConfig: the in-game gear edits these (the only thing tunable mid-run); the
+// lobby owns the gameplay settings, frozen at start. Kept in sync with the schema's
+// `visual: true` fields (lib/game/schema.ts). A shared config code carries gameplay, never
+// these personal display choices. See docs/lobby-and-config.md.
+export const VISUAL_KEYS = [
+  "treeLayout",
+  "showScientific",
+  "fallingLeaves",
+  "flashFadeSeconds",
+] as const satisfies readonly (keyof GameSettings)[];
+
+const VISUAL_KEY = "cladewright.visual.v1";
+
+export function loadVisualPrefs(): Partial<GameSettings> {
+  try {
+    const raw = localStorage.getItem(VISUAL_KEY);
+    if (!raw) return {};
+    const obj = JSON.parse(raw) as Partial<GameSettings>;
+    const out: Partial<GameSettings> = {};
+    for (const k of VISUAL_KEYS) if (k in obj) (out as Record<string, unknown>)[k] = obj[k];
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function saveVisualPrefs(s: GameSettings): void {
+  try {
+    const out: Partial<GameSettings> = {};
+    for (const k of VISUAL_KEYS) (out as Record<string, unknown>)[k] = s[k];
+    localStorage.setItem(VISUAL_KEY, JSON.stringify(out));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Overlay the player's global visual prefs onto a run's settings (gameplay untouched). */
+export function applyVisualPrefs(s: GameSettings): GameSettings {
+  return { ...s, ...loadVisualPrefs() };
 }

@@ -1,37 +1,35 @@
-// Settings / tuning panel — a gear button (top-right) that opens a slide-in panel
-// over the canvas. Holds the playtest dials from lib/game/settings.ts. Kept self-
-// contained so it can be reused by Classic later.
+// In-game gear — a button (top-right) that opens a slide-in panel over the canvas. Holds
+// only VISUAL prefs (layout, scientific names, leaves, fade): gameplay settings are chosen in
+// the lobby and frozen for the run, so they never appear here. Visual prefs are global and
+// persist across runs. Rendered from the per-game schema's visual fields. See
+// docs/lobby-and-config.md.
 
 import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
 
-import {
-  gameDefaults,
-  isRankedSettings,
-  type GameSettings,
-  type TreeLayout,
-} from "../lib/game/settings";
+import { SettingsFields } from "./controls/SettingControls";
+import { visualFields } from "../lib/game/schema";
+import type { GameSettings } from "../lib/game/settings";
 
 interface Props {
+  mode: string;
   settings: GameSettings;
+  /** Apply + persist a visual-pref change (the only thing tunable mid-run). */
   onChange: (next: GameSettings) => void;
-  /** Run-level ranked status (tainted-once-custom), so the badge reflects whether THIS run
-   *  still counts — not just whether the current settings happen to be default. Falls back
-   *  to the current settings when omitted. */
+  /** Whether THIS run counts for the leaderboard — shown read-only (gameplay is frozen at
+   *  the lobby, so it can't change here). */
   runRanked?: boolean;
   /** DEV CHEAT (remove before launch): auto-place N random organisms onto the tree. */
   onAutofill?: (n: number) => void;
 }
 
-export function SettingsPanel({ settings, onChange, runRanked, onAutofill }: Props) {
+export function SettingsPanel({ mode, settings, onChange, runRanked, onAutofill }: Props) {
   const [open, setOpen] = useState(false);
-  const set = <K extends keyof GameSettings>(key: K, value: GameSettings[K]) =>
-    onChange({ ...settings, [key]: value });
 
   return (
     <>
       <button
-        aria-label="Settings"
+        aria-label="Display settings"
         data-tour="settings"
         onClick={() => setOpen((o) => !o)}
         className="pointer-events-auto absolute right-4 top-4 z-30 grid h-9 w-9 place-items-center rounded-lg border border-clade-ink/15 bg-white/70 text-clade-ink/70 backdrop-blur transition hover:border-clade-ink/40"
@@ -57,186 +55,36 @@ export function SettingsPanel({ settings, onChange, runRanked, onAutofill }: Pro
               transition={{ type: "spring", stiffness: 260, damping: 30 }}
             >
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold">Tuning</h2>
-                <button
-                  onClick={() => setOpen(false)}
-                  className="text-clade-ink/50 hover:text-clade-ink"
-                >
+                <h2 className="text-lg font-semibold">Display</h2>
+                <button onClick={() => setOpen(false)} className="text-clade-ink/50 hover:text-clade-ink">
                   ✕
                 </button>
               </div>
 
-              {/* Ranked status + one-tap reset. Default settings are leaderboard-ranked; any
-                  score-affecting change drops the run to "custom" — and it STAYS custom for
-                  the rest of the run even if you reset (the badge reflects the run, not just
-                  the current dials, so it never falsely promises a place). */}
-              <div className="-mt-2 flex items-center justify-between">
-                {(runRanked ?? isRankedSettings(settings)) ? (
+              {/* Read-only ranked status. Gameplay (and so the run's ranked status) is fixed at
+                  the lobby — only visual prefs are tunable here, and they never affect it. */}
+              <div className="-mt-2">
+                {runRanked ? (
                   <span className="font-mono text-[11px] uppercase tracking-wide text-clade-accent">
-                    ● Ranked
+                    ● Ranked run
                   </span>
                 ) : (
                   <span className="font-mono text-[11px] uppercase tracking-wide text-clade-ink/45">
-                    {isRankedSettings(settings)
-                      ? "○ Not ranked · settings changed this run"
-                      : "○ Custom · not ranked"}
+                    ○ Custom run · not ranked
                   </span>
                 )}
-                <button
-                  type="button"
-                  onClick={() => onChange({ ...gameDefaults() })}
-                  disabled={isRankedSettings(settings)}
-                  className="rounded-lg border border-clade-ink/15 px-2.5 py-1 font-mono text-[11px] text-clade-ink/70 transition hover:border-clade-ink/40 hover:text-clade-ink disabled:cursor-default disabled:opacity-40 disabled:hover:border-clade-ink/15"
-                >
-                  Reset to defaults
-                </button>
-              </div>
-
-              <div>
-                <p className="mb-2 text-xs uppercase tracking-wide text-clade-ink/40">Visual</p>
-                <Segmented<TreeLayout>
-                  label="Tree layout"
-                  value={settings.treeLayout}
-                  options={[
-                    { value: "radial", label: "Radial" },
-                    { value: "rectangular", label: "Phylogram" },
-                  ]}
-                  onChange={(v) => set("treeLayout", v)}
-                />
-                <div className="mt-4">
-                  <Toggle
-                    label="Scientific names"
-                    hint="Show the binomial under each species' common name."
-                    checked={settings.showScientific}
-                    onChange={(v) => set("showScientific", v)}
-                  />
-                </div>
-                <div className="mt-4">
-                  <Toggle
-                    label="Falling leaves"
-                    hint="Ambient leaves behind the board, flung about by combo explosions."
-                    checked={settings.fallingLeaves}
-                    onChange={(v) => set("fallingLeaves", v)}
-                  />
-                </div>
-                <div className="mt-4">
-                  <Slider
-                    label="Notification fade"
-                    hint="How long a '+seconds' / 'no match' card lingers before fading."
-                    unit="s"
-                    min={0.5}
-                    max={5}
-                    step={0.5}
-                    value={settings.flashFadeSeconds}
-                    onChange={(v) => set("flashFadeSeconds", v)}
-                  />
-                </div>
-              </div>
-
-              <div className="border-t border-clade-ink/10 pt-4">
-                <p className="mb-3 text-xs uppercase tracking-wide text-clade-ink/40">Pool</p>
-                <Toggle
-                  label="Living species only"
-                  hint="Exclude extinct species. Few are currently flagged as extinct in the source data, so this has limited effect for now."
-                  checked={settings.extantOnly}
-                  onChange={(v) => set("extantOnly", v)}
-                />
-              </div>
-
-              <div className="border-t border-clade-ink/10 pt-4">
-                <p className="mb-3 text-xs uppercase tracking-wide text-clade-ink/40">Time</p>
-                <Toggle
-                  label="Infinite time"
-                  hint="Free play — the clock never runs out."
-                  checked={settings.infiniteTime}
-                  onChange={(v) => set("infiniteTime", v)}
-                />
-                <div className="mt-4">
-                  <Slider
-                    label="Start time"
-                    unit="s"
-                    min={10}
-                    max={300}
-                    step={5}
-                    value={settings.startSeconds}
-                    disabled={settings.infiniteTime}
-                    onChange={(v) => set("startSeconds", v)}
-                  />
-                </div>
-              </div>
-
-              <div className="border-t border-clade-ink/10 pt-4">
-                <p className="mb-3 text-xs uppercase tracking-wide text-clade-ink/40">
-                  Time per organism
+                <p className="mt-1 font-mono text-[10px] text-clade-ink/40">
+                  Set up packs, difficulty &amp; gameplay before the run, from the game menu.
                 </p>
-                <Slider
-                  label="New placement (base)"
-                  unit="s"
-                  min={0}
-                  max={30}
-                  step={1}
-                  value={settings.timePerNew}
-                  disabled={settings.infiniteTime}
-                  onChange={(v) => set("timePerNew", v)}
-                />
-                <Slider
-                  label="Novelty bonus (max)"
-                  hint="Extra time for opening a brand-new branch."
-                  unit="s"
-                  min={0}
-                  max={30}
-                  step={1}
-                  value={settings.noveltyBonus}
-                  disabled={settings.infiniteTime}
-                  onChange={(v) => set("noveltyBonus", v)}
-                />
-                <Slider
-                  label="Refinement"
-                  hint="Naming a species under a clade you already have."
-                  unit="s"
-                  min={0}
-                  max={15}
-                  step={1}
-                  value={settings.timePerRefinement}
-                  disabled={settings.infiniteTime}
-                  onChange={(v) => set("timePerRefinement", v)}
-                />
               </div>
 
-              <div className="border-t border-clade-ink/10 pt-4">
-                <p className="mb-3 text-xs uppercase tracking-wide text-clade-ink/40">Combos</p>
-                <Slider
-                  label="Combo window"
-                  hint="Max gap between placements to keep a streak alive."
-                  unit="s"
-                  min={2}
-                  max={12}
-                  step={0.5}
-                  value={settings.comboWindowSeconds}
-                  disabled={settings.infiniteTime}
-                  onChange={(v) => set("comboWindowSeconds", v)}
-                />
-                <Slider
-                  label="Combo time bonus"
-                  hint="Bonus seconds per combo step (× the combo level)."
-                  unit="×"
-                  min={0}
-                  max={4}
-                  step={0.5}
-                  value={settings.comboTimeMultiplier}
-                  disabled={settings.infiniteTime}
-                  onChange={(v) => set("comboTimeMultiplier", v)}
-                />
-              </div>
+              <SettingsFields fields={visualFields(mode)} settings={settings} onChange={onChange} />
 
-              {/* DEV CHEAT — dev-only. import.meta.env.DEV is true under the Vite dev
-                  server and false in the production build (`vite build`), so this block is
-                  compiled out of the bundle that ships to prod. */}
+              {/* DEV CHEAT — dev-only. import.meta.env.DEV is true under the Vite dev server and
+                  false in the production build (`vite build`), so this is compiled out of prod. */}
               {import.meta.env.DEV && onAutofill && (
-                <div className="border-t border-dashed border-clade-ink/20 pt-4">
-                  <p className="mb-1 text-xs uppercase tracking-wide text-clade-ink/40">
-                    Cheat · dev
-                  </p>
+                <div className="mt-auto border-t border-dashed border-clade-ink/20 pt-4">
+                  <p className="mb-1 text-xs uppercase tracking-wide text-clade-ink/40">Cheat · dev</p>
                   <p className="mb-3 text-xs text-clade-ink/45">
                     Auto-place random organisms so you don't have to type a tree by hand.
                   </p>
@@ -254,134 +102,11 @@ export function SettingsPanel({ settings, onChange, runRanked, onAutofill }: Pro
                   </div>
                 </div>
               )}
-
-              <button
-                onClick={() => onChange({ ...gameDefaults() })}
-                className="mt-auto rounded-lg border border-clade-ink/15 px-3 py-2 text-sm text-clade-ink/60 transition hover:border-clade-ink/40"
-              >
-                Reset to defaults
-              </button>
             </motion.aside>
           </>
         )}
       </AnimatePresence>
     </>
-  );
-}
-
-function Segmented<T extends string>({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: T;
-  options: { value: T; label: string }[];
-  onChange: (v: T) => void;
-}) {
-  return (
-    <div>
-      <span className="text-sm font-medium">{label}</span>
-      <div className="mt-1.5 flex rounded-lg border border-clade-ink/15 p-0.5">
-        {options.map((o) => (
-          <button
-            key={o.value}
-            type="button"
-            onClick={() => onChange(o.value)}
-            aria-pressed={value === o.value}
-            className={`flex-1 rounded-md px-3 py-1.5 text-sm transition ${
-              value === o.value
-                ? "bg-clade-accent text-white"
-                : "text-clade-ink/60 hover:text-clade-ink"
-            }`}
-          >
-            {o.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function Toggle({
-  label,
-  hint,
-  checked,
-  onChange,
-}: {
-  label: string;
-  hint?: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <label className="flex cursor-pointer items-start justify-between gap-3">
-      <span>
-        <span className="text-sm font-medium">{label}</span>
-        {hint && <span className="block text-xs text-clade-ink/45">{hint}</span>}
-      </span>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        onClick={() => onChange(!checked)}
-        className={`mt-0.5 h-6 w-11 shrink-0 rounded-full p-0.5 transition ${
-          checked ? "bg-clade-accent" : "bg-clade-ink/20"
-        }`}
-      >
-        <span
-          className={`block h-5 w-5 rounded-full bg-white transition-transform ${
-            checked ? "translate-x-5" : ""
-          }`}
-        />
-      </button>
-    </label>
-  );
-}
-
-function Slider({
-  label,
-  hint,
-  unit,
-  min,
-  max,
-  step,
-  value,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  hint?: string;
-  unit?: string;
-  min: number;
-  max: number;
-  step: number;
-  value: number;
-  disabled?: boolean;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <div className={`mb-4 ${disabled ? "opacity-40" : ""}`}>
-      <div className="flex items-baseline justify-between">
-        <span className="text-sm font-medium">{label}</span>
-        <span className="font-mono text-sm text-clade-ink/60">
-          {value}
-          {unit}
-        </span>
-      </div>
-      {hint && <span className="block text-xs text-clade-ink/45">{hint}</span>}
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="mt-1.5 w-full accent-clade-accent"
-      />
-    </div>
   );
 }
 

@@ -391,6 +391,42 @@ class SubmitAndLeaderboardTests(TestCase):
         self.assertEqual(board.status_code, 200)
         self.assertEqual(board.data["entries"], [])
 
+    def test_frozen_daily_survives_pool_change(self):
+        # The daily for a date is FROZEN the first time it goes live, so promoting a build or
+        # editing the rotation/pins afterward can't re-bucket the day and orphan its runs.
+        from django.utils import timezone
+
+        from .models import DailyPin, FrozenDaily
+        from .sessions import issue_run_token
+
+        user = User.objects.create_user("alice", password="x")
+        self.client.force_authenticate(user)
+        today = timezone.localdate()
+
+        # Play today's daily. The rotation falls back to the only served scope ("test"); the
+        # submit freezes today's resolution to it. (A token keeps the run ranked → board-eligible.)
+        body = {"mode": "marathon_daily", "scope": "test", "asset_version": 1,
+                "transcript": ["tip:1", "tip:2"], "run_token": issue_run_token(user.id)}
+        res = self.client.post("/api/scores/runs/", body, format="json")
+        self.assertEqual(res.status_code, 201)
+        self.assertTrue(res.data["ranked"])
+        self.assertTrue(FrozenDaily.objects.filter(date=today, scope="test").exists())
+
+        # Now the daily is changed out from under it: a new scope is promoted (the rotation
+        # pool grows) AND an admin pins a different clade for today. Pre-freeze, EITHER would
+        # have re-bucketed the board to another scope and dropped alice's run.
+        AssetVersion.objects.create(scope="aardvark", version=1, pool_size=1, is_current=True)
+        DailyPin.objects.create(date=today, mode="marathon_daily", scope="aardvark")
+
+        board = self.client.get(
+            f"/api/scores/leaderboard/?mode=marathon_daily&date={today.isoformat()}"
+        ).data
+        self.assertEqual(board["scope"], "test")  # frozen wins over the later pin + new rotation
+        self.assertEqual([(e["user"], e["score"]) for e in board["entries"]], [("alice", 2)])
+
+        # …and players keep getting the same puzzle, immune to the pin/rotation churn.
+        self.assertEqual(self.client.get("/api/scores/daily/").data["scope"], "test")
+
     def test_submit_to_disabled_mode_rejected(self):
         user = User.objects.create_user("alice", password="x")
         self.client.force_authenticate(user)

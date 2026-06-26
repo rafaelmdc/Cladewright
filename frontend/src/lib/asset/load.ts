@@ -3,7 +3,8 @@
 // docs/performance.md. This much is implemented because it's the load-bearing
 // foundation everything else builds on.
 
-import type { AssetNode, AssetTip, GameAsset, InternedAsset } from "./types";
+import type { AssetNode, AssetTip, GameAsset, InternedAsset, TailSource } from "./types";
+import type { ScopeInfo } from "./scopes";
 import { mergeAssets } from "./merge";
 import { createEmptyAsset, seedHybridAsset } from "./growable";
 import { fetchFilter } from "./remote";
@@ -109,21 +110,78 @@ export async function loadRemoteAsset(
   return asset;
 }
 
-/** Load + merge several blob scopes into one playable asset (scope mixing). One scope
- *  delegates to loadAsset (keeps the dev fallback); many are fetched in parallel, the
- *  ones that load are merged. `versions` (scope → current version) enables the per-scope
- *  local cache. */
-export async function loadAssets(
-  scopes: string[],
-  versions?: Record<string, number>,
-): Promise<InternedAsset> {
+/** Load + mix several scopes of ANY mode into one playable asset (the default for a multi-pack
+ *  selection). Each component contributes its LOCAL part — a blob's whole pool or a hybrid's
+ *  notable subset — which merge into one shared-backbone tree (see merge.ts); each hybrid/remote
+ *  also contributes a TAIL source (its scope + filter + version) so a tail miss routes to the
+ *  right backend (see resolveTarget). The result's mode is:
+ *    • "blob"   — every component is a whole-pool blob (no tail): the fast interned path, unchanged.
+ *    • "hybrid" — at least one tail AND some local content: resolve locally first, then the tails.
+ *    • "remote" — all components are pure-remote (no local blob): start empty, grow via the tails.
+ *  `infos` (the scope catalog) supplies each component's mode + version. */
+export async function loadMixed(scopes: string[], infos: ScopeInfo[]): Promise<InternedAsset> {
   const uniq = [...new Set(scopes.filter(Boolean))];
-  if (uniq.length <= 1) return loadAsset(uniq[0], uniq[0] ? versions?.[uniq[0]] : undefined);
-  const raws = (await Promise.all(uniq.map((s) => fetchScopeAsset(s, versions?.[s])))).filter(
-    (a): a is GameAsset => a !== null,
+  const byKey = new Map(infos.map((s) => [s.key, s]));
+
+  // For each component, fetch its local blob (blob = whole pool, hybrid = notable subset; remote
+  // has none) and, for hybrid/remote, its membership filter — both pinned to the scope's version.
+  const parts = await Promise.all(
+    uniq.map(async (key) => {
+      const info = byKey.get(key);
+      const mode = info?.mode ?? "blob";
+      const version = info?.version;
+      const [raw, filter] = await Promise.all([
+        mode === "remote" ? Promise.resolve(null) : fetchScopeAsset(key, version),
+        mode === "blob" ? Promise.resolve(null) : fetchFilter(key, version),
+      ]);
+      return { key, mode, version, raw, filter };
+    }),
   );
-  if (raws.length === 0) throw new Error("Failed to load any selected scope");
-  return intern(mergeAssets(raws));
+
+  const raws = parts.map((p) => p.raw).filter((a): a is GameAsset => a !== null);
+  const tailSources: TailSource[] = parts
+    .filter((p) => p.mode !== "blob")
+    .map((p) => ({
+      scope: p.key,
+      version: p.version,
+      filter: p.filter ?? undefined,
+      size: byKey.get(p.key)?.tip_count,
+    }));
+
+  // No tails → a pure blob merge: keep the original fast interned (fixed Int32Array) path.
+  if (tailSources.length === 0) {
+    if (raws.length === 0) throw new Error("Failed to load any selected scope");
+    const asset = intern(mergeAssets(raws));
+    asset.packSize = packSizeMap(raws); // smaller-pack-wins on overlap (see resolve.ts)
+    return asset;
+  }
+
+  // Tailed: seed a GROWABLE asset from whatever local blobs loaded (or empty for an all-remote
+  // mix), then attach the per-component tail sources. Mode follows whether any local content exists.
+  const asset = raws.length
+    ? seedHybridAsset(mergeAssets(raws))
+    : createEmptyAsset(uniq.join("+"), 15);
+  asset.mode = raws.length ? "hybrid" : "remote";
+  asset.tailSources = tailSources;
+  if (raws.length) asset.packSize = packSizeMap(raws); // applies to the merged LOCAL content
+  return asset;
+}
+
+/** target id (tip OR clade node) -> the tip count of the SMALLEST source pack that contains it.
+ *  Tips belong to exactly one pack; a shared-backbone node belongs to several, so it takes the
+ *  min. Feeds resolve.ts's smaller-pack-wins tie-break for names that overlap across packs. */
+function packSizeMap(raws: GameAsset[]): Map<string, number> {
+  const m = new Map<string, number>();
+  const note = (id: string, size: number) => {
+    const cur = m.get(id);
+    if (cur === undefined || size < cur) m.set(id, size);
+  };
+  for (const a of raws) {
+    const size = a.pool_size;
+    for (const t of a.tips) note(t.id, size);
+    for (const n of a.nodes) note(n.id, size);
+  }
+  return m;
 }
 
 export function intern(raw: GameAsset): InternedAsset {

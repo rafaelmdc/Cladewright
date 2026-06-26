@@ -64,6 +64,22 @@ export function resolve(asset: InternedAsset, query: string, scientificOnly = fa
   if (cands.length === 0) return null;
   if (cands.length === 1) return cands[0];
 
+  // 0) SMALLER PACK WINS (mixed packs only). When a name overlaps across the merged packs —
+  //    e.g. "wolf" is both a fish (pike) and a mammal — the smaller pack is the more
+  //    specialised, intentional pick, so keep only candidates from the smallest pack present
+  //    and let the rules below settle it WITHIN that pack. `packSize` is set only for a merged
+  //    asset (single-pack play has no overlap), so this is a no-op there. See
+  //    docs/lobby-and-config.md#name-collisions.
+  if (asset.packSize) {
+    let min = Infinity;
+    for (const t of cands) min = Math.min(min, asset.packSize.get(t.id) ?? Infinity);
+    if (min < Infinity) {
+      const smallest = cands.filter((t) => (asset.packSize!.get(t.id) ?? Infinity) === min);
+      if (smallest.length > 0) cands = smallest;
+      if (cands.length === 1) return cands[0];
+    }
+  }
+
   // 1) Prefer candidates whose own canonical name is exactly what was typed.
   const primary = cands.filter((t) => isPrimary(t, q));
   if (primary.length > 0) cands = primary;

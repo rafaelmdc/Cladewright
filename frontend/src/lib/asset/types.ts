@@ -62,6 +62,18 @@ export type Target =
 //     identical (`arr[i]`, `.length`), so the play loop is unchanged either way.
 export type NumArray = Int32Array | number[];
 
+/** One component of a MIXED asset that has a remote tail (a hybrid or remote scope). Its own
+ *  scope key + version routes a tail `/resolve` to the right backend; its filter pre-rejects
+ *  names "definitely absent" from THIS component (membership is per-scope, never unioned). */
+export interface TailSource {
+  scope: string;
+  version?: number;
+  filter?: FuseFilter;
+  /** the component pack's tip count — the smaller-pack-wins tie-break tries tails in
+   *  ascending size order (see resolveTarget + docs/lobby-and-config.md#name-collisions). */
+  size?: number;
+}
+
 export interface InternedAsset {
   /** blob mode carries the full source asset; remote mode has only metadata + a
    *  growing `aliases` map (server is the source of truth for names). */
@@ -92,6 +104,15 @@ export interface InternedAsset {
   /** hybrid/remote: binary-fuse8 membership filter — a typed name that's "definitely
    *  absent" is rejected locally (no /search). Undefined for whole-pool blob scopes. */
   filter?: FuseFilter;
+  /** MIXED hybrid/remote scopes: one tail per component, each routed to its own backend.
+   *  A tail miss tries every component whose filter says "maybe" (or has none), smallest
+   *  pack first (see resolveTarget). Undefined for a single-scope asset — that uses `scope`+`filter`. */
+  tailSources?: TailSource[];
+  /** MIXED packs only: target id (tip OR clade node) -> the tip count of the SMALLEST source
+   *  pack that contains it. When a typed name resolves to candidates from >1 pack, the smaller
+   *  pack wins (see resolve.ts + docs/lobby-and-config.md#name-collisions). Undefined for a
+   *  single-pack asset (no overlap possible → no tie-break needed). */
+  packSize?: Map<string, number>;
   /** hybrid/remote: normalized queries already known to resolve to nothing (filter-rejected
    *  or a remote miss), so a repeated typo never re-hits the network. */
   negativeCache?: Set<string>;

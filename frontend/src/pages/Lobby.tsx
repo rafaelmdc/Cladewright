@@ -100,6 +100,13 @@ export function Lobby() {
   // Live score multiplier the run will score at (∏ active modifiers × ∏ eased settings, #101).
   const multiplier = modInfo ? previewMultiplier(cfg.modifiers, cfg.settings, modInfo) : 1;
   const conflicts = modInfo ? conflictingModifiers(cfg.modifiers, modInfo.modifiers) : new Set<string>();
+  // Whether the gameplay settings are still at the (admin-overlaid) defaults — the reset button
+  // only appears once the player has changed something.
+  const atDefaults = (() => {
+    const def = gameDefaults() as unknown as Record<string, unknown>;
+    const cur = cfg.settings as unknown as Record<string, unknown>;
+    return Object.keys(def).every((k) => def[k] === cur[k]);
+  })();
 
   function toggleModifier(key: string) {
     setCfg((c) => {
@@ -211,8 +218,19 @@ export function Lobby() {
 
             {/* Right: settings (the big panel). */}
             <div className="ink-card flex h-full flex-col gap-5 bg-clade-paper p-5">
-              <div className="flex items-center justify-between">
-                <h2 className="font-hand text-2xl font-bold text-clade-ink">Settings</h2>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-baseline gap-3">
+                  <h2 className="font-hand text-2xl font-bold text-clade-ink">Settings</h2>
+                  {!atDefaults && (
+                    <button
+                      type="button"
+                      onClick={() => setCfg((c) => ({ ...c, settings: { ...gameDefaults() } }))}
+                      className="font-mono text-[11px] uppercase tracking-wide text-clade-ink/45 underline-offset-2 transition hover:text-clade-ink hover:underline"
+                    >
+                      ↺ Reset
+                    </button>
+                  )}
+                </div>
                 <span
                   className={`font-mono text-[11px] uppercase tracking-wide ${
                     multiplier === 1

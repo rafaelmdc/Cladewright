@@ -163,6 +163,14 @@ class Command(BaseCommand):
         node_names = enrich.enrich_clade_nodes(tree, provider)  # "bear"->Ursidae, …
         self.stdout.write(f"      {len(node_names)} clades got common names")
 
+        # The provider's harvest caches (name/title/pageview/sitelink dicts, up to ~1.2M
+        # entries EACH on a huge scope) are done being read — everything they fed is now in
+        # `enriched` + `node_names`. Drop them before stage 5 so the asset build + validate +
+        # write don't run on top of that resident floor (it stacked into the OOM headroom).
+        del provider
+        import gc
+        gc.collect()
+
         self.stdout.write("5/5 build + validate asset…")
         # Identity vs filter: --scope slices the dump; --scope-key is the stable id the API
         # serves under. Single-clade builds that pass neither key nor label still work

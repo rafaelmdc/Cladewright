@@ -1,9 +1,10 @@
 // The scope selector — pick which slices of the tree of life to play (Mammals, Birds,
 // Fish, …). MULTI-SELECT: scopes are toggles, so a run can mix several at once. Any modes
-// mix: blobs merge their whole pools, hybrid/remote ("streamed") packs contribute their
-// notable subset plus a tail that resolves over the network (see lib/asset/load.ts#loadMixed).
+// mix: blobs merge their whole pools, hybrid/remote packs contribute their notable subset
+// plus a tail that resolves over the network (see lib/asset/load.ts#loadMixed).
 // A field-notebook dropdown (inked border, Caveat label, mono counts) to match the rest of
-// the HUD; "streamed" packs carry a small tag.
+// the HUD. The blob-vs-streamed delivery distinction is a build detail, surfaced only in the
+// Asset versions admin (delivery column) — not shown to players here.
 
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
@@ -115,15 +116,6 @@ export function ScopePicker({
                         </span>
                       )}
                       <span className="font-hand text-xl leading-none">{s.label}</span>
-                      {s.mode !== "blob" && (
-                        <span
-                          className={`rounded-full px-1.5 py-px font-mono text-[9px] uppercase tracking-wide ${
-                            on ? "bg-clade-paper/25" : "bg-clade-note text-clade-ink/70"
-                          }`}
-                        >
-                          streamed
-                        </span>
-                      )}
                     </span>
                     <span
                       className={`font-mono text-[11px] ${on ? "text-clade-paper/70" : "text-clade-ink/45"}`}

@@ -458,9 +458,10 @@ function Game({
   }
   useEffect(() => {
     if (!restoredRef.current) return; // restore effect runs first (layout) — token kept there
-    // The daily's session is server-issued (#108) — don't open a client one (it would race the
-    // daily's mount and could land null). Free play self-issues here.
-    if (isDaily) return;
+    // The daily PREFERS its server-issued token (seeded into runTokenRef at mount, #108) — so if
+    // we already have one, do nothing. But if it's missing (e.g. a backend that doesn't serve it
+    // yet), fall back to opening a client session so the run can still rank. Free play always
+    // self-issues. The `=== null` guard means a present served token is never clobbered.
     if (runTokenRef.current === null && timingsRef.current.length === 0) beginSession();
   }, []);
 

@@ -283,6 +283,13 @@ class DailyView(APIView):
             )
             data["played_today"] = today_run is not None
             data["today_score"] = today_run.score if today_run else None
+            # Hand the play surface its signed run session straight from here (#108). The client
+            # MUST fetch /daily to play, so anchoring the session to this read makes the daily's
+            # token always present and start-time-anchored — instead of relying on a separate
+            # client-side /runs/start/ call that could race the daily's mount and get dropped,
+            # leaving real runs un-ranked. Only when there's still a puzzle to play today.
+            if data["available"] and not data["played_today"]:
+                data["run_token"] = issue_run_token(request.user.id)
         return Response(data)
 
 
@@ -469,8 +476,10 @@ class SubmitRunView(APIView):
         )
 
         # A ranked run must come from a valid session at a humanly-plausible pace; otherwise
-        # it still records (stats) but doesn't reach the leaderboard. This is the ONLY thing
-        # that un-ranks a run now (#101) — settings/modifiers resolve to a multiplier instead.
+        # it still records (stats) but doesn't reach the leaderboard. This applies to the daily
+        # too: the server re-scores whatever transcript it's given, so a forged "instant dump-
+        # the-whole-tree" submission would rank if we dropped the check. The #108 fix is making
+        # sure a real daily run actually CARRIES its session token — not weakening anti-cheat.
         if ranked and not _rate_plausible(token_payload, result.base):
             ranked = False
 
@@ -554,29 +563,36 @@ class LeaderboardView(APIView):
         if difficulty not in Difficulty.values:
             return Response({"error": "invalid difficulty"}, status=400)
 
-        # Daily boards are date-indexed (history is kept): the scope is DERIVED from that
-        # day's daily plan, not the client — and free-play boards are a single all-time
-        # board per (scope, difficulty); a scope may be a mix ("aves+mammalia"). See
-        # docs/games-model.md.
+        # Daily boards are date-indexed (history is kept). A daily is ONE server-fixed scope
+        # per day, so (puzzle_date, mode) alone identifies the board — we deliberately do NOT
+        # filter by a re-derived scope. _daily_plan recomputes from the *current* rotation for
+        # any un-frozen past day, which drifts as the rotation advances and would orphan that
+        # day's real runs under a scope they were never played on (#108). Instead the board's
+        # display scope is DERIVED from the runs that actually landed that day (below).
         is_daily = mode in (GameMode.MARATHON_DAILY, GameMode.CLASSIC)
         day = None
         scope_label = _scope_label(scope) if scope else ""
         if is_daily:
             day = _parse_date(request.query_params.get("date")) or timezone.localdate()
-            plan = _daily_plan(day)  # read-only: never freezes a browsed/empty date
-            if plan is None:
-                return Response({
-                    "mode": mode, "scope": "", "scope_label": "", "difficulty": difficulty,
-                    "date": day.isoformat(), "entries": [],
-                })
-            scope, scope_label = plan[1], plan[2]
+            scope = ""  # no scope filter — the day's runs define the board
 
-        # Only ranked (default-settings) runs are comparable on a board. The global free
-        # board also folds in dailies on the same scope (#46); the daily board stays the one
-        # day.
-        qs = Run.objects.filter(mode__in=_board_modes(mode), scope=scope, difficulty=difficulty, ranked=True)
+        # Only ranked runs are comparable on a board. The global free board also folds in
+        # dailies on the same scope (#46); the daily board stays the one day.
+        qs = Run.objects.filter(mode__in=_board_modes(mode), difficulty=difficulty, ranked=True)
+        if scope:
+            qs = qs.filter(scope=scope)
         if day is not None:
             qs = qs.filter(puzzle_date=day)
+            # Display scope/label come from the runs themselves (the server-fixed puzzle), with
+            # a fall back to the planned scope just for an empty (not-yet-played) day.
+            day_scopes = list(qs.order_by("scope").values_list("scope", flat=True).distinct())
+            if day_scopes:
+                scope = day_scopes[0]
+                scope_label = _scope_label(scope)
+            else:
+                plan = _daily_plan(day)  # read-only: never freezes a browsed/empty date
+                if plan is not None:
+                    scope, scope_label = plan[1], plan[2]
 
         # Best run per user, highest first. Pull a generous slice then dedupe in Python
         # (per-user best); cheap for a leaderboard page.

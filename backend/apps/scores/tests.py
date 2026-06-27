@@ -305,6 +305,77 @@ class SubmitAndLeaderboardTests(TestCase):
         board = self.client.get("/api/scores/leaderboard/?mode=marathon_free&scope=test")
         self.assertEqual(board.data["entries"], [])
 
+    def test_daily_serves_a_run_token_that_ranks_the_run(self):
+        # FIX #108: the daily's session token is issued server-side WITH the puzzle (GET /daily),
+        # so the run is always rankable without depending on a separate client /runs/start/ call
+        # that could race the daily's mount and get dropped (leaving real runs un-ranked).
+        user = User.objects.create_user("alice", password="x")
+        self.client.force_authenticate(user)
+        info = self.client.get("/api/scores/daily/").data
+        token = info.get("run_token")
+        self.assertTrue(token, "daily should serve a run token to a signed-in player")
+        res = self.client.post(
+            "/api/scores/runs/",
+            {"mode": "marathon_daily", "scope": "test", "asset_version": 1,
+             "transcript": ["tip:1", "tip:2"], "run_token": token},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201)
+        self.assertTrue(res.data["ranked"], "daily run with its served token should rank")
+        board = self.client.get("/api/scores/leaderboard/?mode=marathon_daily")
+        self.assertEqual([(e["user"], e["score"]) for e in board.data["entries"]],
+                         [("alice", 2)])
+
+    def test_daily_run_without_a_token_stays_unranked(self):
+        # The token still gates the daily: a forged "instant dump" submission with no valid
+        # session (the server re-scores whatever transcript it's given) must NOT reach the board.
+        user = User.objects.create_user("mal", password="x")
+        self.client.force_authenticate(user)
+        res = self.client.post(
+            "/api/scores/runs/",
+            {"mode": "marathon_daily", "scope": "test", "asset_version": 1,
+             "transcript": [f"tip:{i}" for i in range(40)]},  # 40 placements, no token
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201)
+        self.assertFalse(res.data["ranked"], "tokenless daily run should not rank")
+
+    def test_daily_token_withheld_once_played(self):
+        # One shot a day — after playing, /daily stops handing out a token (nothing left to play).
+        user = User.objects.create_user("alice", password="x")
+        self.client.force_authenticate(user)
+        token = self.client.get("/api/scores/daily/").data.get("run_token")
+        self.client.post(
+            "/api/scores/runs/",
+            {"mode": "marathon_daily", "scope": "test", "asset_version": 1,
+             "transcript": ["tip:1"], "run_token": token},
+            format="json",
+        )
+        after = self.client.get("/api/scores/daily/").data
+        self.assertTrue(after["played_today"])
+        self.assertIsNone(after.get("run_token"))
+
+    def test_daily_board_survives_rotation_drift(self):
+        # REPRO #108 (Brd 2): a past day's daily runs were stored under the scope that was live
+        # THAT day. The board for that date must still surface them even after the rotation has
+        # advanced to a different scope — i.e. it queries by (puzzle_date, mode), not a re-derived
+        # scope. We simulate a played-but-unfrozen historical day directly via the model.
+        import datetime as dt
+        from apps.scores.models import DailyRotationEntry
+        day = dt.date(2026, 6, 22)
+        a = User.objects.create_user("alice", password="x")
+        Run.objects.create(user=a, mode=GameMode.MARATHON_DAILY, scope="aves",
+                           difficulty="common", score=7, asset_version=1,
+                           puzzle_date=day, ranked=True)
+        # The rotation now points somewhere else entirely — the old behaviour would derive this
+        # scope and find nothing for 2026-06-22.
+        DailyRotationEntry.objects.create(mode=GameMode.MARATHON_DAILY, scope="reptilia", active=True)
+        board = self.client.get(f"/api/scores/leaderboard/?mode=marathon_daily&date={day.isoformat()}")
+        self.assertEqual(board.status_code, 200)
+        self.assertEqual([(e["user"], e["score"]) for e in board.data["entries"]],
+                         [("alice", 7)])
+        self.assertEqual(board.data["scope"], "aves")  # display scope comes from the runs
+
     def test_daily_one_shot_and_scope_pinned(self):
         user = User.objects.create_user("alice", password="x")
         self.client.force_authenticate(user)

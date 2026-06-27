@@ -55,8 +55,17 @@ resolves the long tail on demand via `/resolve`. Same **Build asset** job, but s
 
 | scope_key | label | scope_filter | notable_max | notable_coverage | notable_min | frontier_rank |
 |---|---|---|--:|--:|--:|---|
-| `arthropoda` | Arthropoda | `phylum=Arthropoda` | `20000` | `0.9` | `5000` | `family` |
-| `invertebrata_other` | Other invertebrates | `phylum=Mollusca,Annelida,Cnidaria,Echinodermata,Platyhelminthes,Nematoda,Porifera,Bryozoa,Nemertea,Rotifera,Tardigrada,Onychophora,Acanthocephala,Brachiopoda,Phoronida,Ctenophora,Placozoa,Chaetognatha,Nematomorpha,Gastrotricha,Kinorhyncha,Priapulida,Loricifera,Hemichordata,Xenacoelomorpha,Gnathostomulida,Micrognathozoa,Cycliophora,Entoprocta,Dicyemida,Orthonectida` | `20000` | `0.9` | `5000` | `family` |
+| `arthropoda` | Arthropods | `phylum=Arthropoda` | `20000` | `0.9` | `5000` | `family` |
+| `mollusca` | Molluscs | `phylum=Mollusca` | `20000` | `0.9` | `5000` | `family` |
+| `annelida` | Annelids | `phylum=Annelida` | `20000` | `0.9` | `5000` | `family` |
+| `cnidaria` | Cnidarians | `phylum=Cnidaria` | `20000` | `0.9` | `5000` | `family` |
+| `echinodermata` | Echinoderms | `phylum=Echinodermata` | `20000` | `0.9` | `5000` | `family` |
+| `platyhelminthes` | Flatworms | `phylum=Platyhelminthes` | `20000` | `0.9` | `5000` | `family` |
+| `nematoda` | Roundworms | `phylum=Nematoda` | `20000` | `0.9` | `5000` | `family` |
+| `basal_metazoa` | Basal animals | `phylum=Porifera,Ctenophora,Placozoa` | `20000` | `0.9` | `5000` | `family` |
+| `lophophorates` | Lophophorates | `phylum=Bryozoa,Brachiopoda,Phoronida` | `20000` | `0.9` | `5000` | `family` |
+| `microfauna` | Microscopic invertebrates | `phylum=Rotifera,Tardigrada,Gastrotricha,Kinorhyncha,Loricifera,Micrognathozoa,Gnathostomulida,Cycliophora` | `20000` | `0.9` | `5000` | `family` |
+| `misc_worms` | Ribbon, velvet & other worms | `phylum=Nemertea,Onychophora,Nematomorpha,Priapulida,Acanthocephala,Entoprocta,Chaetognatha,Hemichordata,Xenacoelomorpha,Dicyemida,Orthonectida` | `20000` | `0.9` | `5000` | `family` |
 
 Notes:
 - **notable_max = 0** (the default, used by every scope in §1) ships the **whole** pool — no
@@ -66,9 +75,15 @@ Notes:
   ships `clamp(coverage-of-mass, min, max)` tips.
 - **frontier_rank** (`family`) is the coarse backbone always shipped + the deepest rank
   `/resolve` trims a tail guess to. Every node at/above it ships, so any tail species attaches.
-- **"Other invertebrates"** is a pragmatic union of the non-arthropod, non-chordate animal
-  phyla (extend/trim the list to taste — it's just a `scope_filter`). It overlaps nothing
-  with `arthropoda` or the chordate scopes.
+- The non-arthropod, non-chordate animal phyla are split into named groups rather than one
+  "other" bucket: the big phyla get their own scope (`mollusca`, `annelida`, `cnidaria`,
+  `echinodermata`, `platyhelminthes`, `nematoda`) and the long tail of smaller phyla is
+  grouped by recognizable theme — `basal_metazoa` (sponges/comb jellies/placozoans, mirroring
+  `basal_chordata`), `lophophorates` (moss animals, lamp shells, horseshoe worms), `microfauna`
+  (water bears & other meiofauna), and `misc_worms` (ribbon/velvet/etc. plus a few genuinely
+  homeless phyla like acorn worms and Xenacoelomorpha). Together they cover the same phyla the
+  old single `invertebrata_other` did; each is just a `scope_filter`, so extend/trim to taste.
+  They overlap nothing with `arthropoda` or the chordate scopes.
 - **fame at scale** — see §3: run the **Download pageview dump** job ONCE; every fame build
   then reuses the local pageview DB automatically (no per-job `fame_dump` needed). Without a
   prebuilt DB, fame falls back to the per-title pageviews REST API — fine for the small scopes

@@ -215,6 +215,7 @@ export function Marathon() {
       difficulty={difficulty}
       mode={mode}
       isDaily={isDaily}
+      dailyToken={isDaily ? (daily?.run_token ?? null) : null}
       configSettings={cfg?.settings ?? null}
       configModifiers={cfg?.modifiers ?? []}
     />
@@ -256,6 +257,7 @@ function Game({
   scopeKey,
   mode,
   isDaily,
+  dailyToken,
   configSettings,
   configModifiers,
 }: {
@@ -265,6 +267,9 @@ function Game({
   difficulty: Difficulty;
   mode: string;
   isDaily: boolean;
+  /** The daily's signed run session, issued server-side with the puzzle (#108). The daily uses
+   *  THIS instead of a client /runs/start/ call, so its run is always rankable. Null off-daily. */
+  dailyToken: string | null;
   /** Settings from the lobby's GameConfig, frozen for this run; null for the daily. */
   configSettings: GameSettings | null;
   /** Active modifier keys from the lobby's GameConfig, frozen for this run (empty for the daily). */
@@ -282,7 +287,9 @@ function Game({
   // stays monotonic across a refresh/restore. runTokenRef holds the signed run session (#77).
   const timingsRef = useRef<number[]>([]);
   const runStartedAtRef = useRef<number>(Date.now());
-  const runTokenRef = useRef<string | null>(null);
+  // The daily seeds its session from the server (issued with the puzzle, #108); free play opens
+  // one client-side via beginSession. Either way this holds the signed token submitted at game over.
+  const runTokenRef = useRef<string | null>(isDaily ? dailyToken : null);
 
   // Settings come from the lobby's config when present; the daily is fixed to defaults; a
   // direct/legacy entry falls back to the player's last-saved settings.
@@ -425,7 +432,9 @@ function Game({
     // re-issue (a fresh token's start time wouldn't match the past timings).
     timingsRef.current = saved.timings ?? [];
     runStartedAtRef.current = saved.runStartedAt ?? Date.now();
-    runTokenRef.current = saved.runToken ?? null;
+    // Keep the daily's server-issued token if the saved run didn't carry one (e.g. it was
+    // persisted before a token landed) — never downgrade a live daily session to null (#108).
+    runTokenRef.current = saved.runToken ?? runTokenRef.current;
     const secs = secondsAfterAway(saved);
     setScore(saved.score);
     setCount(saved.count);
@@ -449,6 +458,9 @@ function Game({
   }
   useEffect(() => {
     if (!restoredRef.current) return; // restore effect runs first (layout) — token kept there
+    // The daily's session is server-issued (#108) — don't open a client one (it would race the
+    // daily's mount and could land null). Free play self-issues here.
+    if (isDaily) return;
     if (runTokenRef.current === null && timingsRef.current.length === 0) beginSession();
   }, []);
 

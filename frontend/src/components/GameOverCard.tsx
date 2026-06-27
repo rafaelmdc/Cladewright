@@ -228,7 +228,14 @@ function Leaderboard({ board, label, me }: { board: LeaderEntry[]; label: string
                   <span className="w-5 shrink-0 font-mono text-xs text-clade-ink/45">{e.rank}</span>
                   <span className="truncate font-hand text-lg text-clade-ink">{e.user}</span>
                 </span>
-                <span className="font-mono text-sm text-clade-ink/70">{e.score}</span>
+                <span className="flex items-baseline gap-1.5 font-mono text-sm text-clade-ink/70">
+                  {e.rank === 1 && (
+                    <span aria-label="Top score" title="Top score" className="not-italic">
+                      👑
+                    </span>
+                  )}
+                  {e.score}
+                </span>
               </li>
             );
           })}

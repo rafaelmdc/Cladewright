@@ -12,6 +12,9 @@ export interface DailyInfo {
   streak?: { current: number; best: number };
   played_today?: boolean;
   today_score?: number | null;
+  // The signed run-session token for today's play, issued server-side (#108) so the daily run
+  // is always rankable. Present only when signed in and there's still a puzzle to play today.
+  run_token?: string | null;
 }
 
 /** null = backend down. Callers fall back to a neutral state. */

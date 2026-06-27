@@ -19,9 +19,32 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Protocol
 
 from .types import EnrichedTip, Taxon, Tree
+
+def prebuilt_fame_db() -> tuple[Path | None, str]:
+    """Locate THE local Wikipedia pageview DB (one DB, downloaded once, like the CoL dump).
+    Returns ``(path_or_None, reason)``.
+
+    The SINGLE source of truth for "is the local pageview DB present": both the build_gamedata
+    log line and ``harvest_fame``'s backend selection call this, so the admin job log can never
+    disagree with the backend actually used. The ``reason`` names the EXACT path checked — the
+    thing you need to debug "why REST instead of my dump DB", which is almost always that the
+    build pod doesn't see the volume the 'Download pageview dump' job wrote to (different
+    replica / non-shared PVC / unset BRAIDWORKS_DATA_DIR).
+    """
+    try:
+        from wikipedia_weaver.setup import db_is_valid, default_db_path
+    except Exception as exc:  # noqa: BLE001 - weaver missing → no local DB, REST stands
+        return None, f"wikipedia_weaver unavailable ({exc!r})"
+    cand = default_db_path()
+    if db_is_valid(cand):
+        return cand, f"prebuilt pageview DB {cand}"
+    if cand.exists():
+        return None, f"DB at {cand} exists but is invalid/empty — rebuild the dump"
+    return None, f"no prebuilt DB at {cand}"
 
 _WS = re.compile(r"[\s_]+")  # underscores count as spaces (Wikipedia titles use them)
 _PUNCT = re.compile(r"[^\w\s]")
@@ -275,20 +298,13 @@ class BraidworksProvider:
         # Pageview source, in preference order:
         #  1. an explicit dump on this build (fame_dump / year+month) → local backend, built
         #     once at the shared DB path (persists when BRAIDWORKS_DATA_DIR → the PVC);
-        #  2. a prebuilt local DB already on disk (the "Download pageview dump" action ran) →
+        #  2. THE prebuilt local DB already on disk (the "Download pageview dump" action ran) →
         #     reuse it, no per-title web calls — the scalable path for huge scopes;
         #  3. otherwise the keyless per-title REST api (fine only for a few-thousand-tip scope).
         explicit_dump = bool(self._fame_dump_path or (self._fame_year and self._fame_month))
         prebuilt_db = None
         if not explicit_dump:
-            try:
-                from wikipedia_weaver.setup import db_is_valid, default_db_path
-
-                cand = default_db_path()
-                if db_is_valid(cand):
-                    prebuilt_db = cand
-            except Exception:  # noqa: BLE001 - wikipedia_weaver missing / unreadable → fall back
-                prebuilt_db = None
+            prebuilt_db, _ = prebuilt_fame_db()  # same detector the build log reports
 
         if prebuilt_db is not None:
             # Reuse the already-built DB directly: the factory's build path insists on a

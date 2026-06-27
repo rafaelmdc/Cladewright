@@ -123,23 +123,25 @@ class Command(BaseCommand):
             else enrich.OfflineProvider()
         )
         # Surface where fame (popularity) comes from, so the admin log shows at a glance
-        # whether this build will rank by real pageviews or fall back to nothing.
+        # whether this build ranks by real pageviews or falls back to the slow REST api. The ONE
+        # pageview DB (downloaded once, like the CoL dump) is auto-used if present; when it ISN'T
+        # found we print the exact path checked — the usual culprit is the build pod not sharing
+        # the volume the 'Download pageview dump' job wrote to. enrich.prebuilt_fame_db feeds both
+        # this log line and harvest_fame's actual backend pick, so the log can't lie about what ran.
+        explicit_dump = bool(opts["fame_dump"] or (opts["fame_year"] and opts["fame_month"]))
         if opts["enrich"] != "braidworks":
             self.stdout.write("      fame: disabled (offline enrich — every tip scores 0)")
-        elif opts["fame_dump"] or (opts["fame_year"] and opts["fame_month"]):
+        elif explicit_dump:
             self.stdout.write("      fame source: pageview dump → local DB (built once, then reused)")
         else:
-            source = ("Wikipedia pageviews REST api — per-title, slow; run a 'Download pageview "
-                      "dump' job once for scale")
-            try:
-                from wikipedia_weaver.setup import db_is_valid, default_db_path
-
-                cand = default_db_path()
-                if db_is_valid(cand):
-                    source = f"prebuilt pageview DB {cand} (local, fast)"
-            except Exception:  # noqa: BLE001 - braidworks absent → REST description stands
-                pass
-            self.stdout.write(f"      fame source: {source}")
+            db_path, reason = enrich.prebuilt_fame_db()
+            if db_path is not None:
+                self.stdout.write(f"      fame source: {reason} (local, fast)")
+            else:  # no DB → REST fallback, but say loudly WHY it didn't find one
+                self.stdout.write(
+                    f"      fame source: REST api ({reason}) — per-title, slow; run a 'Download "
+                    "pageview dump' job (same worker/volume) once for scale"
+                )
 
         self.stdout.write("3/5 pool select…")
         pool_taxa = pool.select_pool(

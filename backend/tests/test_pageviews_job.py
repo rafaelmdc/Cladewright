@@ -48,3 +48,16 @@ class FetchPageviewsDispatchTests(TestCase):
         self.assertIn("--year", args)
         self.assertIn("2026", args)
         self.assertIn("--dump", args)
+
+
+class PrebuiltFameDbTests(TestCase):
+    """The single detector both the log line and the backend pick rely on. In the web/test
+    image wikipedia_weaver isn't installed, so it must report that cleanly (not raise) — and
+    never claim a DB is present."""
+
+    def test_reports_missing_weaver_without_a_path(self):
+        from pipeline.enrich import prebuilt_fame_db
+
+        path, reason = prebuilt_fame_db()
+        self.assertIsNone(path)
+        self.assertIn("wikipedia_weaver", reason)

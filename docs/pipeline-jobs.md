@@ -99,7 +99,12 @@ Notes:
   `fame source: prebuilt pageview DB …`. Re-run the job (or a build with `fame_year/month`)
   to refresh to a newer month.
 - The build job's **fame_year/fame_month** only need setting if you want a build's fame dated
-  to a specific month; normally leave them blank and the prebuilt DB is used as-is.
+  to a specific month; normally leave them blank and the one prebuilt DB is used as-is.
+- There is **one** pageview DB, downloaded once (like the CoL dump) and auto-reused by every
+  build. When a build can't find it and falls back to REST, the log now names the **exact path
+  it checked**, e.g. `fame source: REST api (no prebuilt DB at /app/data/braidworks/wikipedia/…)`.
+  If you ran a dump job but a build still says REST, the build pod isn't seeing the dump job's
+  volume — they must share `$BRAIDWORKS_DATA_DIR` (same PVC / same replica).
 - The build log now reports fame progress and coverage, e.g.
   `fame: 4,810/6,500 tips scored (74%) — top 1,838,000 (lion)`, so you can see it working.
 

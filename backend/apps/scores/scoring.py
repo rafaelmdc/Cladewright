@@ -78,6 +78,7 @@ def rescore(
     node_pool_counts: dict[str, int] | None = None,
     clade_multiplier: float = 0,
     clade_min_size: int = 0,
+    top_down: bool = False,
 ) -> RescoreResult:
     """Replay ``transcript`` (ordered placed ids) and return the canonical result.
 
@@ -95,6 +96,12 @@ def rescore(
     fully named, the largest such clade newly completed this placement scores
     ``clade_bonus_points(size, clade_multiplier)`` (once per clade per run, size ≥
     ``clade_min_size``). Mirrors the client's completion celebration so HUD == leaderboard.
+
+    ``top_down`` (the #125 modifier): a species only counts once a containing clade was named
+    earlier — i.e. it must be a *refinement*. A tip with no already-named ancestor is ignored
+    (it never reaches the transcript through the client gate; honouring the rule here too means
+    a forged transcript can't claim the multiplier while ignoring the constraint). Naming clade
+    nodes is unaffected — that's how the player anchors.
     """
     present: set[str] = set()       # node ids on the current induced tree
     named_nodes: set[str] = set()   # clade nodes the player explicitly named
@@ -127,6 +134,10 @@ def rescore(
                 continue
             lineage = tip_lineages[tid]
             refining = any(a in named_nodes for a in lineage)
+            # Top-down: a species cold-named (no ancestor clade named yet) is rejected — the
+            # client never submits it, and ignoring it here keeps a forged transcript honest.
+            if top_down and not refining:
+                continue
             present.update(lineage)
             named_tips.add(tid)
             if refining:

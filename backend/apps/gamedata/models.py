@@ -45,13 +45,15 @@ class PipelineJob(models.Model):
         BUILD = "build", "Build asset"
         FETCH_DUMP = "fetch_dump", "Download CoL dump"
         FETCH_PAGEVIEWS = "fetch_pageviews", "Download pageview dump"
+        SCAN_DUMPS = "scan_dumps", "Scan dumps on disk"
+        DELETE_DUMP = "delete_dump", "Delete a dump from disk"
 
     kind = models.CharField(
         max_length=16, choices=Kind.choices, default=Kind.BUILD,
-        help_text="Build an asset; download a fresh CoL dump (replaces the old one); or "
+        help_text="Build an asset; download a fresh CoL dump (replaces the old one); "
                   "download + build the monthly Wikipedia pageview DB ONCE (then every fame "
-                  "build reuses it — the scalable path for huge scopes). Download jobs ignore "
-                  "the scope fields.",
+                  "build reuses it — the scalable path for huge scopes); or scan/delete the "
+                  "dumps on the worker's disk. Download/scan/delete jobs ignore the scope fields.",
     )
 
     # What to build. (scope_key/scope_filter are unused for a Download-dump job.)
@@ -63,6 +65,8 @@ class PipelineJob(models.Model):
         max_length=512, blank=True, help_text="CoL filter rank=value[,value…], e.g. 'class=Aves'."
     )
     coldp_dir = models.CharField(max_length=256, default="data/coldp_col")
+    # Target path for a DELETE_DUMP job (a DumpArtifact.path). Unused by other kinds.
+    dump_path = models.CharField(max_length=512, blank=True, default="")
     enrich = models.CharField(max_length=16, default="braidworks")
     include_extinct = models.BooleanField(default=True)
     # Notable-blob delivery (no pure-remote): the client always downloads a local blob; a
@@ -303,6 +307,64 @@ class ManualAlias(models.Model):
         Alias.objects.filter(
             asset=asset, norm=self.norm, target_key=self.target_key
         ).delete()
+
+
+class PackSet(models.Model):
+    """An admin-curated bundle of packs (scopes) a player can pick in one click (#120). Now
+    that there are many packs, a "set" groups several into a themed run (e.g. 'All Vertebrates',
+    'Marine Life'). The SPA reads enabled rows from ``GET /api/gamedata/sets/`` and, on click,
+    selects the set's member scopes in the lobby — so a set is just a shortcut over the existing
+    multi-pack mix. Adding/retuning a set is data, not a deploy.
+
+    Loading time grows per pack (each pack downloads its blob), so a big set can take several
+    seconds; the lobby warns when a set is large (see the frontend)."""
+
+    key = models.SlugField(max_length=64, unique=True, help_text="Stable id, e.g. 'all-verts'.")
+    label = models.CharField(max_length=80, help_text="Display name, e.g. 'All Vertebrates'.")
+    blurb = models.CharField(max_length=200, blank=True, help_text="One-line description.")
+    # Member scope KEYS (AssetVersion.scope), e.g. ["mammalia", "aves", "fish"]. Keys the
+    # backend no longer serves are filtered out client-side, so a set degrades gracefully.
+    scopes = models.JSONField(default=list, help_text="List of scope keys this set bundles.")
+    enabled = models.BooleanField(default=True)
+    sort_order = models.IntegerField(default=0, help_text="Lower sorts first in the lobby.")
+
+    class Meta:
+        ordering = ["sort_order", "label"]
+
+    def __str__(self) -> str:
+        return f"{self.label} ({len(self.scopes)} packs){'' if self.enabled else ' — off'}"
+
+
+class DumpArtifact(models.Model):
+    """Inventory row for a large source dump on disk (#116) — a CoL ColDP dump dir or a
+    Wikimedia pageview DB/archive. The dumps live on the WORKER's data volume (the web/admin
+    process mounts it read-only or not at all), so the worker maintains these rows: a
+    ``SCAN_DUMPS`` job upserts them with current sizes, and a ``DELETE_DUMP`` job removes the
+    file and marks the row gone. The admin lists these for at-a-glance disk use + one-click
+    cleanup, without the admin process needing write access to the volume."""
+
+    class Kind(models.TextChoices):
+        COLDP = "coldp", "CoL ColDP dump"
+        PAGEVIEWS = "pageviews", "Wikipedia pageview dump"
+        OTHER = "other", "Other"
+
+    path = models.CharField(max_length=512, unique=True, help_text="Absolute path on the worker volume.")
+    kind = models.CharField(max_length=16, choices=Kind.choices, default=Kind.OTHER)
+    label = models.CharField(max_length=160, blank=True, help_text="Friendly name (basename by default).")
+    size_bytes = models.BigIntegerField(default=0, help_text="Total size (recursive for a dir).")
+    # False once the scan no longer finds the path (deleted, or pruned out-of-band) — kept as a
+    # tombstone row rather than hard-deleted, so the admin sees it went away.
+    present = models.BooleanField(default=True)
+    # Set true while a DELETE_DUMP job for this row is queued/running, so the admin doesn't
+    # double-enqueue; the job clears it (to present=False) on success.
+    delete_pending = models.BooleanField(default=False)
+    scanned_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["kind", "path"]
+
+    def __str__(self) -> str:
+        return f"{self.label or self.path} ({self.size_bytes} B){'' if self.present else ' — gone'}"
 
 
 # Keep the scope's current asset's live Alias table in sync with manual aliases, so an

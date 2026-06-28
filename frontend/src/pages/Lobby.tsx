@@ -12,6 +12,7 @@ import { ScopePicker } from "../components/ScopePicker";
 import { LeafBackground } from "../components/LeafBackground";
 import { SettingsFields } from "../components/controls/SettingControls";
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
+import { fetchSets, type SetInfo } from "../lib/asset/sets";
 import { fetchGames, FALLBACK_GAMES, type Game } from "../lib/games";
 import {
   decodeConfig,
@@ -35,11 +36,20 @@ import { useTitle } from "../lib/useTitle";
 // One stored config per game, so the lobby reopens where you left it.
 const configKey = (mode: string) => `cladewright.config.${mode}`;
 
+/** Whether the current scope selection is exactly a set's members (order-independent), so the
+ *  lobby can highlight the matching set chip. */
+function sameScopes(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((k) => set.has(k));
+}
+
 export function Lobby() {
   const { mode = "marathon_free" } = useParams();
   const navigate = useNavigate();
   const [games, setGames] = useState<Game[]>(FALLBACK_GAMES);
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
+  const [sets, setSets] = useState<SetInfo[]>([]);
   const [modInfo, setModInfo] = useState<ModifierInfo | null>(null);
   const [cfg, setCfg] = useState<GameConfig>(() => seedConfig(mode));
 
@@ -82,6 +92,8 @@ export function Lobby() {
         return { ...c, scopes: next };
       });
     });
+    // Admin-curated pack sets (#120) — one-click presets over the scope mix.
+    fetchSets().then(setSets);
   }, []);
 
   const supportsDifficulty = game?.supports_difficulty ?? true;
@@ -157,6 +169,32 @@ export function Lobby() {
                   value={cfg.scopes}
                   onChange={(keys) => setCfg((c) => ({ ...c, scopes: [...keys].sort() }))}
                 />
+                {/* Sets (#120): one-click presets that select a curated bundle of packs. A set
+                    is "active" when the selection matches its members exactly. */}
+                {sets.length > 0 && (
+                  <div className="mt-3">
+                    <p className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-clade-ink/40">
+                      sets
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {sets.map((s) => {
+                        const active = sameScopes(cfg.scopes, s.scopes);
+                        return (
+                          <button
+                            key={s.key}
+                            type="button"
+                            onClick={() => setCfg((c) => ({ ...c, scopes: [...s.scopes].sort() }))}
+                            title={`${s.blurb ? s.blurb + " · " : ""}${s.pack_count} packs · ${s.tip_count.toLocaleString()} species`}
+                            className={`pill ${active ? "pill-active" : "border-dashed"}`}
+                          >
+                            {s.label}{" "}
+                            <span className="font-mono text-[11px] opacity-60">{s.pack_count}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 <p className="mt-2 font-mono text-[11px] text-clade-ink/45">
                   {scopes.length === 0
                     ? "No packs available — seed one (see docs)."
@@ -164,6 +202,12 @@ export function Lobby() {
                       ? `mixing ${cfg.scopes.length} · ${totalTips.toLocaleString()} species`
                       : `${totalTips.toLocaleString()} species`}
                 </p>
+                {/* Each pack downloads its own blob, so loading time grows with the count (#120). */}
+                {cfg.scopes.length >= 3 && (
+                  <p className="mt-1 font-mono text-[11px] text-amber-700/80">
+                    ⚠ {cfg.scopes.length} packs — loading can take up to ~10s.
+                  </p>
+                )}
               </Panel>
 
               {/* Difficulty (the lens) */}

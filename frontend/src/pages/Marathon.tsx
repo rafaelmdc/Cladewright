@@ -61,6 +61,7 @@ const MAX_FLASHES = 6; // cap the stack so rapid-fire doesn't pile up without bo
 const CLADE_BANNER_MS = 1800; // how long the "clade complete" toast lingers before fading
 const COMBO_BONUS_CAP = 12; // ceiling on a single placement's combo time bonus (seconds)
 const COMBO_SCORE_CAP = 10; // ceiling on a single placement's combo POINT bonus (mirrors server)
+const BLIND_PENALTY_SECONDS = 3; // "Blind guess" modifier (#124): clock cost per bad input
 
 /** Bonus seconds for a placement at this combo length, scaled by the tunable multiplier
  *  (0 below ×2; capped). The combo window itself is a setting too. */
@@ -309,9 +310,16 @@ function Game({
   // for the in-game badge (#101). The server re-resolves authoritatively at submit. The daily is
   // always a default 1.0× run. Modifiers come from the frozen lobby config.
   const modifiers = useMemo(() => (isDaily ? [] : configModifiers), [isDaily, configModifiers]);
-  // "No tree" modifier (#101): the one IRREDUCIBLY-coded gameplay effect — swap the cladogram
-  // for a plain list. (Its settings coupling — hiding the layout dial — is data, see below.)
+  // Modifiers with an IRREDUCIBLY-coded gameplay effect (the multiplier + settings couplings are
+  // data; these change the play loop itself):
+  //   no_tree  (#101) — swap the cladogram for a plain list.
+  //   no_wiki  (#123) — suppress the hover NodeCards (no Wikipedia peeking).
+  //   blind    (#124) — every typo/miss/duplicate/bad name costs countdown time.
+  //   top_down (#125) — a species is only accepted after a containing clade is named.
   const noTree = modifiers.includes("no_tree");
+  const noWiki = modifiers.includes("no_wiki");
+  const blind = modifiers.includes("blind");
+  const topDown = modifiers.includes("top_down");
   const [modInfo, setModInfo] = useState<ModifierInfo | null>(null);
   useEffect(() => {
     fetchModifiers(mode).then((info) => {
@@ -535,15 +543,35 @@ function Game({
     // Async to cover remote mode (/search + /resolve); blob mode resolves synchronously
     // inside and just awaits an already-settled value. Scientific difficulty only accepts
     // the actual scientific name (no common-name aliases).
+    // "Blind guess" modifier (#124): a typo/miss/duplicate/invalid taxon costs countdown time.
+    // Reject = flash the reason (with the −Ns penalty when blind) and, if blind, dock the clock.
+    const reject = (msg: string) => {
+      pushFlash(blind ? `${msg} · −${BLIND_PENALTY_SECONDS}s` : msg, "none");
+      if (blind && !settings.infiniteTime) {
+        setSeconds((s) => Math.max(0, s - BLIND_PENALTY_SECONDS));
+      }
+    };
+
     const target = await resolveTarget(asset, query, difficulty === "scientific");
     if (!target) {
-      pushFlash(`"${query}" — no match`, "none");
+      reject(`"${query}" — no match`);
       return;
     }
     // Living-only mode: an extinct species isn't in play (and isn't in the denominator).
     if (settings.extantOnly && target.kind === "tip" && target.tip.traits.extinct) {
-      pushFlash(`${target.tip.common} — extinct (living-only mode)`, "none");
+      reject(`${target.tip.common} — extinct (living-only mode)`);
       return;
+    }
+    // "Top-down" modifier (#125): a species is only accepted once a containing clade has been
+    // named — i.e. it must land as a refinement. Mirrors induced.ts's `refining` rule and the
+    // server's top_down re-score. Already-placed tips fall through to the duplicate branch.
+    if (topDown && target.kind === "tip" && !treeRef.current.namedTips.has(target.id)) {
+      const lineageIdx = asset.tipLineage.get(target.id);
+      const anchored = !!lineageIdx && lineageIdx.some((idx) => idx >= 0 && treeRef.current.namedNodes.has(idx));
+      if (!anchored) {
+        reject(`${target.tip.common} — name a parent clade first`);
+        return;
+      }
     }
     const p = place(asset, treeRef.current, target);
     if (target.kind === "tip" && p.kind !== "duplicate") tracker.name(target.id);
@@ -552,7 +580,7 @@ function Game({
 
     const label = target.kind === "tip" ? target.tip.common : target.node.sci;
     if (p.kind === "duplicate") {
-      pushFlash(`${label} — already on the tree`, "none");
+      reject(`${label} — already on the tree`);
     } else {
       setStarted(true); // first organism landed → the clock starts now (#50)
       transcriptRef.current.push(target.id); // record for server re-scoring
@@ -814,6 +842,7 @@ function Game({
           pulse={pulse}
           pulseCombo={combo}
           reveal={!running}
+          noWiki={noWiki && running}
         />
       )}
 

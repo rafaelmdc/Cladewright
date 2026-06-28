@@ -9,6 +9,7 @@ import { TopBar } from "../components/Brand";
 import { ScopePicker } from "../components/ScopePicker";
 import { fetchMe, type Me } from "../lib/auth";
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
+import { fetchSets, type SetInfo } from "../lib/asset/sets";
 import { fetchGames, FALLBACK_GAMES, type Game } from "../lib/games";
 import { fetchLeaderboard, type Board, type Difficulty, type LeaderEntry } from "../lib/scores";
 import { useTitle } from "../lib/useTitle";
@@ -39,6 +40,7 @@ export function Leaderboard() {
   const [games, setGames] = useState<Game[]>(FALLBACK_GAMES);
   const [mode, setMode] = useState<string>(FALLBACK_GAMES[0].mode);
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
+  const [sets, setSets] = useState<SetInfo[]>([]);
   const [scopeKey, setScopeKey] = useState<string | null>(null);
   const [difficulty, setDifficulty] = useState<Difficulty>("common");
   const [date, setDate] = useState<string>(isoToday()); // for the daily board
@@ -55,6 +57,7 @@ export function Leaderboard() {
       setScopes(list);
       setScopeKey(list[0]?.key ?? null);
     });
+    fetchSets().then(setSets); // set picker = a one-click bundle of scopes (#120)
     fetchGames().then((g) => {
       setGames(g);
       if (g.length > 0 && !g.some((x) => x.mode === mode)) setMode(g[0].mode);
@@ -133,6 +136,32 @@ export function Leaderboard() {
             </div>
           )}
         </div>
+
+        {/* Set picker (#120): a set just selects its member scopes → that mix's board. Same
+            shortcut as the lobby; no separate "set board". Free-play only (the daily is fixed). */}
+        {!isDaily && sets.length > 0 && (
+          <div className="-mt-2 flex flex-wrap items-center gap-2">
+            <span className="font-mono text-[10px] uppercase tracking-widest text-clade-ink/40">
+              sets
+            </span>
+            {sets.map((s) => {
+              const key = [...s.scopes].sort().join("+");
+              const active = scopeKey === key;
+              return (
+                <button
+                  key={s.key}
+                  type="button"
+                  onClick={() => setScopeKey(key)}
+                  title={`${s.blurb ? s.blurb + " · " : ""}${s.pack_count} packs · ${s.tip_count.toLocaleString()} species`}
+                  className={`pill ${active ? "pill-active" : "border-dashed"}`}
+                >
+                  {s.label}{" "}
+                  <span className="font-mono text-[11px] opacity-60">{s.pack_count}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Which board you're looking at */}
         {board.scope_label && (

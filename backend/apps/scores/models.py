@@ -260,8 +260,11 @@ class Run(models.Model):
     )
     mode = models.CharField(max_length=32, choices=GameMode.choices)
     # Which scope this run was played on (e.g. "mammalia", "fish") — leaderboards are
-    # per-scope since the pools differ. Blank for scope-agnostic modes.
-    scope = models.CharField(max_length=128, blank=True, default="")
+    # per-scope since the pools differ. Blank for scope-agnostic modes. A MIX is the '+'-joined
+    # sorted member keys ("aves+mammalia+…"), so this must hold many keys at once: a full-set
+    # run (every pack, #120) overflowed the old 128 and the INSERT rolled back the whole submit
+    # transaction — the run vanished, ranked or not. 512 holds ~30 packs.
+    scope = models.CharField(max_length=512, blank=True, default="")
     # Difficulty (Common vs Scientific) — its own leaderboard, since the two play
     # differently.
     difficulty = models.CharField(

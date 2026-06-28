@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from django.contrib import admin
 
-from .models import Alias, AssetVersion, ManualAlias, PipelineJob, TaxonNode, TaxonTip
+from .models import (
+    Alias, AssetVersion, DumpArtifact, ManualAlias, PackSet, PipelineJob, TaxonNode, TaxonTip,
+)
 
 # AssetVersion's whole-asset `blob` (JSONB, tens of MB) and `membership_filter` (multi-MB
 # bytes) must NEVER be pulled into a list render. A TaxonTip/Node/Alias changelist joins to
@@ -255,8 +257,9 @@ class PipelineJobAdmin(admin.ModelAdmin):
         super().save_model(request, obj, form, change)
         if first_time:
             self._enqueue(obj)
-            self.message_user(request, f"Queued build for '{obj.scope_key}' — a worker will "
-                                       "pick it up; refresh to watch status.")
+            what = obj.get_kind_display() if obj.kind != PipelineJob.Kind.BUILD else f"build for '{obj.scope_key}'"
+            self.message_user(request, f"Queued {what} — a worker will pick it up; refresh to "
+                                       "watch status.")
 
     @admin.action(description="Re-queue — run this build again on a worker")
     def requeue(self, request, queryset):
@@ -341,3 +344,81 @@ class PipelineJobAdmin(admin.ModelAdmin):
             "action_checkbox_name": helpers.ACTION_CHECKBOX_NAME,
             "media": self.media,
         })
+
+
+@admin.register(PackSet)
+class PackSetAdmin(admin.ModelAdmin):
+    """Curate the one-click pack bundles the lobby offers (#120). `scopes` is a JSON list of
+    AssetVersion scope keys, e.g. ["mammalia", "aves", "fish"] — browse Asset versions for the
+    exact keys. Keys no longer served are ignored client-side, so a set degrades gracefully."""
+
+    list_display = ("label", "key", "pack_count", "enabled", "sort_order")
+    list_editable = ("enabled", "sort_order")
+    list_filter = ("enabled",)
+    search_fields = ("key", "label")
+    prepopulated_fields = {"key": ("label",)}
+
+    @admin.display(description="packs")
+    def pack_count(self, obj: PackSet) -> int:
+        return len(obj.scopes or [])
+
+
+def _human_size(n: int) -> str:
+    x = float(n)
+    for u in ("B", "KB", "MB", "GB", "TB"):
+        if x < 1024 or u == "TB":
+            return f"{x:.0f} {u}" if u == "B" else f"{x:.1f} {u}"
+        x /= 1024
+    return f"{n} B"
+
+
+@admin.register(DumpArtifact)
+class DumpArtifactAdmin(admin.ModelAdmin):
+    """The source dumps on the worker's disk (#116) — CoL ColDP dirs + Wikipedia pageview DBs.
+    These rows are maintained by the worker (the admin process can't write the dump volume):
+    run "Rescan dumps" to refresh the inventory, and "Delete selected dumps" to reclaim space.
+    To populate the list the first time (no rows yet), queue a 'Scan dumps on disk' pipeline job."""
+
+    list_display = ("label", "kind", "human_size", "present", "delete_pending", "scanned_at")
+    list_filter = ("kind", "present", "delete_pending")
+    search_fields = ("path", "label")
+    readonly_fields = ("path", "kind", "label", "size_bytes", "present", "delete_pending", "scanned_at")
+    actions = ["rescan_dumps", "delete_dumps"]
+
+    def has_add_permission(self, request) -> bool:
+        return False  # the worker discovers dumps; never hand-added.
+
+    @admin.display(description="size", ordering="size_bytes")
+    def human_size(self, obj: DumpArtifact) -> str:
+        return _human_size(obj.size_bytes)
+
+    def _enqueue(self, job: PipelineJob) -> None:
+        from .tasks import run_pipeline_job
+        run_pipeline_job.delay(job.id)
+
+    @admin.action(description="Rescan dumps on disk (refresh sizes / find new)")
+    def rescan_dumps(self, request, queryset):
+        job = PipelineJob.objects.create(kind=PipelineJob.Kind.SCAN_DUMPS, requested_by=request.user)
+        self._enqueue(job)
+        self.message_user(request, "Queued a dump rescan — refresh in a moment to see updated sizes.")
+
+    @admin.action(description="Delete selected dumps from disk (reclaim space)")
+    def delete_dumps(self, request, queryset):
+        from django.contrib import messages
+
+        n = 0
+        for art in queryset.filter(present=True, delete_pending=False):
+            job = PipelineJob.objects.create(
+                kind=PipelineJob.Kind.DELETE_DUMP, dump_path=art.path, requested_by=request.user,
+            )
+            self._enqueue(job)
+            n += 1
+        DumpArtifact.objects.filter(
+            pk__in=[a.pk for a in queryset.filter(present=True, delete_pending=False)]
+        ).update(delete_pending=True)
+        self.message_user(
+            request,
+            f"Queued deletion of {n} dump(s) on the worker — refresh to confirm they're gone."
+            if n else "Nothing to delete (already gone or pending).",
+            level=messages.WARNING if n else messages.INFO,
+        )

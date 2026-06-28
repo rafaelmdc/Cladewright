@@ -26,7 +26,7 @@ from rest_framework.views import APIView
 
 from pipeline.asset import rank_at_or_above
 
-from .models import Alias, AssetVersion, TaxonNode, TaxonTip
+from .models import Alias, AssetVersion, PackSet, TaxonNode, TaxonTip
 
 
 def _normalize(name: str) -> str:
@@ -157,6 +157,41 @@ class ScopesView(APIView):
             for r in rows
         ]
         return Response({"scopes": scopes})
+
+
+class SetsView(APIView):
+    """GET /api/gamedata/sets/ -> the admin-curated pack sets the lobby offers (#120).
+
+    Each enabled set carries its member scope keys (filtered to those actually served now),
+    plus a derived species total + pack count so the lobby can show "12,345 species · 3 packs"
+    and warn about load time. Cheap: one query over the small PackSet table + one over current
+    AssetVersion pool sizes (no blobs)."""
+
+    permission_classes: list = []
+
+    def get(self, request: Request) -> Response:
+        try:
+            sets = list(PackSet.objects.filter(enabled=True).values("key", "label", "blurb", "scopes"))
+            tips_by_scope = dict(
+                AssetVersion.objects.filter(is_current=True).values_list("scope", "pool_size")
+            )
+        except DatabaseError:
+            return Response({"sets": []})
+        out = []
+        for s in sets:
+            # Keep only scopes still served, so a set degrades gracefully when a pack is retired.
+            members = [k for k in (s["scopes"] or []) if k in tips_by_scope]
+            if not members:
+                continue
+            out.append({
+                "key": s["key"],
+                "label": s["label"],
+                "blurb": s["blurb"],
+                "scopes": members,
+                "pack_count": len(members),
+                "tip_count": sum(tips_by_scope[k] for k in members),
+            })
+        return Response({"sets": out})
 
 
 class CladesView(APIView):

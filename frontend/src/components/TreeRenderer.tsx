@@ -48,6 +48,8 @@ export interface TreeRendererProps {
   pulseCombo?: number;
   /** game-over: reveal the un-named species beneath each "N hidden" label as faded ghosts */
   reveal?: boolean;
+  /** "No Wikipedia" modifier (#123): suppress the hover NodeCards entirely (name from memory). */
+  noWiki?: boolean;
 }
 
 const PULSE_ACCENT: [number, number, number] = [63, 107, 76];
@@ -233,6 +235,7 @@ export function TreeRenderer({
   pulse = null,
   pulseCombo = 0,
   reveal = false,
+  noWiki = false,
 }: TreeRendererProps) {
   // Manual fold/unfold overrides on top of the automatic budget: `expanded` = wedges the
   // player opened; `collapsedKeys` = clades they folded shut. The Fit button clears both.
@@ -282,6 +285,7 @@ export function TreeRenderer({
     closeTimer.current = window.setTimeout(() => setCards(onlyPinned), 160);
   }
   function onNodeEnter(node: RenderNode, e: { clientX: number; clientY: number }) {
+    if (noWiki) return; // "No Wikipedia" modifier (#123): no hover cards at all.
     const at = anchor(e);
     window.clearTimeout(hoverTimer.current);
     window.clearTimeout(closeTimer.current);

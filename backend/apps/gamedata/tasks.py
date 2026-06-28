@@ -93,6 +93,10 @@ def run_pipeline_job(self, job_id: int) -> str:
             result = _run_fetch_dump(job, stream, emit)
         elif job.kind == PipelineJob.Kind.FETCH_PAGEVIEWS:
             result = _run_fetch_pageviews(job, stream, emit)
+        elif job.kind == PipelineJob.Kind.SCAN_DUMPS:
+            result = _run_scan_dumps(job, stream, emit)
+        elif job.kind == PipelineJob.Kind.DELETE_DUMP:
+            result = _run_delete_dump(job, stream, emit)
         else:
             result = _run_build(job, stream, emit)
     except Exception:  # noqa: BLE001 - record any failure on the job, then re-raise
@@ -134,6 +138,119 @@ def _run_fetch_pageviews(job, stream, emit) -> str:
         args += ["--dump", job.fame_dump]
     call_command("fetch_pageviews_dump", *args, stdout=stream, stderr=stream)
     return f"pageview DB ready for {job.fame_year}-{job.fame_month:02d}"
+
+
+def _dumps_root() -> Path:
+    """The worker's data volume root, where dumps live. BRAIDWORKS_DATA_DIR points at the
+    pageview-DB subdir (…/data/braidworks); its parent is the shared data dir that also holds
+    the CoL ColDP dirs. Falls back to ./data when the env var is unset (dev)."""
+    import os
+
+    braid = os.environ.get("BRAIDWORKS_DATA_DIR", "")
+    return Path(braid).parent if braid else Path("data")
+
+
+def _human(n: int) -> str:
+    units = ["B", "KB", "MB", "GB", "TB"]
+    x = float(n)
+    for u in units:
+        if x < 1024 or u == units[-1]:
+            return f"{x:.0f} {u}" if u == "B" else f"{x:.1f} {u}"
+        x /= 1024
+    return f"{n} B"
+
+
+def _path_size(p: Path) -> int:
+    """Total bytes of a file or (recursively) a directory."""
+    import os
+
+    if p.is_file():
+        return p.stat().st_size
+    total = 0
+    for root, _dirs, files in os.walk(p):
+        for f in files:
+            try:
+                total += (Path(root) / f).stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def _discover_dumps(root: Path) -> list[tuple[str, Path, int]]:
+    """(kind, path, size) for each dump under the data root: CoL ColDP dirs (coldp*),
+    the pageview DBs/archives under braidworks/, and any loose .bz2/.zip download leftovers."""
+    found: list[tuple[str, Path, int]] = []
+    if not root.exists():
+        return found
+    # CoL ColDP dumps: top-level dirs named coldp*.
+    for child in sorted(root.glob("coldp*")):
+        if child.is_dir():
+            found.append(("coldp", child, _path_size(child)))
+    # Pageview DBs / archives in the braidworks subdir.
+    braid = root / "braidworks"
+    if braid.is_dir():
+        for child in sorted(braid.iterdir()):
+            if child.is_file() and child.suffix.lower() in {".db", ".sqlite", ".sqlite3", ".bz2"}:
+                found.append(("pageviews", child, _path_size(child)))
+    # Loose archive leftovers directly under the root.
+    for pat in ("*.bz2", "*.zip"):
+        for child in sorted(root.glob(pat)):
+            if child.is_file():
+                kind = "pageviews" if "pageview" in child.name.lower() else "other"
+                found.append((kind, child, _path_size(child)))
+    return found
+
+
+def _run_scan_dumps(job, stream, emit) -> str:
+    """Inventory the dumps on the worker volume into DumpArtifact rows (the admin reads these).
+    Upserts each found dump with its current size; marks previously-known rows that are no
+    longer on disk as gone (present=False) rather than deleting the tombstone."""
+    from django.utils import timezone
+
+    from .models import DumpArtifact
+
+    root = _dumps_root()
+    emit(f"== scan dumps under {root} ==")
+    now = timezone.now()
+    seen: set[str] = set()
+    for kind, path, size in _discover_dumps(root):
+        sp = str(path)
+        seen.add(sp)
+        DumpArtifact.objects.update_or_create(
+            path=sp,
+            defaults={"kind": kind, "label": path.name, "size_bytes": size,
+                      "present": True, "delete_pending": False, "scanned_at": now},
+        )
+        emit(f"  {kind:10} {_human(size):>10}  {sp}")
+    gone = DumpArtifact.objects.filter(present=True).exclude(path__in=seen)
+    n_gone = gone.update(present=False, size_bytes=0, delete_pending=False)
+    total = sum(s for _k, _p, s in _discover_dumps(root))
+    return f"{len(seen)} dump(s), {_human(total)} on disk" + (f"; {n_gone} now gone" if n_gone else "")
+
+
+def _run_delete_dump(job, stream, emit) -> str:
+    """Delete the dump at ``job.dump_path`` from the worker volume, then update its DumpArtifact
+    row. Guarded to paths under the data root so a tampered/stale job can't remove anything else."""
+    import shutil
+
+    from .models import DumpArtifact
+
+    target = Path(job.dump_path).resolve()
+    root = _dumps_root().resolve()
+    if not str(target).startswith(str(root)):
+        raise ValueError(f"refusing to delete {target}: outside the dumps root {root}")
+    freed = _path_size(target) if target.exists() else 0
+    emit(f"== delete dump {target} ({_human(freed)}) ==")
+    if target.is_dir():
+        shutil.rmtree(target)
+    elif target.exists():
+        target.unlink()
+    else:
+        emit("  (already gone)")
+    DumpArtifact.objects.filter(path=str(job.dump_path)).update(
+        present=False, size_bytes=0, delete_pending=False
+    )
+    return f"deleted {target.name}, freed {_human(freed)}"
 
 
 def _run_build(job, stream, emit) -> str:

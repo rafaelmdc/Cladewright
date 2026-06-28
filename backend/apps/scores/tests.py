@@ -165,6 +165,26 @@ class SubmitAndLeaderboardTests(TestCase):
         self.assertFalse(_rate_plausible(fresh, budget + 50))
         self.assertFalse(_rate_plausible(None, 1))
 
+    def test_large_mix_scope_run_saves(self):
+        # Regression: a run mixing many packs has a long '+'-joined scope key. It used to
+        # overflow Run.scope (max_length 128) → the INSERT errored and the whole submit
+        # transaction rolled back, so the run vanished (ranked or not). The column now holds it.
+        keys = [f"scope{i:02d}xyz" for i in range(16)]  # 16 packs → >128-char joined key
+        for k in keys:
+            AssetVersion.objects.create(scope=k, version=1, pool_size=0, is_current=True)
+        mix = "+".join(sorted(keys))
+        self.assertGreater(len(mix), 128)
+        user = User.objects.create_user("alice", password="x")
+        self.client.force_authenticate(user)
+        res = self.client.post(
+            "/api/scores/runs/",
+            {"mode": "marathon_free", "scope": mix, "transcript": []},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201)
+        run = Run.objects.get(user=user)
+        self.assertEqual(run.scope, mix)  # full mix key persisted, untruncated
+
     def test_submit_rescore_ignores_posted_score(self):
         user = User.objects.create_user("alice", password="x")
         self.client.force_authenticate(user)

@@ -4,6 +4,8 @@ from . import views
 
 urlpatterns = [
     path("scopes/", views.ScopesView.as_view(), name="gamedata-scopes"),
+    # Admin-curated pack sets the lobby offers as one-click bundles (#120).
+    path("sets/", views.SetsView.as_view(), name="gamedata-sets"),
     path("current/", views.CurrentAssetView.as_view(), name="gamedata-current"),
     path("version/", views.AssetVersionView.as_view(), name="gamedata-version"),
     # Huge-scope incremental serving (all-Animalia): autocomplete + lazy lineage fetch.

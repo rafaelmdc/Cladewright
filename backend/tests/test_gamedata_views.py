@@ -182,3 +182,67 @@ class HybridLoadTests(TestCase):
         # living-only mode) species don't inflate the clade's "N remaining" count (#94).
         self.assertEqual([n["pool_count_extant"] for n in lineage], [0, 0])
         self.assertEqual([n["pool_count"] for n in lineage], [1, 1])
+
+
+class SetsViewTests(TestCase):
+    """Admin-curated pack sets (#120): enabled sets list their served members + derived totals."""
+
+    @classmethod
+    def setUpTestData(cls) -> None:
+        from apps.gamedata.models import PackSet
+
+        for scope, label, pool in (("mammalia", "Mammals", 100), ("aves", "Birds", 60)):
+            AssetVersion.objects.create(scope=scope, label=label, version=1, is_current=True,
+                                        pool_size=pool, pool_size_extant=pool, blob={"v": 1})
+        # A set referencing a served pack + one retired pack (filtered out client-side).
+        PackSet.objects.create(key="verts", label="Vertebrates", blurb="land + air",
+                               scopes=["mammalia", "aves", "gone"], sort_order=1)
+        PackSet.objects.create(key="off", label="Disabled", scopes=["mammalia"], enabled=False)
+        # A set whose every member is gone → dropped from the payload entirely.
+        PackSet.objects.create(key="empty", label="Empty", scopes=["gone"], sort_order=2)
+
+    def test_sets_lists_enabled_with_served_members(self) -> None:
+        r = self.client.get(reverse("gamedata-sets"))
+        self.assertEqual(r.status_code, 200)
+        sets = r.json()["sets"]
+        self.assertEqual([s["key"] for s in sets], ["verts"])     # off=disabled, empty=no members
+        s = sets[0]
+        self.assertEqual(s["scopes"], ["mammalia", "aves"])       # "gone" filtered out
+        self.assertEqual(s["pack_count"], 2)
+        self.assertEqual(s["tip_count"], 160)                     # 100 + 60
+
+
+class DumpTaskTests(TestCase):
+    """The worker-side dump inventory/delete helpers (#116)."""
+
+    def _make_dumps(self, root: Path) -> None:
+        (root / "coldp_col").mkdir(parents=True)
+        (root / "coldp_col" / "Taxon.tsv").write_text("x" * 2048)
+        braid = root / "braidworks"
+        braid.mkdir()
+        (braid / "pageviews-202606.db").write_text("y" * 4096)
+        (braid / "notes.txt").write_text("ignored")  # not a dump extension
+
+    def test_discover_dumps_finds_coldp_and_pageviews(self) -> None:
+        from apps.gamedata.tasks import _discover_dumps
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make_dumps(root)
+            found = {kind: (path.name, size) for kind, path, size in _discover_dumps(root)}
+            self.assertEqual(found["coldp"], ("coldp_col", 2048))
+            self.assertEqual(found["pageviews"], ("pageviews-202606.db", 4096))
+            self.assertNotIn("other", found)  # notes.txt ignored
+
+    def test_delete_dump_refuses_path_outside_root(self) -> None:
+        import os
+
+        from apps.gamedata.models import PipelineJob
+        from apps.gamedata.tasks import _run_delete_dump
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["BRAIDWORKS_DATA_DIR"] = str(Path(tmp) / "braidworks")
+            job = PipelineJob(kind=PipelineJob.Kind.DELETE_DUMP, dump_path="/etc/passwd")
+            with self.assertRaises(ValueError):
+                _run_delete_dump(job, None, lambda _m: None)
+            os.environ.pop("BRAIDWORKS_DATA_DIR", None)

@@ -679,19 +679,18 @@ function Game({
       <div className="absolute left-4 top-4 z-30 flex items-center gap-3">
         <Wordmark size="text-2xl" />
         {/* Packs are chosen up front in the lobby and fixed for the run — a badge, not a
-            picker (the daily's is server-decided). */}
-        <span
-          className={`rounded-full border-2 px-3 py-1 font-mono text-xs uppercase tracking-wider ${
-            isDaily
-              ? "border-clade-accent/40 bg-clade-accent/[0.08] text-clade-accent"
-              : "border-clade-ink/15 bg-clade-paper/80 text-clade-ink/60"
-          }`}
-        >
-          {isDaily ? "Daily · " : ""}
-          {(scopeKey ? scopeKey.split(",").filter(Boolean) : [])
-            .map((k) => scopes.find((s) => s.key === k)?.label ?? k)
-            .join(" + ") || (scopes.find((s) => s.key === scopeKey)?.label ?? scopeKey)}
-        </span>
+            picker (the daily's is server-decided). A set bundles several packs into one run;
+            the inline "A + B + C + …" join grew into a giant header bar (#118), so a set
+            collapses into a "Set · N ▾" dropdown that lists its members on demand. */}
+        <ScopeBadge
+          isDaily={isDaily}
+          labels={
+            (scopeKey ? scopeKey.split(",").filter(Boolean) : []).map(
+              (k) => scopes.find((s) => s.key === k)?.label ?? k,
+            )
+          }
+          fallback={scopes.find((s) => s.key === scopeKey)?.label ?? scopeKey ?? ""}
+        />
       </div>
       {/* No tuning panel on the daily — it's fixed and ranked. */}
       {!isDaily && (
@@ -868,6 +867,61 @@ function Game({
 function fmtTime(s: number): string {
   const m = Math.floor(s / 60);
   return `${m}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** The current-scope badge in the top-left HUD. A single pack reads as a plain label; a set
+ *  (several packs played together) would otherwise render a runaway "A + B + C + …" bar
+ *  (#118), so it collapses to "Set · N ▾" and lists the members in a click-to-open dropdown.
+ *  The daily keeps its accent tint and "Daily · " prefix. */
+function ScopeBadge({
+  isDaily,
+  labels,
+  fallback,
+}: {
+  isDaily: boolean;
+  labels: string[];
+  fallback: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const tint = isDaily
+    ? "border-clade-accent/40 bg-clade-accent/[0.08] text-clade-accent"
+    : "border-clade-ink/15 bg-clade-paper/80 text-clade-ink/60";
+  const prefix = isDaily ? "Daily · " : "";
+  // 0–1 packs: nothing to collapse — show the label (or the fallback for a single keyed scope).
+  if (labels.length <= 1) {
+    return (
+      <span className={`rounded-full border-2 px-3 py-1 font-mono text-xs uppercase tracking-wider ${tint}`}>
+        {prefix}
+        {labels[0] ?? fallback}
+      </span>
+    );
+  }
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className={`flex items-center gap-1.5 rounded-full border-2 px-3 py-1 font-mono text-xs uppercase tracking-wider transition hover:border-clade-ink/40 ${tint}`}
+      >
+        {prefix}
+        Set · {labels.length}
+        <span className={`transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
+      </button>
+      {open && (
+        <ul className="absolute left-0 top-full z-40 mt-1 max-h-72 w-max min-w-full overflow-auto rounded-2xl border-2 border-clade-ink/15 bg-clade-paper/95 py-1 shadow-lg backdrop-blur">
+          {labels.map((l) => (
+            <li
+              key={l}
+              className="whitespace-nowrap px-3 py-1 font-mono text-xs uppercase tracking-wider text-clade-ink/70"
+            >
+              {l}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 /** Reconstruct a placement Target from a stored transcript id (a tip or node id). Returns

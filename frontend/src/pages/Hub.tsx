@@ -86,8 +86,12 @@ export function Hub() {
             className="rounded-full border-2 border-clade-ink/40 px-2.5 py-0.5 font-bold text-clade-ink/60 transition hover:border-clade-ink hover:text-clade-ink"
           >
             report a bug ↗
-          </a>{" "}
-          · <BuildTag />
+          </a>
+        </p>
+        {/* Version stamp on its OWN line: at narrow widths the build tag used to wrap off the
+            end of the data/FAQ line mid-string (#121). Giving it a dedicated line keeps it intact. */}
+        <p className="mt-1 text-center font-mono text-[11px] uppercase tracking-wider text-clade-ink/35">
+          <BuildTag />
         </p>
       </div>
     </div>

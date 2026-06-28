@@ -17,6 +17,7 @@ import re
 from functools import lru_cache
 
 from django.conf import settings
+from django.db.models import Count, Max
 from django.db.utils import DatabaseError
 from django.http import HttpResponse
 from rest_framework.request import Request
@@ -156,6 +157,63 @@ class ScopesView(APIView):
             for r in rows
         ]
         return Response({"scopes": scopes})
+
+
+class CladesView(APIView):
+    """GET /api/gamedata/clades/?scope=KEY -> the major clades inside one pack.
+
+    Feeds the scope picker's hover tooltip (#119): "what's actually in this pack?". Returns
+    the first layer of named clades that splits the pack into *recognisable* groups — biggest
+    first by playable-pool size. A scope keeps the whole backbone above its subject
+    (Animalia→Chordata→…→Mammalia), so the shallowest layers are a single-child spine, and even
+    the first branch is often lopsided (Theria holds 99.9% of mammals vs a handful of monotremes).
+    So we descend to the first depth that both branches AND isn't a near-monopoly — typically the
+    orders/classes a player recognises. Cheap: a couple of indexed queries over the small
+    relational node mirror, no blob read."""
+
+    permission_classes: list = []
+    _LIMIT = 12
+    # A layer counts as a real split only when its biggest clade holds < this fraction of the
+    # pool — past it the layer is one giant clade + scraps (a spine, not a useful preview).
+    _MONOPOLY = 0.85
+
+    def get(self, request: Request) -> Response:
+        scope = request.query_params.get("scope")
+        if not scope:
+            return Response({"clades": []})
+        try:
+            av = _current(scope)
+            if av is None:
+                return Response({"clades": []})
+            nodes = TaxonNode.objects.filter(asset=av, depth__gte=1)
+            # Per-depth (node count, biggest clade) — a few dozen rows at most. Walk depths
+            # shallow→deep and take the first that branches (≥2 nodes) into a non-monopoly
+            # split. Fall back to the first branch, then the shallowest layer, for odd trees.
+            layers = list(
+                nodes.values("depth")
+                .annotate(n=Count("id"), mx=Max("pool_count"))
+                .order_by("depth")
+            )
+            if not layers:
+                return Response({"clades": []})
+            cap = (av.pool_size or 0) * self._MONOPOLY
+            depth = next(
+                (lyr["depth"] for lyr in layers if lyr["n"] >= 2 and lyr["mx"] < cap),
+                next((lyr["depth"] for lyr in layers if lyr["n"] >= 2), layers[0]["depth"]),
+            )
+            rows = (
+                nodes.filter(depth=depth)
+                .order_by("-pool_count", "sci")
+                .values("sci", "common", "pool_count")[: self._LIMIT]
+            )
+        except DatabaseError:
+            return Response({"clades": []})
+        return Response({
+            "clades": [
+                {"sci": r["sci"], "common": r["common"], "tip_count": r["pool_count"]}
+                for r in rows
+            ]
+        })
 
 
 class CurrentAssetView(APIView):

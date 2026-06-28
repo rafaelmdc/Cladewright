@@ -4,6 +4,8 @@ from . import views
 
 urlpatterns = [
     path("scopes/", views.ScopesView.as_view(), name="gamedata-scopes"),
+    # The major clades inside one pack — feeds the picker's hover tooltip (#119).
+    path("clades/", views.CladesView.as_view(), name="gamedata-clades"),
     path("current/", views.CurrentAssetView.as_view(), name="gamedata-current"),
     path("version/", views.AssetVersionView.as_view(), name="gamedata-version"),
     # Huge-scope incremental serving (all-Animalia): autocomplete + lazy lineage fetch.

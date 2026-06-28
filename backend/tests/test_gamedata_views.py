@@ -77,6 +77,90 @@ class VersionedCachingTests(TestCase):
         self.assertEqual(b.json()["version"], 1)  # the pinned blob, not current (v2)
 
 
+class CladesViewTests(TestCase):
+    """The picker's hover preview (#119): the shallowest non-root clade layer of a pack's
+    current build, biggest first."""
+
+    @classmethod
+    def setUpTestData(cls) -> None:
+        av = AssetVersion.objects.create(
+            scope="mammalia", label="Mammals", version=1, is_current=True,
+            pool_size=30, pool_size_extant=30, blob={"version": 1, "scope": "mammalia"},
+        )
+        TaxonNode.objects.create(
+            asset=av, key="cls:Mammalia", rank="class", sci="Mammalia", common="mammals",
+            parent_key=None, pool_count=30, pool_count_extant=30, depth=0, lineage=[],
+        )
+        # Two depth-1 orders (the layer the preview shows) + one depth-2 family (must be
+        # excluded — only the shallowest layer surfaces).
+        TaxonNode.objects.create(
+            asset=av, key="ord:Carnivora", rank="order", sci="Carnivora", common="carnivorans",
+            parent_key="cls:Mammalia", pool_count=20, pool_count_extant=20, depth=1,
+            lineage=["cls:Mammalia"],
+        )
+        TaxonNode.objects.create(
+            asset=av, key="ord:Primates", rank="order", sci="Primates", common="primates",
+            parent_key="cls:Mammalia", pool_count=10, pool_count_extant=10, depth=1,
+            lineage=["cls:Mammalia"],
+        )
+        TaxonNode.objects.create(
+            asset=av, key="fam:Felidae", rank="family", sci="Felidae", common="cats",
+            parent_key="ord:Carnivora", pool_count=5, pool_count_extant=5, depth=2,
+            lineage=["cls:Mammalia", "ord:Carnivora"],
+        )
+
+    def test_clades_returns_top_layer_biggest_first(self) -> None:
+        r = self.client.get(reverse("gamedata-clades"), {"scope": "mammalia"})
+        self.assertEqual(r.status_code, 200)
+        clades = r.json()["clades"]
+        # Only the two depth-1 orders, biggest pool first; the depth-2 family is excluded.
+        self.assertEqual([c["sci"] for c in clades], ["Carnivora", "Primates"])
+        self.assertEqual(clades[0]["tip_count"], 20)
+        self.assertEqual(clades[0]["common"], "carnivorans")
+
+    def test_clades_unknown_scope_is_empty(self) -> None:
+        r = self.client.get(reverse("gamedata-clades"), {"scope": "nope"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["clades"], [])
+
+    def test_clades_missing_scope_is_empty(self) -> None:
+        r = self.client.get(reverse("gamedata-clades"))
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["clades"], [])
+
+
+class CladesMonopolyTests(TestCase):
+    """The preview skips a near-monopoly layer (one clade holding ~all the pool, e.g. Theria
+    over the mammals) and descends to the first layer that splits into recognisable groups."""
+
+    @classmethod
+    def setUpTestData(cls) -> None:
+        av = AssetVersion.objects.create(
+            scope="mammalia", label="Mammals", version=1, is_current=True,
+            pool_size=100, pool_size_extant=100, blob={"version": 1, "scope": "mammalia"},
+        )
+
+        def node(key, sci, parent, pool, depth, lineage):
+            TaxonNode.objects.create(
+                asset=av, key=key, rank="clade", sci=sci, common=sci, parent_key=parent,
+                pool_count=pool, pool_count_extant=pool, depth=depth, lineage=lineage,
+            )
+
+        node("cls:Mammalia", "Mammalia", None, 100, 0, [])
+        # depth 1 branches but is a monopoly: Theria holds 99/100 → skipped.
+        node("Theria", "Theria", "cls:Mammalia", 99, 1, ["cls:Mammalia"])
+        node("Proto", "Prototheria", "cls:Mammalia", 1, 1, ["cls:Mammalia"])
+        # depth 2 is the first balanced split — the layer the preview should return.
+        L2 = ["cls:Mammalia", "Theria"]
+        node("ord:Rodentia", "Rodentia", "Theria", 60, 2, L2)
+        node("ord:Carnivora", "Carnivora", "Theria", 39, 2, L2)
+
+    def test_clades_skips_monopoly_layer(self) -> None:
+        r = self.client.get(reverse("gamedata-clades"), {"scope": "mammalia"})
+        clades = r.json()["clades"]
+        self.assertEqual([c["sci"] for c in clades], ["Rodentia", "Carnivora"])
+
+
 # Full asset (3 tips) with a cap of 1 → hybrid: blob ships the famous tip + complete
 # coarse backbone; the relational mirror stays full so the tail (tip:rare) resolves.
 HYBRID_ASSET = {

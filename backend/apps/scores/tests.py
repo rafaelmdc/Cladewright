@@ -41,6 +41,22 @@ class RescoreTests(TestCase):
         r = rescore(["tip:1", "tip:bogus", "nope"], self.tips, self.nodes)
         self.assertEqual((r.score, r.unknown), (1, 2))
 
+    def test_top_down_rejects_cold_named_species(self):
+        # #125: with no clade named first, a bare species scores nothing.
+        r = rescore(["tip:1", "tip:2"], self.tips, self.nodes, top_down=True)
+        self.assertEqual((r.score, r.new, r.refinements), (0, 0, 0))
+
+    def test_top_down_counts_species_after_anchor(self):
+        # Name the genus first → the species is a valid refinement and counts.
+        r = rescore(["gen:G", "tip:1"], self.tips, self.nodes, top_down=True)
+        self.assertEqual((r.new, r.refinements, r.score), (1, 1, 2))
+
+    def test_top_down_anchor_does_not_leak_across_clades(self):
+        # Anchoring gen:G does not license a species under a different genus (gen:H).
+        r = rescore(["gen:G", "tip:1", "tip:3"], self.tips, self.nodes, top_down=True)
+        # gen:G (new) + tip:1 (refinement); tip:3 has no named ancestor → ignored.
+        self.assertEqual((r.new, r.refinements, r.score), (1, 1, 2))
+
     def test_combo_bonus_from_timings(self):
         # Three placements within the window → combo 1,2,3 → bonus 0+1+2 on top of base 3.
         r = rescore(
@@ -634,12 +650,12 @@ class ModifierSubmitTests(TestCase):
 
     def test_modifiers_endpoint_lists_enabled(self):
         from .models import GameModifier
-        GameModifier.objects.create(game="marathon", key="blind", label="Blind", multiplier=1.5)
+        GameModifier.objects.create(game="marathon", key="testmod", label="Test", multiplier=1.5)
         GameModifier.objects.create(game="marathon", key="off", label="Off", multiplier=2.0, enabled=False)
         res = self.client.get("/api/scores/modifiers/?mode=marathon_free")
         self.assertEqual(res.status_code, 200)
         keys = [m["key"] for m in res.data["modifiers"]]
-        self.assertIn("blind", keys)
+        self.assertIn("testmod", keys)
         self.assertIn("no_tree", keys)                      # seeded by migration 0023
         self.assertNotIn("off", keys)                       # disabled row hidden
         self.assertIn("infiniteTime", res.data["setting_multipliers"])
@@ -666,16 +682,16 @@ class ModifierSubmitTests(TestCase):
 
     def test_modifier_multiplies_board_score(self):
         from .models import GameModifier
-        GameModifier.objects.create(game="marathon", key="blind", label="Blind", multiplier=1.5)
+        GameModifier.objects.create(game="marathon", key="testmod", label="Test", multiplier=1.5)
         user = User.objects.create_user("alice", password="x")
-        res = self._submit(user, modifiers=["blind"])
+        res = self._submit(user, modifiers=["testmod"])
         self.assertEqual(res.status_code, 201)
         self.assertEqual(res.data["base_score"], 2)
         self.assertAlmostEqual(res.data["score_multiplier"], 1.5)
         self.assertEqual(res.data["score"], 3)              # round(2 × 1.5)
         run = Run.objects.get(user=user)
         self.assertEqual((run.base_score, run.score), (2, 3))
-        self.assertEqual(run.config["modifiers"], ["blind"])
+        self.assertEqual(run.config["modifiers"], ["testmod"])
         self.assertTrue(run.ranked)                          # valid session → on the board
 
     def test_easing_setting_derates_but_stays_on_board(self):
@@ -698,11 +714,34 @@ class ModifierSubmitTests(TestCase):
 
     def test_harder_modifier_outranks_default_run(self):
         from .models import GameModifier
-        GameModifier.objects.create(game="marathon", key="blind", label="Blind", multiplier=1.5)
+        GameModifier.objects.create(game="marathon", key="testmod", label="Test", multiplier=1.5)
         default_user = User.objects.create_user("bob", password="x")
         self._submit(default_user)                           # base 2 × 1.0 = 2
         hard_user = User.objects.create_user("alice", password="x")
-        self._submit(hard_user, modifiers=["blind"])         # base 2 × 1.5 = 3
+        self._submit(hard_user, modifiers=["testmod"])       # base 2 × 1.5 = 3
         board = self.client.get("/api/scores/leaderboard/?mode=marathon_free&scope=test")
         self.assertEqual([(e["user"], e["score"]) for e in board.data["entries"]],
                          [("alice", 3), ("bob", 2)])         # harder run ranks first
+
+    def test_top_down_modifier_rescores_constraint(self):
+        # #125: the server re-scores the top-down rule, so a forged transcript that names
+        # species cold can't claim the multiplier. Anchored placements count; cold ones don't.
+        cold = User.objects.create_user("bob", password="x")
+        res_cold = self._submit(cold, modifiers=["top_down"],
+                                transcript=["tip:1", "tip:2"])      # no clade named first
+        self.assertEqual(res_cold.status_code, 201)
+        self.assertEqual(res_cold.data["base_score"], 0)            # both rejected server-side
+        self.assertEqual(res_cold.data["score"], 0)
+
+        anchored = User.objects.create_user("alice", password="x")
+        res = self._submit(anchored, modifiers=["top_down"],
+                           transcript=["gen:G", "tip:1", "tip:2"])  # anchor, then refine
+        self.assertEqual(res.data["base_score"], 3)                 # gen:G + two refinements
+        self.assertAlmostEqual(res.data["score_multiplier"], 1.5)   # seeded top_down multiplier
+
+    def test_seeded_constraint_modifiers(self):
+        # #123/#124/#125 seeded enabled by migration 0025, with blind pinning a finite clock.
+        res = self.client.get("/api/scores/modifiers/?mode=marathon_free")
+        by_key = {m["key"]: m for m in res.data["modifiers"]}
+        self.assertEqual({"no_wiki", "blind", "top_down"} - set(by_key), set())
+        self.assertEqual(by_key["blind"]["forces_settings"], {"infiniteTime": False})

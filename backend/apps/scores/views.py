@@ -472,6 +472,11 @@ class SubmitRunView(APIView):
             node_pool_counts=node_pool_counts,
             clade_multiplier=defaults.clade_score_multiplier,
             clade_min_size=defaults.clade_min_size,
+            # Top-down modifier (#125): re-score the same constraint the client enforced — a
+            # species only counts once a containing clade was named first. Resolved server-side
+            # from the run's modifiers (never the client's word), so the multiplier can't be
+            # claimed by a transcript that ignored the rule.
+            top_down="top_down" in resolution.modifiers,
             **combo_kwargs,
         )
 

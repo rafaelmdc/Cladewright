@@ -198,8 +198,8 @@ class CladesView(APIView):
                 return Response({"clades": []})
             cap = (av.pool_size or 0) * self._MONOPOLY
             depth = next(
-                (l["depth"] for l in layers if l["n"] >= 2 and l["mx"] < cap),
-                next((l["depth"] for l in layers if l["n"] >= 2), layers[0]["depth"]),
+                (lyr["depth"] for lyr in layers if lyr["n"] >= 2 and lyr["mx"] < cap),
+                next((lyr["depth"] for lyr in layers if lyr["n"] >= 2), layers[0]["depth"]),
             )
             rows = (
                 nodes.filter(depth=depth)

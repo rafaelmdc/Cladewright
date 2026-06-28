@@ -1,7 +1,9 @@
 """Admin: scope/asset control + the pipeline job queue."""
 from __future__ import annotations
 
+from django import forms
 from django.contrib import admin
+from django.contrib.admin.widgets import FilteredSelectMultiple
 
 from .models import (
     Alias, AssetVersion, DumpArtifact, ManualAlias, PackSet, PipelineJob, TaxonNode, TaxonTip,
@@ -346,12 +348,45 @@ class PipelineJobAdmin(admin.ModelAdmin):
         })
 
 
+class PackSetForm(forms.ModelForm):
+    """Pick a set's packs from the served scopes with a dual-list chooser instead of hand-
+    typing a JSON list (#120). Choices are the current AssetVersion scopes; any scope already
+    stored on the set is kept selectable even if it's since been retired, so editing an old set
+    never silently drops a member."""
+
+    scopes = forms.MultipleChoiceField(
+        widget=FilteredSelectMultiple("packs", is_stacked=False),
+        required=True,
+        help_text="The packs this set bundles. Selecting it in the lobby picks exactly these.",
+    )
+
+    class Meta:
+        model = PackSet
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        served = list(
+            AssetVersion.objects.filter(is_current=True)
+            .order_by("label", "scope")
+            .values_list("scope", "label")
+        )
+        choices = [(s, lbl or s) for s, lbl in served]
+        # Keep any already-saved scope selectable even if it's no longer served (retired pack).
+        known = {s for s, _ in choices}
+        for s in self.instance.scopes or []:
+            if s not in known:
+                choices.append((s, f"{s} (retired)"))
+        self.fields["scopes"].choices = choices
+
+
 @admin.register(PackSet)
 class PackSetAdmin(admin.ModelAdmin):
-    """Curate the one-click pack bundles the lobby offers (#120). `scopes` is a JSON list of
-    AssetVersion scope keys, e.g. ["mammalia", "aves", "fish"] — browse Asset versions for the
-    exact keys. Keys no longer served are ignored client-side, so a set degrades gracefully."""
+    """Curate the one-click pack bundles the lobby offers (#120). Pick the member packs from a
+    dual-list chooser (see PackSetForm); a set just selects exactly those scopes in the lobby.
+    Keys no longer served are ignored client-side, so a set degrades gracefully."""
 
+    form = PackSetForm
     list_display = ("label", "key", "pack_count", "enabled", "sort_order")
     list_editable = ("enabled", "sort_order")
     list_filter = ("enabled",)

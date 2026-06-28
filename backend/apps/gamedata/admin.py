@@ -404,6 +404,8 @@ class DumpArtifactAdmin(admin.ModelAdmin):
 
     @admin.action(description="Delete selected dumps from disk (reclaim space)")
     def delete_dumps(self, request, queryset):
+        from django.contrib import messages
+
         n = 0
         for art in queryset.filter(present=True, delete_pending=False):
             job = PipelineJob.objects.create(

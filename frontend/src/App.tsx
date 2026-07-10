@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { DisplayNamePrompt } from "./components/DisplayNamePrompt";
 import { RunImporter } from "./components/RunImporter";
 import { Account } from "./pages/Account";
+import { CladeClash } from "./pages/CladeClash";
 import { Faq } from "./pages/Faq";
 import { Hub } from "./pages/Hub";
 import { Leaderboard } from "./pages/Leaderboard";
@@ -19,6 +20,7 @@ export function App() {
         <Route path="/" element={<Hub />} />
         <Route path="/play/:mode" element={<Lobby />} />
         <Route path="/marathon" element={<Marathon />} />
+        <Route path="/clash" element={<CladeClash />} />
         <Route path="/account" element={<Account />} />
         <Route path="/leaderboard" element={<Leaderboard />} />
         <Route path="/faq" element={<Faq />} />

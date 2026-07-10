@@ -55,6 +55,8 @@ export interface TreeRendererProps {
 const PULSE_ACCENT: [number, number, number] = [63, 107, 76];
 const PULSE_GOLD: [number, number, number] = [199, 154, 58];
 const EXPLODE_AT = 3; // combo at which the node explosion kicks in (it grows from here)
+const LONG_PRESS_MS = 450; // touch: hold this long on a clade to fold/unfold it (#133)
+const TAP_MOVE_CANCEL = 12; // px of finger travel that turns a tap/long-press into a pan/drag
 
 /** Heat 0..1 → forest-green charging toward warm gold. */
 function pulseColor(t: number): string {
@@ -273,6 +275,10 @@ export function TreeRenderer({
   const closeTimer = useRef<number | undefined>(undefined);
   const uidRef = useRef(0);
   const [cards, setCards] = useState<OpenCard[]>([]);
+  // Touch tap/long-press bookkeeping (#133): a short tap opens a node's card, a long-press
+  // folds the clade. lastTouch suppresses the synthetic click that follows a touch tap.
+  const pressRef = useRef<{ key: string; x: number; y: number; fired: boolean; timer: number } | null>(null);
+  const lastTouchRef = useRef(false);
 
   const onlyPinned = (cs: OpenCard[]) => cs.filter((c) => c.pinned);
 
@@ -284,8 +290,9 @@ export function TreeRenderer({
     window.clearTimeout(closeTimer.current);
     closeTimer.current = window.setTimeout(() => setCards(onlyPinned), 160);
   }
-  function onNodeEnter(node: RenderNode, e: { clientX: number; clientY: number }) {
+  function onNodeEnter(node: RenderNode, e: React.PointerEvent) {
     if (noWiki) return; // "No Wikipedia" modifier (#123): no hover cards at all.
+    if (e.pointerType === "touch") return; // touch has no hover — a tap opens the card instead.
     const at = anchor(e);
     window.clearTimeout(hoverTimer.current);
     window.clearTimeout(closeTimer.current);
@@ -301,10 +308,10 @@ export function TreeRenderer({
     window.clearTimeout(hoverTimer.current);
     scheduleTransientClose();
   }
-  // Click toggles a clade's fold state — cards are a hover-then-pin mechanic, so the click
-  // is free for structure. A wedge opens; an open clade (not the root) folds shut; a tip
-  // does nothing (hover it for its card).
-  function onNodeClick(node: RenderNode) {
+  // Fold/unfold a clade: a wedge opens, an open clade (not the root) folds shut, a tip does
+  // nothing. On desktop this is a click (cards are a separate hover-then-pin mechanic); on
+  // touch it's a long-press (a tap opens the card instead).
+  function foldNode(node: RenderNode) {
     window.clearTimeout(hoverTimer.current);
     const toggle = (drop: React.Dispatch<React.SetStateAction<Set<string>>>, add: React.Dispatch<React.SetStateAction<Set<string>>>) => {
       drop((s) => {
@@ -324,6 +331,49 @@ export function TreeRenderer({
     }
     setCards(onlyPinned); // a fold/unfold dismisses the transient hover peek
   }
+  function onNodeClick(node: RenderNode) {
+    if (lastTouchRef.current) return; // touch routes through tap/long-press, not the click
+    foldNode(node);
+  }
+
+  // Touch: toggle this node's pinned card (there's no hover to open a transient one).
+  function toggleCardAt(node: RenderNode, e: { clientX: number; clientY: number }) {
+    if (noWiki) return;
+    const at = anchor(e);
+    setCards((cs) => {
+      const open = cs.find((c) => c.id === node.key && c.pinned);
+      if (open) return cs.filter((c) => c.uid !== open.uid); // tap again to dismiss
+      const uid = ++uidRef.current;
+      return [...onlyPinned(cs), { uid, id: node.key, kind: node.kind, px: at.px, py: at.py, pinned: true }];
+    });
+  }
+  function onNodePointerDown(node: RenderNode, e: React.PointerEvent) {
+    e.stopPropagation(); // a node press must not also start a canvas pan/pinch
+    lastTouchRef.current = e.pointerType === "touch";
+    if (e.pointerType !== "touch") return;
+    window.clearTimeout(pressRef.current?.timer);
+    const timer = window.setTimeout(() => {
+      if (pressRef.current) pressRef.current.fired = true;
+      foldNode(node); // held long enough → fold/unfold
+    }, LONG_PRESS_MS);
+    pressRef.current = { key: node.key, x: e.clientX, y: e.clientY, fired: false, timer };
+  }
+  function onNodePointerMove(e: React.PointerEvent) {
+    const pr = pressRef.current;
+    if (!pr) return;
+    if (Math.hypot(e.clientX - pr.x, e.clientY - pr.y) > TAP_MOVE_CANCEL) {
+      window.clearTimeout(pr.timer); // slid off → it's a drag, not a tap/long-press
+      pressRef.current = null;
+    }
+  }
+  function onNodePointerUp(node: RenderNode, e: React.PointerEvent) {
+    const pr = pressRef.current;
+    if (e.pointerType === "touch" && pr && pr.key === node.key) {
+      window.clearTimeout(pr.timer);
+      if (!pr.fired) toggleCardAt(node, e); // short tap → open/close the card
+      pressRef.current = null;
+    }
+  }
   function pinCard(uid: number) {
     window.clearTimeout(closeTimer.current);
     setCards((cs) => cs.map((c) => (c.uid === uid ? { ...c, pinned: true } : c)));
@@ -335,9 +385,16 @@ export function TreeRenderer({
   // --- pan / zoom ---
   const svgRef = useRef<SVGSVGElement>(null);
   const [view, setView] = useState({ scale: 1, tx: 0, ty: 0 });
+  // Latest view in a ref so the pointer handlers read current pan/zoom without re-binding.
+  const viewRef = useRef(view);
+  viewRef.current = view;
   // Pan deltas arrive in CSS pixels but tx/ty live in viewBox user units; remember the
   // start position in both spaces so a drag converts correctly regardless of canvas size.
   const drag = useRef<{ cx: number; cy: number; tx: number; ty: number } | null>(null);
+  // Active canvas pointers (id → last client pos). One = pan; two = pinch-zoom. Touch has no
+  // wheel, so pinch is the ONLY way to zoom in on mobile (#133).
+  const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinch = useRef<{ dist: number; mx: number; my: number } | null>(null);
 
   /** Frame the whole tree: zoom so the larger content axis fits the viewBox (only ever
    *  zooms OUT — a small tree stays at 1×), centred. This is what keeps a tall phylogram
@@ -390,16 +447,59 @@ export function TreeRenderer({
     window.addEventListener("wheel", onWheel, { passive: false });
     return () => window.removeEventListener("wheel", onWheel);
   }, []);
+  /** Distance + midpoint (client px) of the two active pinch pointers. */
+  function twoPointerState(): { dist: number; mx: number; my: number } {
+    const [a, b] = [...pointers.current.values()];
+    return { dist: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+  }
   function onPointerDown(e: React.PointerEvent) {
-    if (e.button !== 0) return; // left-drag only
-    setCards(onlyPinned); // grabbing empty canvas dismisses the hover peek, keeps pins
-    drag.current = { cx: e.clientX, cy: e.clientY, tx: view.tx, ty: view.ty };
+    if (e.button !== 0) return; // primary button / touch / pen only
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     // Capture on the SVG itself (currentTarget) — a stable element. Capturing on e.target
     // (a child glyph/edge) could lose the pointer-up when that child re-rendered, leaving
     // a stuck drag that then panned on button-less moves.
     e.currentTarget.setPointerCapture(e.pointerId);
+    if (pointers.current.size === 1) {
+      setCards(onlyPinned); // grabbing empty canvas dismisses the hover peek, keeps pins
+      drag.current = { cx: e.clientX, cy: e.clientY, tx: viewRef.current.tx, ty: viewRef.current.ty };
+    } else if (pointers.current.size === 2) {
+      drag.current = null; // second finger down → switch from pan to pinch
+      pinch.current = twoPointerState();
+    }
   }
   function onPointerMove(e: React.PointerEvent) {
+    const tracked = pointers.current.get(e.pointerId);
+    if (tracked) {
+      tracked.x = e.clientX;
+      tracked.y = e.clientY;
+    }
+    // Two fingers → pinch-zoom about the finger midpoint, plus two-finger pan.
+    if (pointers.current.size >= 2 && pinch.current) {
+      const cur = twoPointerState();
+      const f = unitsPerPixel();
+      const r = svgRef.current?.getBoundingClientRect();
+      const cx = (r?.left ?? 0) + (r?.width ?? 0) / 2;
+      const cy = (r?.top ?? 0) + (r?.height ?? 0) / 2;
+      // Midpoint in viewBox units (the square viewBox is centred on the svg centre).
+      const vx = (cur.mx - cx) * f;
+      const vy = (cur.my - cy) * f;
+      const panX = (cur.mx - pinch.current.mx) * f;
+      const panY = (cur.my - pinch.current.my) * f;
+      const rawRatio = pinch.current.dist > 0 ? cur.dist / pinch.current.dist : 1;
+      setView((v) => {
+        const scale = Math.min(6, Math.max(0.3, v.scale * rawRatio));
+        const ratio = scale / v.scale; // effective ratio after clamping
+        // Hold the point under the fingers fixed while scaling, then apply the pan.
+        return {
+          scale,
+          tx: vx * (1 - ratio) + v.tx * ratio + panX,
+          ty: vy * (1 - ratio) + v.ty * ratio + panY,
+        };
+      });
+      pinch.current = cur;
+      return;
+    }
+    // One finger / mouse → pan.
     if (!drag.current) return;
     // onPointerMove fires for ALL moves over the canvas, button or not. If the left
     // button isn't actually held, the drag has ended (possibly via a missed pointer-up) —
@@ -418,16 +518,24 @@ export function TreeRenderer({
     // Clamp so the tree can never be flung entirely off-canvas. The bound follows the
     // ACTUAL content half-extent (per axis), so every leaf of a tall phylogram stays
     // reachable by panning — not just the slice that fits the viewBox.
-    const limX = (Math.max(VIEW / 2, ext.x) + 60) * view.scale;
-    const limY = (Math.max(VIEW / 2, ext.y) + 60) * view.scale;
+    const limX = (Math.max(VIEW / 2, ext.x) + 60) * viewRef.current.scale;
+    const limY = (Math.max(VIEW / 2, ext.y) + 60) * viewRef.current.scale;
     setView((v) => ({
       ...v,
       tx: Math.max(-limX, Math.min(limX, tx0 + dx)),
       ty: Math.max(-limY, Math.min(limY, ty0 + dy)),
     }));
   }
-  function onPointerUp() {
-    drag.current = null;
+  function onPointerUp(e: React.PointerEvent) {
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size < 2) pinch.current = null;
+    if (pointers.current.size === 1) {
+      // One finger left after a pinch — resume panning from where it sits, so it doesn't jump.
+      const [only] = pointers.current.values();
+      drag.current = { cx: only.x, cy: only.y, tx: viewRef.current.tx, ty: viewRef.current.ty };
+    } else if (pointers.current.size === 0) {
+      drag.current = null;
+    }
   }
 
   // Below this zoom we shed secondary labels; the culling pass needs to know so it doesn't
@@ -458,7 +566,7 @@ export function TreeRenderer({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerLeave={onPointerUp}
+        onPointerCancel={onPointerUp}
       >
         <g transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}>
           {/* edges */}
@@ -487,7 +595,9 @@ export function TreeRenderer({
                 style={{ cursor: "pointer" }}
                 onPointerEnter={(e) => onNodeEnter(p.node, e)}
                 onPointerLeave={onNodeLeave}
-                onPointerDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => onNodePointerDown(p.node, e)}
+                onPointerMove={onNodePointerMove}
+                onPointerUp={(e) => onNodePointerUp(p.node, e)}
                 onClick={() => onNodeClick(p.node)}
               >
                 {pulse && pulse.key === p.node.key && (
@@ -538,7 +648,8 @@ export function TreeRenderer({
           setCollapsedKeys(new Set());
           fit();
         }}
-        className="absolute bottom-4 right-4 rounded-lg border border-clade-ink/15 bg-white/70 px-3 py-1.5 text-xs text-clade-ink/70 backdrop-blur transition hover:border-clade-ink/40"
+        // Lifts above the mobile bottom-docked search input; corner-anchored on desktop.
+        className="absolute bottom-20 right-4 rounded-lg border border-clade-ink/15 bg-white/70 px-3 py-1.5 text-xs text-clade-ink/70 backdrop-blur transition hover:border-clade-ink/40 sm:bottom-4"
       >
         Fit
       </button>

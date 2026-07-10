@@ -42,6 +42,7 @@ import {
 } from "../lib/game/multipliers";
 import { PlacedList, buildPlacedList } from "../components/PlacedList";
 import { useTitle } from "../lib/useTitle";
+import { useIsNarrow, useVisualViewportHeight } from "../lib/useViewport";
 import { createInducedTree, place, type InducedTree, type Placement } from "../lib/tree/induced";
 
 type FlashTone = "good" | "small" | "none";
@@ -683,13 +684,23 @@ function Game({
 
   const lowTime = !settings.infiniteTime && seconds <= 10;
 
+  // On mobile the on-screen keyboard is up almost the whole game. 100vh doesn't shrink for it,
+  // so a full-height surface draws the tree + HUD behind the keyboard. Size the surface to the
+  // *visual* viewport instead, and dock the input at its bottom edge — right above the keyboard —
+  // so the tree owns everything between the slim header and the input (#133).
+  const viewportH = useVisualViewportHeight();
+  const isNarrow = useIsNarrow();
+
   // The scope this run submits to. A mix is a '+'-joined key ("aves+mammalia"); the server
   // re-scores it against each component scope's current build and ranks it on its own
   // combined board, so mixed runs are first-class (submitted + ranked) like single ones.
   const scopeId = asset.scope ?? scopeKey ?? "";
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-clade-bg">
+    <div
+      className="relative h-screen w-screen overflow-hidden bg-clade-bg"
+      style={viewportH ? { height: viewportH } : undefined}
+    >
       {/* decorative field-notebook frame around the canvas */}
       <div className="pointer-events-none absolute inset-2 z-0 rounded-[26px] border-2 border-clade-ink/15" />
 
@@ -741,7 +752,9 @@ function Game({
         type="button"
         aria-label="How to play"
         onClick={() => setHelpOpen(true)}
-        className="absolute bottom-4 left-4 z-30 flex items-center gap-2 rounded-full border-2 border-clade-accent/50 bg-white/85 py-1.5 pl-1.5 pr-3.5 font-hand text-lg text-clade-accent shadow-sm backdrop-blur transition hover:border-clade-accent hover:bg-clade-accent hover:text-clade-paper"
+        // Rides above the docked input on mobile (which owns the bottom edge there); back in
+        // the corner on desktop where the input is up top.
+        className="absolute bottom-20 left-4 z-30 flex items-center gap-2 rounded-full border-2 border-clade-accent/50 bg-white/85 py-1.5 pl-1.5 pr-3.5 font-hand text-lg text-clade-accent shadow-sm backdrop-blur transition hover:border-clade-accent hover:bg-clade-accent hover:text-clade-paper sm:bottom-4"
       >
         <span className="grid h-6 w-6 place-items-center rounded-full border-2 border-current font-bold leading-none">
           ?
@@ -756,9 +769,10 @@ function Game({
       />
 
       {/* HUD — timer (left) and tally (right) hug the corners, BELOW the wordmark/scope
-          row so the picker never overlaps the timer. The search bar + notification are
-          centered on the viewport independently, so the bar reads as dead-center. */}
-      <div className="pointer-events-none absolute inset-x-0 top-32 z-10 flex items-start justify-between px-6 sm:top-20">
+          row so the picker never overlaps the timer. On mobile the search bar now docks at
+          the bottom (above the keyboard), so the HUD rides up close under the header instead
+          of being pushed down to clear a top search bar. */}
+      <div className="pointer-events-none absolute inset-x-0 top-16 z-10 flex items-start justify-between px-6 sm:top-20">
         <div className="leading-none">
           <span className="font-mono text-[10px] uppercase tracking-widest text-clade-ink/45">
             Time
@@ -775,10 +789,11 @@ function Game({
         </div>
       </div>
 
-      {/* Search bar: dead-center on desktop (top-10). On mobile it spans the width and
-          would collide with the wordmark/scope row above and the timer below, so it drops
-          a row down (top-16) — the HUD timer/tally drops further (top-32) to match. */}
-      <div className="pointer-events-none absolute left-1/2 top-16 z-20 flex w-full max-w-md -translate-x-1/2 flex-col items-center gap-2 px-4 sm:top-10">
+      {/* Search bar: dead-center on desktop (top-10). On mobile it DOCKS to the bottom edge of
+          the (visual-viewport-sized) surface — i.e. right above the keyboard — so the tree owns
+          all the space between the slim header and the input. The flash cards stack upward from
+          the input on mobile (flex-col-reverse) and downward on desktop. */}
+      <div className="pointer-events-none absolute bottom-3 left-1/2 top-auto z-20 flex w-full max-w-md -translate-x-1/2 flex-col-reverse items-center gap-2 px-4 sm:bottom-auto sm:top-10 sm:flex-col">
         <form onSubmit={submit} className="pointer-events-auto w-full">
           <input
             ref={inputRef}
@@ -786,8 +801,10 @@ function Game({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             disabled={!running}
-            placeholder={running ? "name an organism — it lands on the tree…" : "time!"}
-            className="w-full rounded-2xl border-2 border-clade-ink/80 bg-clade-paper/90 px-4 py-2.5 text-center font-hand text-2xl text-clade-ink shadow-sm outline-none backdrop-blur placeholder:text-clade-ink/35 focus:border-clade-accent"
+            placeholder={
+              running ? (isNarrow ? "name an organism…" : "name an organism — it lands on the tree…") : "time!"
+            }
+            className="w-full rounded-2xl border-2 border-clade-ink/80 bg-clade-paper/90 px-4 py-2 text-center font-hand text-xl text-clade-ink shadow-sm outline-none backdrop-blur placeholder:text-clade-ink/35 focus:border-clade-accent sm:py-2.5 sm:text-2xl"
           />
         </form>
         {/* Stacked notification cards — each fades out over flashFadeSeconds (newest on top). */}

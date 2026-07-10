@@ -65,11 +65,12 @@ export function makeRound(asset: InternedAsset, rng: () => number = Math.random)
   return null;
 }
 
-/** Points for a correct pick: harder rounds (smaller gap) pay more, and faster answers pay more.
- *  `fraction` is time remaining in [0,1]. Mirrors the design's "score the gap × speed"; the
- *  server will re-derive this for ranked play. A wrong or too-slow pick scores 0 (caller decides). */
-export function roundScore(gap: number, fraction: number): number {
-  const difficulty = Math.max(1, 6 - gap); // gap 2 → 4, big gaps → 1
-  const speed = 0.5 + 0.5 * Math.max(0, Math.min(1, fraction)); // 50% floor so a correct-but-slow pick still pays
-  return Math.round(difficulty * 10 * speed);
+export const HP_MAX = 100; // starting health for a duel (GeoGuessr-style, #36)
+
+/** Damage the round's LOSER takes in the health duel. A bigger gap means the closer relative
+ *  was more obvious, so missing it hurts more; missing a near-tie is cheap. Only a DIFFERING
+ *  outcome deals damage — if both players pick the same side (both right or both wrong) it's a
+ *  wash and nobody loses health. So your health is in your own hands: pick clean, take no hits. */
+export function roundDamage(gap: number): number {
+  return Math.min(40, 12 + Math.max(0, gap - MIN_GAP) * 7); // gap 2 → 12, up to a 40 cap
 }

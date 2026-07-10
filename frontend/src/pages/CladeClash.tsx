@@ -17,12 +17,12 @@ import { loadAsset, loadHybridAsset, loadMixed, loadRemoteAsset } from "../lib/a
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import type { AssetTip, InternedAsset } from "../lib/asset/types";
 import { decodeConfig } from "../lib/game/config";
-import { makeRound, roundScore, type ClashRound } from "../lib/game/cladeClash";
+import { HP_MAX, makeRound, roundDamage, type ClashRound } from "../lib/game/cladeClash";
 import type { Relatedness } from "../lib/game/distance";
 import { useTitle } from "../lib/useTitle";
 
-const ROUNDS = 10; // a match is a short sprint of rounds
-const ROUND_SECONDS = 12; // per-round clock; runs out → auto-reveal, no pick scored
+const ROUND_CAP = 20; // safety ceiling: if nobody's health hits 0 by here, the higher HP wins
+const ROUND_SECONDS = 12; // per-round clock; runs out → auto-reveal, an unlocked pick counts as a miss
 const REVEAL_MS = 2200; // how long the reveal lingers before the next round
 
 export function CladeClash() {
@@ -75,11 +75,15 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
   const [botPick, setBotPick] = useState<Side | null>(null);
   const [botLocked, setBotLocked] = useState(false);
   const [seconds, setSeconds] = useState(ROUND_SECONDS);
-  const [you, setYou] = useState({ score: 0, correct: 0 });
-  const [bot, setBot] = useState({ score: 0, correct: 0 });
+  const [youHp, setYouHp] = useState(HP_MAX);
+  const [botHp, setBotHp] = useState(HP_MAX);
+  const [dmg, setDmg] = useState<{ you: number; bot: number }>({ you: 0, bot: 0 }); // this round's hits (for the reveal)
 
   const pickRef = useRef<Side | null>(null);
   const botPickRef = useRef<Side | null>(null);
+  const youHpRef = useRef(HP_MAX); // HP source of truth (reveal reads/writes these, not stale state)
+  const botHpRef = useRef(HP_MAX);
+  const overRef = useRef(false); // a killing blow this round → end after the reveal lingers
   const secondsRef = useRef(ROUND_SECONDS); // clock source of truth (reveal reads the live value)
   const botTimer = useRef<number | undefined>(undefined);
   const tick = useRef<number | undefined>(undefined);
@@ -88,7 +92,7 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
   const flat = round === null;
 
   const nextRound = useCallback(() => {
-    if (roundNum >= ROUNDS) {
+    if (overRef.current || roundNum >= ROUND_CAP) {
       setPhase("over");
       return;
     }
@@ -99,6 +103,7 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
     setBotLocked(false);
     pickRef.current = null;
     botPickRef.current = null;
+    setDmg({ you: 0, bot: 0 });
     setSeconds(ROUND_SECONDS);
     setPhase("playing");
   }, [asset, roundNum]);
@@ -106,15 +111,20 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
   const reveal = useCallback(() => {
     setPhase((p) => {
       if (p !== "playing" || !round) return p;
-      const frac = secondsRef.current / ROUND_SECONDS; // live remaining time → speed bonus
-      // Score YOU: only a locked-in, correct, in-time pick pays.
-      if (pickRef.current === round.correct) {
-        setYou((v) => ({ score: v.score + roundScore(round.gap, frac), correct: v.correct + 1 }));
-      }
-      // Score the BOT from where it actually locked (botPickRef); it's fast + usually right.
-      if (botPickRef.current === round.correct) {
-        setBot((v) => ({ score: v.score + roundScore(round.gap, 0.7), correct: v.correct + 1 }));
-      }
+      // Difference model (GeoGuessr-style): only a differing outcome deals damage; matching
+      // picks — both right OR both wrong — are a wash. A null pick (timeout) counts as a miss.
+      const youMiss = pickRef.current !== round.correct;
+      const botMiss = botPickRef.current !== round.correct;
+      let dy = 0;
+      let db = 0;
+      if (youMiss && !botMiss) dy = roundDamage(round.gap);
+      else if (botMiss && !youMiss) db = roundDamage(round.gap);
+      youHpRef.current = Math.max(0, youHpRef.current - dy);
+      botHpRef.current = Math.max(0, botHpRef.current - db);
+      setYouHp(youHpRef.current);
+      setBotHp(botHpRef.current);
+      setDmg({ you: dy, bot: db });
+      if (youHpRef.current <= 0 || botHpRef.current <= 0) overRef.current = true; // killing blow
       window.clearTimeout(botTimer.current);
       window.clearInterval(tick.current);
       window.setTimeout(nextRound, REVEAL_MS);
@@ -165,8 +175,12 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
   }
 
   function playAgain() {
-    setYou({ score: 0, correct: 0 });
-    setBot({ score: 0, correct: 0 });
+    youHpRef.current = HP_MAX;
+    botHpRef.current = HP_MAX;
+    overRef.current = false;
+    setYouHp(HP_MAX);
+    setBotHp(HP_MAX);
+    setDmg({ you: 0, bot: 0 });
     setRoundNum(1);
     setRound(makeRound(asset));
     setPick(null);
@@ -191,18 +205,21 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
   }
 
   if (phase === "over") {
-    const win = you.score > bot.score ? "You win" : you.score < bot.score ? "Bot wins" : "Dead heat";
+    const win = youHp <= 0 && botHp > 0 ? "Bot wins" : botHp <= 0 && youHp > 0 ? "You win"
+      : youHp > botHp ? "You win" : youHp < botHp ? "Bot wins" : "Dead heat";
+    const youWon = win === "You win";
     return (
       <Shell>
-        <div className="ink-card bg-clade-paper px-8 py-8 text-center">
-          <div className="font-mono text-[11px] uppercase tracking-widest text-clade-ink/45">Match over</div>
-          <h1 className="mt-1 font-hand text-5xl font-bold text-clade-accent">{win}</h1>
-          <div className="mt-5 flex items-stretch justify-center gap-4">
-            <Tally label="You" score={you.score} correct={you.correct} highlight={you.score >= bot.score} />
-            <div className="self-center font-hand text-2xl text-clade-ink/40">vs</div>
-            <Tally label="Bot" score={bot.score} correct={bot.correct} highlight={bot.score > you.score} />
+        <div className="ink-card w-[22rem] max-w-full bg-clade-paper px-8 py-8 text-center">
+          <div className="font-mono text-[11px] uppercase tracking-widest text-clade-ink/45">
+            Match over · {roundNum} round{roundNum === 1 ? "" : "s"}
           </div>
-          <div className="mt-6 flex items-center justify-center gap-3">
+          <h1 className={`mt-1 font-hand text-5xl font-bold ${youWon ? "text-clade-accent" : "text-clade-ink"}`}>{win}</h1>
+          <div className="mt-6 flex flex-col gap-3">
+            <HpBar label="You" hp={youHp} highlight={youWon} />
+            <HpBar label="Bot" hp={botHp} highlight={win === "Bot wins"} />
+          </div>
+          <div className="mt-7 flex items-center justify-center gap-3">
             <button onClick={playAgain} className="btn-play">▶ Play again</button>
             <Link to="/" className="font-mono text-xs uppercase tracking-widest text-clade-ink/50 hover:text-clade-ink">
               Menu
@@ -216,15 +233,13 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
   const frac = seconds / ROUND_SECONDS;
   return (
     <Shell>
-      {/* HUD: round + running score */}
-      <div className="mb-4 flex w-full max-w-3xl items-center justify-between">
-        <div className="font-mono text-xs uppercase tracking-widest text-clade-ink/50">
-          Round {roundNum}/{ROUNDS}
+      {/* HUD: facing health bars (GeoGuessr-style) with the round between them */}
+      <div className="mb-4 flex w-full max-w-3xl items-end gap-4">
+        <HpBar label="You" hp={youHp} dmg={phase === "revealed" ? dmg.you : 0} highlight />
+        <div className="shrink-0 pb-1 font-mono text-[11px] uppercase tracking-widest text-clade-ink/45">
+          R{roundNum}
         </div>
-        <div className="flex items-center gap-4 font-mono text-xs uppercase tracking-widest">
-          <span className="text-clade-accent">You {you.score}</span>
-          <span className="text-clade-ink/45">Bot {botLocked || phase === "revealed" ? bot.score : "…"}</span>
-        </div>
+        <HpBar label="Bot" hp={botHp} dmg={phase === "revealed" ? dmg.bot : 0} reverse />
       </div>
 
       {/* timer bar */}
@@ -379,12 +394,36 @@ function Tag({ label, good, muted }: { label: string; good: boolean; muted?: boo
   );
 }
 
-function Tally({ label, score, correct, highlight }: { label: string; score: number; correct: number; highlight: boolean }) {
+function HpBar({
+  label,
+  hp,
+  dmg = 0,
+  reverse,
+  highlight,
+}: {
+  label: string;
+  hp: number;
+  dmg?: number;
+  reverse?: boolean;
+  highlight?: boolean;
+}) {
+  const pct = Math.max(0, Math.min(100, (hp / HP_MAX) * 100));
+  const color = hp <= 25 ? "bg-red-500" : hp <= 55 ? "bg-amber-500" : "bg-clade-accent";
   return (
-    <div className={`rounded-2xl border-2 px-6 py-4 ${highlight ? "border-clade-accent bg-clade-accent/5" : "border-clade-ink/15"}`}>
-      <div className="font-mono text-[10px] uppercase tracking-widest text-clade-ink/45">{label}</div>
-      <div className="font-hand text-4xl font-bold text-clade-ink">{score}</div>
-      <div className="font-mono text-[10px] uppercase tracking-wider text-clade-ink/45">{correct}/{ROUNDS} right</div>
+    <div className="flex-1">
+      <div className={`flex items-baseline justify-between font-mono text-[10px] uppercase tracking-widest ${reverse ? "flex-row-reverse" : ""}`}>
+        <span className={highlight ? "text-clade-accent" : "text-clade-ink/50"}>{label}</span>
+        <span className="tabular-nums text-clade-ink/60">
+          {dmg > 0 && <span className="mr-1 text-red-500">−{dmg}</span>}
+          {Math.max(0, Math.round(hp))}
+        </span>
+      </div>
+      <div className="relative mt-1 h-2.5 overflow-hidden rounded-full bg-clade-ink/10">
+        <div
+          className={`absolute inset-y-0 ${reverse ? "right-0" : "left-0"} rounded-full ${color} transition-[width] duration-500`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
     </div>
   );
 }

@@ -17,9 +17,14 @@ import { loadAsset, loadHybridAsset, loadMixed, loadRemoteAsset } from "../lib/a
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import type { AssetTip, InternedAsset } from "../lib/asset/types";
 import { decodeConfig } from "../lib/game/config";
-import { HP_MAX, makeRound, roundDamage, type ClashRound } from "../lib/game/cladeClash";
+import { DEFAULT_ENGINE, HP_MAX, makeRound, type ClashRound } from "../lib/game/cladeClash";
 import type { Relatedness } from "../lib/game/distance";
 import { useTitle } from "../lib/useTitle";
+
+// The active distance engine — what "closer relative" means, and how much a miss hurts. Swap
+// it (or thread it from the lobby config / scope later) to change the metric without touching
+// the game loop. See lib/game/cladeClash.ts.
+const ENGINE = DEFAULT_ENGINE;
 
 const ROUND_CAP = 20; // safety ceiling: if nobody's health hits 0 by here, the higher HP wins
 const ROUND_SECONDS = 12; // per-round clock; runs out → auto-reveal, an unlocked pick counts as a miss
@@ -68,7 +73,7 @@ type Phase = "playing" | "revealed" | "over";
 type Side = 0 | 1;
 
 function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scopeKey: string }) {
-  const [round, setRound] = useState<ClashRound | null>(() => makeRound(asset));
+  const [round, setRound] = useState<ClashRound | null>(() => makeRound(asset, ENGINE));
   const [roundNum, setRoundNum] = useState(1);
   const [phase, setPhase] = useState<Phase>("playing");
   const [pick, setPick] = useState<Side | null>(null);
@@ -97,7 +102,7 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
       return;
     }
     setRoundNum((n) => n + 1);
-    setRound(makeRound(asset));
+    setRound(makeRound(asset, ENGINE));
     setPick(null);
     setBotPick(null);
     setBotLocked(false);
@@ -117,8 +122,8 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
       const botMiss = botPickRef.current !== round.correct;
       let dy = 0;
       let db = 0;
-      if (youMiss && !botMiss) dy = roundDamage(round.gap);
-      else if (botMiss && !youMiss) db = roundDamage(round.gap);
+      if (youMiss && !botMiss) dy = ENGINE.damage(round.gap);
+      else if (botMiss && !youMiss) db = ENGINE.damage(round.gap);
       youHpRef.current = Math.max(0, youHpRef.current - dy);
       botHpRef.current = Math.max(0, botHpRef.current - db);
       setYouHp(youHpRef.current);
@@ -182,7 +187,7 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
     setBotHp(HP_MAX);
     setDmg({ you: 0, bot: 0 });
     setRoundNum(1);
-    setRound(makeRound(asset));
+    setRound(makeRound(asset, ENGINE));
     setPick(null);
     setBotPick(null);
     setBotLocked(false);

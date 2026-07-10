@@ -14,6 +14,7 @@ answers your question — don't read all of them. New to the repo? Read
 | Work on how the asset is **built** from Catalogue of Life | [`data-pipeline.md`](data-pipeline.md) |
 | Build/serve a scope, or run a build job from the admin | [`pipeline-jobs.md`](pipeline-jobs.md) + [`admin.md`](admin.md) |
 | Touch the **Time-attack** game loop (the tree, "N remaining", scoring) | [`marathon-design.md`](marathon-design.md) |
+| Understand the **Clade Clash** distance-guessing mode (designed, not built) | [`clade-clash-design.md`](clade-clash-design.md) |
 | Touch anything in the **play loop** (perf rules — read before editing) | [`performance.md`](performance.md) |
 | Understand modes / difficulty / the daily / leaderboards / streak | [`games-model.md`](games-model.md) |
 | Run the app locally | [`development.md`](development.md) |
@@ -40,6 +41,9 @@ answers your question — don't read all of them. New to the repo? Read
 **Deferred** — designed, not built:
 - [`huge-scope-hybrid.md`](huge-scope-hybrid.md) — notable-blob + membership-filter + remote-tail
   delivery for scopes too big to ship whole (tracked in [issues](https://github.com/rafaelmdc/Cladewright/issues): #42, #13, #14).
+- [`clade-clash-design.md`](clade-clash-design.md) — the distance-guessing mode: nodal-distance
+  metric, a bot opponent, and a single-ASGI realtime 1v1 (tracked in #36; shares a distance
+  primitive with #126/#127).
 
 `examples/` holds the low-fi wireframes the UI was built from.
 

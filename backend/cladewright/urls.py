@@ -36,6 +36,7 @@ urlpatterns = [
     path("api/version/", version_view, name="app-version"),
     path("api/gamedata/", include("apps.gamedata.urls")),
     path("api/scores/", include("apps.scores.urls")),
+    path("api/clash/", include("apps.clash.urls")),
     path("api/auth/", include("apps.accounts.urls")),
     path("api/content/", include("apps.content.urls")),
 ]

@@ -34,12 +34,17 @@ def _match_key(match_id: str) -> str:
     return f"{_PREFIX}:match:{match_id}"
 
 
-def _default_client() -> RedisLike:
-    """A redis-py client on the channel-layer Redis URL (redis-py ships via celery[redis])."""
+def get_redis() -> RedisLike:
+    """A redis-py client on the channel-layer Redis URL (redis-py ships via celery[redis]).
+    Matchmaking + the store share this connection target so all clash keys live together."""
     import redis  # local import: not needed for the pure referee/serialization tests
 
     url = settings.CHANNEL_LAYERS["default"]["CONFIG"]["hosts"][0]
     return redis.Redis.from_url(url)
+
+
+# Back-compat alias for internal callers.
+_default_client = get_redis
 
 
 class MatchStore:

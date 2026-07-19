@@ -304,3 +304,101 @@ class MatchStoreTests(SimpleTestCase):
         self.assertIsNotNone(s.load("z"))
         s.delete("z")
         self.assertIsNone(s.load("z"))
+
+
+from .matchmaking import Matchmaker, QueueError  # noqa: E402
+from .tokens import verify_join_token  # noqa: E402
+
+
+class _FakeRedisFull(_FakeRedis):
+    """Adds list ops (rpush/lpop/lrem) so the matchmaking queue can be tested in-memory."""
+
+    def __init__(self):
+        super().__init__()
+        self.lists: dict[str, list] = {}
+
+    def rpush(self, key, *vals):
+        self.lists.setdefault(key, []).extend(vals)
+
+    def lpop(self, key):
+        lst = self.lists.get(key)
+        if not lst:
+            return None
+        v = lst.pop(0)
+        return v.encode() if isinstance(v, str) else v
+
+    def lrem(self, key, count, value):
+        self.lists[key] = [x for x in self.lists.get(key, []) if x != value]
+
+
+class MatchmakingTests(SimpleTestCase):
+    def _mm(self, redis):
+        return Matchmaker(redis, store=store.MatchStore(redis), pool_loader=lambda scope: _pool())
+
+    def test_quick_match_pairs_two_players(self):
+        r = _FakeRedisFull()
+        mm = self._mm(r)
+        first = mm.quick_match(1, "Alice", scope="test", engine_id="rank-depth")
+        self.assertEqual(first, {"status": "waiting"})
+
+        second = mm.quick_match(2, "Bob", scope="test", engine_id="rank-depth")
+        self.assertEqual(second.seat, 1)
+        self.assertEqual(second.opponent, "Alice")
+        # Bob's token authorizes Bob (seat 1) for this match; not Alice.
+        self.assertEqual(verify_join_token(second.token, 2)["s"], 1)
+        self.assertIsNone(verify_join_token(second.token, 1))
+
+        # Alice (the waiter) picks up her pairing by polling — seat 0, opponent Bob.
+        alice = mm.poll_pairing(1)
+        self.assertEqual(alice["seat"], 0)
+        self.assertEqual(alice["opponent"], "Bob")
+        self.assertEqual(alice["match_id"], second.match_id)
+        self.assertEqual(verify_join_token(alice["token"], 1)["s"], 0)
+        # Consumed — a second poll is empty.
+        self.assertIsNone(mm.poll_pairing(1))
+        # The match really exists in the store, with both seats.
+        st = store.MatchStore(r).load(second.match_id)
+        self.assertEqual({p.id for p in st.players}, {"u:1", "u:2"})
+        self.assertTrue(st.ranked)
+
+    def test_quick_match_does_not_pair_with_self(self):
+        r = _FakeRedisFull()
+        mm = self._mm(r)
+        self.assertEqual(mm.quick_match(1, "A", scope="s", engine_id="rank-depth"), {"status": "waiting"})
+        # Same user again: skips their own stale ticket, re-enqueues, stays waiting.
+        self.assertEqual(mm.quick_match(1, "A", scope="s", engine_id="rank-depth"), {"status": "waiting"})
+
+    def test_leave_queue_removes_ticket(self):
+        r = _FakeRedisFull()
+        mm = self._mm(r)
+        mm.quick_match(1, "A", scope="s", engine_id="rank-depth")
+        mm.leave_queue(1, "A", scope="s", engine_id="rank-depth")
+        # Now a second player finds nobody waiting.
+        self.assertEqual(mm.quick_match(2, "B", scope="s", engine_id="rank-depth"), {"status": "waiting"})
+
+    def test_private_room_flow(self):
+        r = _FakeRedisFull()
+        mm = self._mm(r)
+        code = mm.create_room(1, "Host", scope="test", engine_id="rank-depth")
+        self.assertEqual(len(code), 6)
+        joiner = mm.join_room(code, 2, "Guest")
+        self.assertEqual(joiner.seat, 1)
+        self.assertEqual(joiner.opponent, "Host")
+        host = mm.poll_pairing(1)
+        self.assertEqual(host["seat"], 0)
+        self.assertEqual(host["match_id"], joiner.match_id)
+        # Room is single-use.
+        with self.assertRaises(QueueError):
+            mm.join_room(code, 3, "Late")
+
+    def test_cannot_join_own_room(self):
+        r = _FakeRedisFull()
+        mm = self._mm(r)
+        code = mm.create_room(1, "Host", scope="test", engine_id="rank-depth")
+        with self.assertRaises(QueueError):
+            mm.join_room(code, 1, "Host")
+
+    def test_join_unknown_room(self):
+        mm = self._mm(_FakeRedisFull())
+        with self.assertRaises(QueueError):
+            mm.join_room("ZZZZZZ", 2, "B")

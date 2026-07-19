@@ -166,6 +166,13 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.AllowAny",
     ],
+    # Throttling is OPT-IN per view (via ScopedRateThrottle + throttle_scope). No global
+    # throttle so existing endpoints are unchanged; the clash matchmaking endpoints set the
+    # "clash_matchmaking" scope to cap queue/room spam (#36 security). Rate is per-user
+    # (authenticated) / per-IP; generous enough for real play, tight enough to deter abuse.
+    "DEFAULT_THROTTLE_RATES": {
+        "clash_matchmaking": "60/min",
+    },
 }
 
 # Google is configured entirely from env — no admin SocialApp row needed. Until the

@@ -15,9 +15,17 @@ import { LeafBackground } from "../components/LeafBackground";
 import { LoadingTree } from "../components/LoadingTree";
 import { loadAsset, loadHybridAsset, loadMixed, loadRemoteAsset } from "../lib/asset/load";
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
+import { CardThumb } from "../components/clash/CardThumb";
 import type { AssetTip, InternedAsset } from "../lib/asset/types";
 import { decodeConfig } from "../lib/game/config";
-import { DEFAULT_ENGINE, HP_MAX, makeRound, type ClashRound } from "../lib/game/cladeClash";
+import {
+  BOT_DELAY_JITTER_MS,
+  BOT_DELAY_MIN_MS,
+  DEFAULT_ENGINE,
+  HP_MAX,
+  makeRound,
+  type ClashRound,
+} from "../lib/game/cladeClash";
 import type { Relatedness } from "../lib/game/distance";
 import { useTitle } from "../lib/useTitle";
 
@@ -142,12 +150,13 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
     if (phase !== "playing" || !round) return;
     secondsRef.current = ROUND_SECONDS;
     setSeconds(ROUND_SECONDS);
-    // The bot: "extremely efficient" — fast reaction, high accuracy (a touch lower on hard,
-    // small-gap rounds). It picks the server-truth answer (derivable here) after a delay.
-    const accuracy = round.gap >= 3 ? 0.97 : 0.86;
-    const correct = Math.random() < accuracy;
+    // The bot: "extremely efficient" — the accuracy + delay policy is owned by the engine
+    // (ENGINE.bot), so the thresholds live in the engine's units, not hardcoded here. It picks
+    // the answer (derivable client-side) after a snappy, slightly randomised delay.
+    const policy = ENGINE.bot(round.gap);
+    const correct = Math.random() < policy.accuracy;
     const choice: Side = (correct ? round.correct : (round.correct ^ 1)) as Side;
-    const delay = 700 + Math.random() * 1600 + (round.gap < 2 ? 600 : 0);
+    const delay = BOT_DELAY_MIN_MS + Math.random() * BOT_DELAY_JITTER_MS + policy.delayBiasMs;
     botTimer.current = window.setTimeout(() => {
       botPickRef.current = choice;
       setBotPick(choice);
@@ -311,7 +320,8 @@ function Shell({ children }: { children: React.ReactNode }) {
 function CenterCard({ tip }: { tip: AssetTip }) {
   return (
     <div className="ink-card w-52 max-w-full bg-clade-paper px-4 py-4 text-center shadow-sm">
-      <div className="font-mono text-[10px] uppercase tracking-widest text-clade-accent">Specimen</div>
+      <div className="mb-2 font-mono text-[10px] uppercase tracking-widest text-clade-accent">Specimen</div>
+      <CardThumb common={tip.common} sci={tip.sci} size={88} />
       <div className="mt-1 font-hand text-2xl font-bold leading-tight text-clade-ink">{tip.common}</div>
       <div className="font-hand text-sm italic text-clade-ink/55">{tip.sci}</div>
     </div>
@@ -351,6 +361,7 @@ function OptionCard({
       onClick={onPick}
       className={`ink-card relative flex min-h-[9rem] flex-col items-center justify-center gap-1 bg-clade-paper px-4 py-5 text-center transition ${tone} ${phase === "playing" && !picked ? "cursor-pointer" : "cursor-default"}`}
     >
+      <CardThumb common={tip.common} sci={tip.sci} />
       <div className="font-hand text-2xl font-bold leading-tight text-clade-ink">{tip.common}</div>
       <div className="font-hand text-sm italic text-clade-ink/55">{tip.sci}</div>
 

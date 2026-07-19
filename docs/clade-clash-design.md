@@ -122,12 +122,14 @@ the Celery broker ([`deployment.md`](deployment.md)) — that was the whole subs
   candidates, deadline, lock-ins, round, each side's HP) with a **TTL**, so an abandoned match
   self-expires. **Durable outcome in Postgres** — a `MatchResult` row (`apps/clash/models.py`)
   written at settle, the way finished runs persist.
-- **Concurrency (current limit).** A live match is a read-modify-write on its Redis state;
-  it's serialized by a **process-local `asyncio` lock** (`apps/clash/runtime.py`). That is
-  correct for the **single-pod, single-worker** deployment (one async process holds both
-  players; ~50 players fit easily) — hence `replicas: 1` + `WEB_CONCURRENCY=1`. Scaling
-  websockets to multiple workers/pods needs a **cross-process Redis lock** instead; that's
-  the one deliberate follow-up before horizontal ws scale-out.
+- **Concurrency.** A live match is a read-modify-write on its Redis state, serialized per
+  match by a **combined lock** (`apps/clash/runtime.py`): a process-local `asyncio` lock *and*
+  a **Redis distributed lock** (`SET NX`), so two players on *different* pods/workers can't
+  interleave a resolve either. One code path is correct from a single pod up to a
+  horizontally-scaled ws tier. (The homelab still runs `replicas: 1` + `WEB_CONCURRENCY=1`
+  because ~50 players fit one async process easily — but that's now a sizing choice, not a
+  correctness constraint. The Redis half auto-disables where the client can't lock, e.g. the
+  in-memory test fakes.)
 
 ### Invariants
 
@@ -212,12 +214,16 @@ Deliberately phased so nothing waits on the hardest part; detail + open decision
    the pluggable `DistanceEngine`, the rank-gap round generator, and single-player Clade
    Clash (+ bot) with the health-duel loop on Time Attack's scopes. Client-side and
    **unranked** — nothing is submitted, so a modified client only fools itself. Proves the
-   metric is fun and fair, and unblocks #126/#127.
+   metric is fun and fair, and unblocks #126/#127. The **bot's difficulty is owned by the
+   engine** (`DistanceEngine.bot(gap)` → accuracy + delay), so it's strong ("extremely
+   efficient") and a new engine sets its own; the same bot powers **versus-vs-a-bot as a
+   client-side duel** (unranked, no server round-trip — reachable straight from the versus page).
 2. **Realtime Clade Clash** *(done, Phase 1)* — one ASGI stack + Channels + Redis channel
    layer + the match lifecycle (`apps/clash/`). Human vs human, **ranked**, with quick-match +
-   private-room invites, server-authoritative round generation + grading, and reaction-time
-   plausibility. Delivers the #103 substrate. One follow-up before ws scale-out: the
-   cross-process Redis match lock (see Realtime → Concurrency).
-3. **Depth & scale** — genetic/patristic distance via the weavers, ELO / ranked ladders,
-   spectate, horizontal ws scale-out (the Redis match lock), a versus leaderboard from
-   `MatchResult`.
+   private-room invites, server-authoritative round generation + grading, reaction-time
+   plausibility, and the **cross-process Redis match lock** (correct across pods, see
+   Realtime → Concurrency). Delivers the #103 substrate.
+3. **Depth & scale** — genetic/patristic distance via the weavers; spectate; and, *if* a
+   competitive ladder is ever wanted, an **ELO / rating ladder** off the `MatchResult` rows
+   (a duel wants a *rating*, not a score leaderboard — the raw results are already recorded
+   with `ranked`/`flagged` for exactly this). Not planned yet; nothing depends on it.

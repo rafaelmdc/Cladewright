@@ -47,7 +47,14 @@ export function Hub() {
 
           <div className="flex flex-wrap justify-center gap-4">
             {cardGames.map((g) => (
-              <ModeCard key={g.mode} to={`/play/${g.mode}`} title={g.label} blurb={g.blurb} />
+              // Versus does its own pack pick + matchmaking, so it skips the generic lobby and
+              // links straight to its route; every other mode goes through /play/:mode.
+              <ModeCard
+                key={g.mode}
+                to={g.mode === "clash_versus" ? g.route : `/play/${g.mode}`}
+                title={g.label}
+                blurb={g.blurb}
+              />
             ))}
           </div>
 

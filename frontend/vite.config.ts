@@ -13,6 +13,9 @@ export default defineConfig({
     proxy: {
       "/api": { target: "http://localhost:8000", changeOrigin: false },
       "/accounts": { target: "http://localhost:8000", changeOrigin: false },
+      // Clade Clash versus websockets (#36 Phase 1). ws:true upgrades the proxied
+      // connection; same-origin so the session cookie rides along to authenticate the socket.
+      "/ws": { target: "ws://localhost:8000", ws: true, changeOrigin: false },
     },
   },
 });

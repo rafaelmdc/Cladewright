@@ -186,10 +186,16 @@ def _discover_dumps(root: Path) -> list[tuple[str, Path, int]]:
     for child in sorted(root.glob("coldp*")):
         if child.is_dir():
             found.append(("coldp", child, _path_size(child)))
-    # Pageview DBs / archives in the braidworks subdir.
+    # Pageview DBs / archives under the braidworks subdir. braidworks nests the DB one level
+    # deeper in a per-weaver namespace dir (…/braidworks/wikipedia/wikipedia_pageviews.sqlite),
+    # so walk recursively — a flat iterdir() would miss the actual DB and only ever catch loose
+    # leftovers. Skip in-progress build temp dirs (tempfile names them tmp*) so a scan racing a
+    # build doesn't inventory a half-built file.
     braid = root / "braidworks"
     if braid.is_dir():
-        for child in sorted(braid.iterdir()):
+        for child in sorted(braid.rglob("*")):
+            if any(part.startswith("tmp") for part in child.relative_to(braid).parts):
+                continue
             if child.is_file() and child.suffix.lower() in {".db", ".sqlite", ".sqlite3", ".bz2"}:
                 found.append(("pageviews", child, _path_size(child)))
     # Loose archive leftovers directly under the root.

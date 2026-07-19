@@ -396,7 +396,7 @@ function ActivityHeatmap({
                       onMouseMove={(e) => setHover({ dv, x: e.clientX, y: e.clientY })}
                       onMouseLeave={() => setHover(null)}
                       className={`h-3 w-3 cursor-pointer rounded-[3px] ${HEAT_FILL[level(dv.value)]} ${
-                        cell.idx >= lo && cell.idx <= hi ? "ring-1 ring-clade-ink/55" : ""
+                        cell.idx >= lo && cell.idx <= hi ? "ring-1 ring-inset ring-clade-ink/55" : ""
                       }`}
                     />
                   );

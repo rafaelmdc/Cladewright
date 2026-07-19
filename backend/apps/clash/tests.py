@@ -545,3 +545,103 @@ class MatchConsumerTests(SimpleTestCase):
 
         await c0.disconnect()
         await c1.disconnect()
+
+
+from django.contrib.auth import get_user_model  # noqa: E402
+from django.test import TestCase  # noqa: E402
+
+from .models import MatchResult  # noqa: E402
+from .results import persist_result  # noqa: E402
+
+
+class PlausibilityTests(SimpleTestCase):
+    def _match(self):
+        return referee.new_match(
+            "p", _two_humans(), scope="test", engine_id="rank-depth",
+            pool=_pool(), ranked=True, seed=4, now=1000.0,
+        )
+
+    def test_superhuman_fast_correct_picks_flag_the_match(self):
+        st = self._match()
+        # Round 1: u:1 answers correctly ~0.1s after the round appears (superhuman); u:2 slow.
+        c = st.round.correct
+        referee.record_lock(st, "u:1", c, now=1000.1)
+        referee.record_lock(st, "u:2", c, now=1005.0)
+        referee.resolve_round(st)
+        self.assertEqual(st.player("u:1").fast_picks, 1)
+        self.assertEqual(st.player("u:2").fast_picks, 0)
+        self.assertFalse(referee.match_flagged(st))
+
+        # Round 2: same again -> hits the limit -> flagged.
+        referee.start_round(st, _pool(), now=2000.0)
+        c2 = st.round.correct
+        referee.record_lock(st, "u:1", c2, now=2000.1)
+        referee.record_lock(st, "u:2", c2, now=2005.0)
+        referee.resolve_round(st)
+        self.assertEqual(st.player("u:1").fast_picks, 2)
+        self.assertTrue(referee.match_flagged(st))
+
+    def test_normal_reaction_is_not_flagged(self):
+        st = self._match()
+        c = st.round.correct
+        referee.record_lock(st, "u:1", c, now=1003.0)  # ~3s — human
+        referee.record_lock(st, "u:2", 1 - c, now=1004.0)
+        referee.resolve_round(st)
+        self.assertEqual(st.player("u:1").fast_picks, 0)
+        self.assertFalse(referee.match_flagged(st))
+
+
+class MatchResultTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.u1 = User.objects.create_user(username="alice")
+        self.u2 = User.objects.create_user(username="bob")
+
+    def _finished(self, *, winner, hp, ranked=True, fast=(0, 0), mid="R1"):
+        players = [
+            referee.Player(id=f"u:{self.u1.id}", display="Alice", hp=hp[0], fast_picks=fast[0]),
+            referee.Player(id=f"u:{self.u2.id}", display="Bob", hp=hp[1], fast_picks=fast[1]),
+        ]
+        st = referee.MatchState(
+            id=mid, scope="test", engine_id="rank-depth", seed=1, ranked=ranked,
+            players=players, round_num=7, status="over", winner=winner,
+        )
+        return st
+
+    def test_persists_ranked_result(self):
+        st = self._finished(winner=f"u:{self.u1.id}", hp=(60, 0))
+        res = persist_result(st)
+        self.assertIsNotNone(res)
+        self.assertEqual(res.winner_id, self.u1.id)
+        self.assertEqual((res.hp0, res.hp1), (60, 0))
+        self.assertEqual(res.rounds, 7)
+        self.assertTrue(res.counts_for_ranking)
+
+    def test_flagged_match_does_not_count_for_ranking(self):
+        st = self._finished(winner=f"u:{self.u1.id}", hp=(80, 0), fast=(3, 0), mid="R2")
+        res = persist_result(st)
+        self.assertTrue(res.flagged)
+        self.assertFalse(res.counts_for_ranking)
+
+    def test_dead_heat_has_no_winner(self):
+        st = self._finished(winner=None, hp=(40, 40), mid="R3")
+        res = persist_result(st)
+        self.assertIsNone(res.winner_id)
+
+    def test_settle_is_idempotent(self):
+        st = self._finished(winner=f"u:{self.u2.id}", hp=(0, 30), mid="R4")
+        persist_result(st)
+        persist_result(st)  # second settle must not duplicate
+        self.assertEqual(MatchResult.objects.filter(match_id="R4").count(), 1)
+
+    def test_bot_match_is_not_persisted(self):
+        players = [
+            referee.Player(id=f"u:{self.u1.id}", display="Alice", hp=50),
+            referee.Player(id="bot:easy", display="Bot", hp=0, is_bot=True),
+        ]
+        st = referee.MatchState(
+            id="R5", scope="test", engine_id="rank-depth", seed=1, ranked=False,
+            players=players, round_num=3, status="over", winner=f"u:{self.u1.id}",
+        )
+        self.assertIsNone(persist_result(st))
+        self.assertEqual(MatchResult.objects.count(), 0)

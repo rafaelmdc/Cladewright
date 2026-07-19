@@ -231,10 +231,21 @@ class MatchConsumer(AsyncJsonWebsocketConsumer):
         asyncio.ensure_future(watch())
 
     async def _settle(self, state: referee.MatchState) -> None:
-        """Match end. Durable persistence + ranked integrity land in step 1f; for now clear
-        the ephemeral state and forget the process-local lock/presence."""
+        """Match end: write the durable MatchResult (idempotent), then clear the ephemeral
+        Redis state and the process-local lock/presence. A persistence hiccup must not crash
+        the socket teardown, so it's guarded."""
+        try:
+            await self._persist(state)
+        except Exception:  # noqa: BLE001 — best-effort; the reveal already went out
+            pass
         await self._delete()
         runtime.forget_match(self.match_id)
+
+    @database_sync_to_async
+    def _persist(self, state):
+        from .results import persist_result
+
+        persist_result(state)
 
     # ── group event handlers (fan-out to this socket) ────────────────────────────────
     async def lock_progress(self, event) -> None:

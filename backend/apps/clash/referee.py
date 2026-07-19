@@ -21,6 +21,11 @@ from .distance import ENGINES, HP_MAX, ClashPool, DistanceEngine, make_round
 
 ROUND_CAP = 20  # if nobody's HP hits 0 by here, higher HP wins (mirrors CladeClash.tsx)
 ROUND_SECONDS = 12  # wall-clock a player has to lock in before the deadline auto-resolves
+# Anti-cheat (docs security model): integrity is PLAUSIBILITY, not secrecy. A CORRECT pick
+# faster than human reaction after the round appears is the tell — the answer is derivable
+# from the tree, but a bot clicking it in 50 ms is not human. Same class as the run pace gate.
+REACTION_FLOOR = 0.30  # seconds; a correct pick faster than this counts as superhuman
+FAST_PICK_LIMIT = 2  # this many superhuman-fast correct picks flags the match as implausible
 
 
 @dataclass
@@ -29,6 +34,8 @@ class Player:
     display: str
     hp: int = HP_MAX
     is_bot: bool = False
+    # Count of superhuman-fast CORRECT picks across the match (reaction-time plausibility).
+    fast_picks: int = 0
 
 
 @dataclass
@@ -185,6 +192,15 @@ def resolve_round(state: MatchState, *, now: Optional[float] = None) -> RoundOut
 
     if not r.resolved:
         outcomes = {pid: (pick == r.correct) for pid, pick in picks.items()}
+        # Reaction-time plausibility: a CORRECT pick landing faster than a human could react
+        # after the round appeared is the anti-cheat tell (the answer is derivable, but not
+        # that fast). Round start = deadline - ROUND_SECONDS.
+        round_start = r.deadline - ROUND_SECONDS
+        for p in state.players:
+            if outcomes.get(p.id) and p.id in r.lock_at:
+                reaction = r.lock_at[p.id] - round_start
+                if reaction < REACTION_FLOOR:
+                    p.fast_picks += 1
         dmg = int(round(state.engine.damage(r.gap)))
         damaged: list[str] = []
         # Difference model: only when the two outcomes DIFFER does the wrong side bleed.
@@ -229,6 +245,12 @@ def _set_winner(state: MatchState) -> None:
 def _end_by_hp(state: MatchState) -> None:
     state.status = "over"
     _set_winner(state)
+
+
+def match_flagged(state: MatchState) -> bool:
+    """Whether the match's timing was implausible (a player racked up superhuman-fast correct
+    picks). A flagged match still finishes and shows a winner, but is excluded from ranking."""
+    return any(p.fast_picks >= FAST_PICK_LIMIT for p in state.players)
 
 
 # ── serialization (for the Redis store) ──────────────────────────────────────────────

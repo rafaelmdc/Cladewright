@@ -2,6 +2,7 @@
 domain (distance, referee, matchmaking) gets its own tests as each lands."""
 from __future__ import annotations
 
+import asyncio
 import random
 
 from channels.testing import WebsocketCommunicator
@@ -645,3 +646,67 @@ class MatchResultTests(TestCase):
         )
         self.assertIsNone(persist_result(st))
         self.assertEqual(MatchResult.objects.count(), 0)
+
+
+class _FakeRedisLock:
+    """Records acquire/release so a test can assert the Redis half of the match lock ran."""
+
+    def __init__(self, log):
+        self.log = log
+
+    def acquire(self, *a, **k):
+        self.log.append("acquire")
+        return True
+
+    def release(self):
+        self.log.append("release")
+
+
+class _FakeRedisWithLock(_FakeRedisFull):
+    def __init__(self):
+        super().__init__()
+        self.lock_log: list[str] = []
+
+    def lock(self, name, **kw):
+        # thread_local must be off so cross-thread acquire/release works (see runtime).
+        assert kw.get("thread_local") is False
+        return _FakeRedisLock(self.lock_log)
+
+
+class MatchLockTests(SimpleTestCase):
+    def setUp(self):
+        runtime._match_locks.clear()
+        self._prev_store = runtime._store
+
+    def tearDown(self):
+        runtime._store = self._prev_store
+        runtime._match_locks.clear()
+
+    async def test_no_redis_lock_when_client_cannot_lock(self):
+        runtime._store = store.MatchStore(_FakeRedisFull())  # no .lock()
+        lock = runtime.match_lock("m")
+        self.assertIsNone(lock._redis_lock)
+        async with lock:  # still works — process-local only
+            pass
+
+    async def test_redis_lock_acquired_and_released_around_section(self):
+        fake = _FakeRedisWithLock()
+        runtime._store = store.MatchStore(fake)
+        async with runtime.match_lock("m"):
+            self.assertEqual(fake.lock_log, ["acquire"])  # held inside the section
+        self.assertEqual(fake.lock_log, ["acquire", "release"])  # released on exit
+
+    async def test_local_lock_serializes_same_process(self):
+        runtime._store = store.MatchStore(_FakeRedisFull())
+        order = []
+
+        async def worker(tag):
+            async with runtime.match_lock("m"):
+                order.append(f"{tag}-in")
+                await asyncio.sleep(0.01)
+                order.append(f"{tag}-out")
+
+        await asyncio.gather(worker("a"), worker("b"))
+        # No interleaving: each worker's in/out are adjacent.
+        self.assertTrue(order == ["a-in", "a-out", "b-in", "b-out"]
+                        or order == ["b-in", "b-out", "a-in", "a-out"])

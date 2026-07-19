@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
+import { CardThumb } from "../components/clash/CardThumb";
 import { LeafBackground } from "../components/LeafBackground";
 import { Wordmark } from "../components/Brand";
 import { ScopePicker } from "../components/ScopePicker";
@@ -299,7 +300,8 @@ function Card({ children, wide }: { children: React.ReactNode; wide?: boolean })
 function VsCenterCard({ tip }: { tip: { common: string; sci: string } }) {
   return (
     <div className="ink-card w-52 max-w-full bg-clade-paper px-4 py-4 text-center shadow-sm">
-      <div className="font-mono text-[10px] uppercase tracking-widest text-clade-accent">Specimen</div>
+      <div className="mb-2 font-mono text-[10px] uppercase tracking-widest text-clade-accent">Specimen</div>
+      <CardThumb common={tip.common} sci={tip.sci} size={88} />
       <div className="mt-1 font-hand text-2xl font-bold leading-tight text-clade-ink">{tip.common}</div>
       <div className="font-hand text-sm italic text-clade-ink/55">{tip.sci}</div>
     </div>
@@ -333,6 +335,7 @@ function VsOptionCard({
       onClick={onPick}
       className={`ink-card relative flex min-h-[9rem] flex-col items-center justify-center gap-1 bg-clade-paper px-4 py-5 text-center transition ${tone} ${phase === "playing" && myPick === null ? "cursor-pointer" : "cursor-default"}`}
     >
+      <CardThumb common={tip.common} sci={tip.sci} />
       <div className="font-hand text-2xl font-bold leading-tight text-clade-ink">{tip.common}</div>
       <div className="font-hand text-sm italic text-clade-ink/55">{tip.sci}</div>
       {picked && !revealed && (

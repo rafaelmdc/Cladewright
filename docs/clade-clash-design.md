@@ -1,10 +1,10 @@
 # Clade Clash — game design
 
-**Deferred — designed, not built.** The design of record for Cladewright's
-distance-guessing mode: given a specimen, pick which of two neighbours is its
-closer relative. Ships **solo (vs a bot) first**, then grows into a realtime 1v1 —
-the concrete first use of the multiplayer substrate sketched in
-[`lobby-and-config.md`](lobby-and-config.md) and issues #103/#76.
+**Phase 0 built (solo vs bot); realtime versus deferred.** The design of record for
+Cladewright's distance-guessing mode: given a specimen, pick which of two neighbours
+is its closer relative. Ships **solo (vs a bot) first** — done, client-side and
+unranked — then grows into a realtime 1v1, the concrete first use of the multiplayer
+substrate sketched in [`lobby-and-config.md`](lobby-and-config.md) and issues #103/#76.
 
 Roadmap, phased rollout, and open decisions live in the tracking issue **#36**
 (this repo's convention: docs describe the design + invariants; schedules live in
@@ -27,9 +27,13 @@ pick them deliberately, they anchor data and routes (see
 - **Reveal teaches.** The flip shows the answer *and the shared clade* — "*Leopard*
   shares family *Felidae*; *wolf* only shares order *Carnivora*" — so a round leaves
   you knowing something, not just scored.
-- **Score = correct pick × speed × round difficulty.** An obvious round (genus vs
-  class) is worth less than a subtle one (family vs superfamily). Difficulty is set by
-  the distance gap the round was generated with (below).
+- **Health, not points (GeoGuessr-Duels-style).** Both sides start at `HP_MAX` (100).
+  Each round is a **difference model**: only the side whose outcome *differs* from the
+  other takes damage — if you pick the closer relative and your opponent doesn't, they
+  bleed; if you both get it right (or both wrong) nobody does. First to 0 HP is
+  eliminated. Damage **scales with how obvious the round was** — a wide-gap round (genus
+  vs class) hits harder than a subtle one — so missing a gimme costs more than missing a
+  close call. The exact `damage(gap)` curve is owned by the distance engine (below).
 - **Scopes and lobby are Time Attack's — no new scope concept.** A match runs on the
   same packs and the same admin-built pack sets / pre-chosen mixes as
   [`marathon-design.md`](marathon-design.md), picked in the lobby exactly like Marathon
@@ -49,31 +53,45 @@ ids); each node carries a taxonomic `rank` and a `depth`
 ([`game-asset-format.md`](game-asset-format.md)). There are **no branch lengths and
 no sequences** — so anything genetic is *new data*, not a query.
 
-### The metric: nodal distance, framed by rank
+### The metric: a pluggable distance engine
 
-- **Nodal distance** between two tips via their MRCA:
-  `d(a,b) = (depth(a) − depth(m)) + (depth(b) − depth(m))`, where `m` is the MRCA
-  (the last shared `lineage` prefix — O(L), no traversal; cf.
-  `frontend/src/lib/tree/mrca.ts`).
-- **MRCA rank** — the rank of the deepest shared clade (genus > family > order > …) —
-  is what makes the reveal legible and gradable.
+What "closer relative" *means* is deliberately swappable. Phase 0 ships a
+`DistanceEngine` seam (`frontend/src/lib/game/cladeClash.ts`) so the metric can change
+— shared-clade depth today, nodal edges or genetic divergence later — without touching
+the game loop. An engine is four things over the shared `relatedness()` primitive
+(`frontend/src/lib/game/distance.ts`):
+
+- `relate(asset, a, b)` — the `Relatedness` of two tips (MRCA index + rank, shared
+  ancestor depth, and nodal edge distance), used for grading and the reveal copy.
+- `closeness(r)` — a scalar where **bigger = more closely related**, in whatever units
+  the engine likes. The generator ranks and gaps candidates on this.
+- `minGap` — the minimum closeness gap for a round to count as fair (below).
+- `damage(gap)` — health lost for missing a round of that gap, in the engine's own units.
+
+Because `closeness`, `minGap` and `damage` all speak the same units, an engine is
+self-consistent and interchangeable. Two ship:
+
+- **`rankDepthEngine` (default).** `closeness = sharedDepth` — rank by how *deep* the
+  shared clade is (genus beats family beats order). Topology-only, no branch lengths.
+- **`nodalEngine`.** `closeness = −nodal` — fewer edges between the tips = closer. Same
+  reveal and game, a different notion of "closer", here to prove the seam is real.
 
 Raw edge-count on a unit-length cladogram is coarse and tie-heavy (the "kind of bad"
 about node distance). **The fix is the round generator, not a fancier metric:**
 
-- **Generate for a clear gap.** Draw the near candidate from a *deep* shared rank
-  (same genus/family as the centre) and the far one from a *shallow* rank (same
-  order/class only). The answer is then unambiguous by construction.
-- **Never ask a coin-flip in ranked play.** If the two candidates tie on both rank
-  and nodal distance, discard and redraw.
-- **Score the gap.** Bigger rank gaps are easier and worth less; speed multiplies.
+- **Generate for a clear gap.** The near candidate is drawn at maximum `closeness` to
+  the centre; the far one must be at least `minGap` less close. The answer is then
+  unambiguous by construction, and `gap = closeness(near) − closeness(far)` sizes both
+  difficulty and damage.
+- **Never ask a coin-flip in ranked play.** If no candidate clears `minGap`, discard the
+  centre and redraw (`ATTEMPTS` tries, then the caller falls back).
 
 ### Invariants
 
-- **`distance()` is a shared primitive.** Nodal distance + MRCA rank, mirrored client
+- **`relatedness()` is a shared primitive.** Nodal distance + MRCA rank, mirrored client
   and server, is exactly the signal the deferred modifiers **#126** (distance-decay)
-  and **#127** (vicinity) also need. Build it once as standalone infra; all three
-  consume it.
+  and **#127** (vicinity) also need. Built once as standalone infra
+  (`frontend/src/lib/game/distance.ts`); all three — and every `DistanceEngine` — consume it.
 - **The server is authoritative for the answer.** It computes the correct side from
   `lineage`; the client is never *told* which side is correct (it can *derive* it —
   see Security). This mirrors the run re-score posture in `apps/scores/scoring.py`.
@@ -102,7 +120,7 @@ scaffolded and **Redis is already deployed** as the Celery broker
   channel layer** fans out match-room messages across pods, so any pod can hold either
   player and Redis relays between them — **no sticky sessions**.
 - **Ephemeral match state in Redis** (one hash per match: centre, candidates, deadline,
-  lock-ins, round, scores) with a **TTL**. **Durable outcomes in Postgres** — a
+  lock-ins, round, each side's HP) with a **TTL**. **Durable outcomes in Postgres** — a
   `Match`/`MatchResult` row written at match end, the way finished runs persist.
 
 ### Invariants
@@ -184,9 +202,11 @@ counterpart.
 
 Deliberately phased so nothing waits on the hardest part; detail + open decisions in **#36**.
 
-1. **Distance core + solo + bot** — the shared `distance()` primitive, the rank-gap round
-   generator, and single-player Clade Clash (+ bot) on Time Attack's scopes and the
-   run/scoring plumbing. No socket. Proves the metric is fun and fair, and unblocks #126/#127.
+1. **Distance core + solo + bot** *(done, Phase 0)* — the shared `relatedness()` primitive,
+   the pluggable `DistanceEngine`, the rank-gap round generator, and single-player Clade
+   Clash (+ bot) with the health-duel loop on Time Attack's scopes. Client-side and
+   **unranked** — nothing is submitted, so a modified client only fools itself. Proves the
+   metric is fun and fair, and unblocks #126/#127.
 2. **Realtime Clade Clash** — ASGI migration + Channels + Redis channel layer + the match
    lifecycle. Human vs human, lobby + invites. Delivers the #103 substrate.
 3. **Depth & scale** — genetic/patristic distance via the weavers, ELO / ranked ladders,

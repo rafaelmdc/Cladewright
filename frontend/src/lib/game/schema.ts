@@ -70,6 +70,10 @@ const MARATHON_FIELDS: SettingField[] = [
 export const SETTINGS_SCHEMA: Record<string, SettingField[]> = {
   marathon_free: MARATHON_FIELDS,
   marathon_daily: MARATHON_FIELDS,
+  // Clade Clash (#36) configures only its pack scope — the round count/timer are fixed for
+  // now (see CladeClash.tsx). No gameplay dials, so the lobby shows just the pack picker.
+  // (Round cap / timer could graduate into fields here later.)
+  clash_solo: [],
 };
 
 export function schemaFor(mode: string): SettingField[] {

@@ -67,6 +67,22 @@ server {
     proxy_set_header X-Forwarded-Proto $client_proto;
   }
 
+  # Clade Clash versus websockets (#36 Phase 1) → the ASGI backend. Same-origin, so the
+  # session cookie rides along to authenticate the socket. The HTTP/1.1 Upgrade dance is
+  # required for nginx to proxy a websocket; the long read timeout keeps a live match's
+  # socket open across rounds (idle between lock-ins) instead of nginx cutting it.
+  location /ws/ {
+    proxy_pass http://${BACKEND_UPSTREAM};
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $client_proto;
+    proxy_read_timeout 3600s;
+  }
+
   # SPA client-side routing: everything else falls back to index.html. The HTML entry must
   # NOT be cached — it references the content-hashed /assets bundles, so a browser holding a
   # stale index.html would keep loading an old (possibly 404'd) bundle after a deploy.

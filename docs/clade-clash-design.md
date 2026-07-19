@@ -1,10 +1,10 @@
 # Clade Clash — game design
 
-**Phase 0 built (solo vs bot); realtime versus deferred.** The design of record for
+**Phase 0 (solo vs bot) + Phase 1 (realtime versus) built.** The design of record for
 Cladewright's distance-guessing mode: given a specimen, pick which of two neighbours
-is its closer relative. Ships **solo (vs a bot) first** — done, client-side and
-unranked — then grows into a realtime 1v1, the concrete first use of the multiplayer
-substrate sketched in [`lobby-and-config.md`](lobby-and-config.md) and issues #103/#76.
+is its closer relative. Shipped **solo (vs a bot)** — client-side, unranked — then a
+**realtime 1v1** over websockets (server-refereed, ranked), the first concrete use of the
+multiplayer substrate sketched in [`lobby-and-config.md`](lobby-and-config.md) and #103/#76.
 
 Roadmap, phased rollout, and open decisions live in the tracking issue **#36**
 (this repo's convention: docs describe the design + invariants; schedules live in
@@ -106,22 +106,28 @@ the `distance()` signature don't change; only what fills them in does.
 
 ## Realtime architecture (versus)
 
-Today the app is gunicorn/**WSGI** (no websockets), but `cladewright/asgi.py` is
-scaffolded and **Redis is already deployed** as the Celery broker
-([`deployment.md`](deployment.md)). That's the whole substrate.
+**Built (Phase 1).** The app now runs one ASGI stack, reusing the Redis already deployed as
+the Celery broker ([`deployment.md`](deployment.md)) — that was the whole substrate.
 
-- **Migrate the app to one ASGI stack** — gunicorn with uvicorn workers
-  (`-k uvicorn.workers.UvicornWorker`) serves HTTP *and* websockets from one image.
-  Django 6 runs the sync surface (DRF, admin, allauth) in a threadpool. Chosen over a
-  WSGI/ASGI split for maintainability; it stays *splittable by route later* (same
-  image, two deployments) if sockets ever contend with the API — a scaling lever, not
-  a day-one requirement.
-- **Django Channels + channels-redis.** Websocket consumers live on `/ws/…`. A **Redis
-  channel layer** fans out match-room messages across pods, so any pod can hold either
-  player and Redis relays between them — **no sticky sessions**.
-- **Ephemeral match state in Redis** (one hash per match: centre, candidates, deadline,
-  lock-ins, round, each side's HP) with a **TTL**. **Durable outcomes in Postgres** — a
-  `Match`/`MatchResult` row written at match end, the way finished runs persist.
+- **One ASGI stack** — gunicorn with a uvicorn worker (`-k uvicorn.workers.UvicornWorker`,
+  see `backend/Dockerfile`) serves HTTP *and* websockets from one image. Django 6 runs the
+  sync surface (DRF, admin, allauth) in a threadpool. Chosen over a WSGI/ASGI split for
+  maintainability; still *splittable by route later* (same image, two deployments) if
+  sockets ever contend with the API.
+- **Django Channels + channels-redis.** Websocket consumers live on `/ws/clash/…`
+  (`apps/clash/consumers.py`, routed in `apps/clash/routing.py`). A **Redis channel layer**
+  (isolated from Celery by a distinct DB index + key prefix) fans out match-room messages, so
+  no sticky sessions are needed.
+- **Ephemeral match state in Redis** (`apps/clash/store.py`: one JSON blob per match — centre,
+  candidates, deadline, lock-ins, round, each side's HP) with a **TTL**, so an abandoned match
+  self-expires. **Durable outcome in Postgres** — a `MatchResult` row (`apps/clash/models.py`)
+  written at settle, the way finished runs persist.
+- **Concurrency (current limit).** A live match is a read-modify-write on its Redis state;
+  it's serialized by a **process-local `asyncio` lock** (`apps/clash/runtime.py`). That is
+  correct for the **single-pod, single-worker** deployment (one async process holds both
+  players; ~50 players fit easily) — hence `replicas: 1` + `WEB_CONCURRENCY=1`. Scaling
+  websockets to multiple workers/pods needs a **cross-process Redis lock** instead; that's
+  the one deliberate follow-up before horizontal ws scale-out.
 
 ### Invariants
 
@@ -207,7 +213,11 @@ Deliberately phased so nothing waits on the hardest part; detail + open decision
    Clash (+ bot) with the health-duel loop on Time Attack's scopes. Client-side and
    **unranked** — nothing is submitted, so a modified client only fools itself. Proves the
    metric is fun and fair, and unblocks #126/#127.
-2. **Realtime Clade Clash** — ASGI migration + Channels + Redis channel layer + the match
-   lifecycle. Human vs human, lobby + invites. Delivers the #103 substrate.
+2. **Realtime Clade Clash** *(done, Phase 1)* — one ASGI stack + Channels + Redis channel
+   layer + the match lifecycle (`apps/clash/`). Human vs human, **ranked**, with quick-match +
+   private-room invites, server-authoritative round generation + grading, and reaction-time
+   plausibility. Delivers the #103 substrate. One follow-up before ws scale-out: the
+   cross-process Redis match lock (see Realtime → Concurrency).
 3. **Depth & scale** — genetic/patristic distance via the weavers, ELO / ranked ladders,
-   spectate, horizontal scale-out.
+   spectate, horizontal ws scale-out (the Redis match lock), a versus leaderboard from
+   `MatchResult`.

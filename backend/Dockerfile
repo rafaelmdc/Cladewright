@@ -25,4 +25,11 @@ EXPOSE 8000
 
 # Default (prod-ish) command; the dev compose overrides this to add --reload + a code
 # mount. Migrations run on start so a fresh DB is ready.
-CMD ["sh", "-lc", "python manage.py migrate && python manage.py collectstatic --noinput && python manage.py ensure_admin && exec gunicorn cladewright.wsgi:application --bind 0.0.0.0:${APP_PORT:-8000}"]
+#
+# ASGI (not WSGI): one stack serves HTTP *and* the Clade Clash versus websockets (#36
+# Phase 1) — gunicorn with a uvicorn worker. Django's sync surface (DRF/admin/allauth) runs
+# in a threadpool. WEB_CONCURRENCY stays 1 by default: a live match is serialized by a
+# PROCESS-LOCAL lock (apps/clash/runtime.py), so one async worker per pod is correct and
+# handles ~50 players easily; scaling to multiple workers/pods needs the cross-process Redis
+# lock (the documented follow-up) first. One async worker still serves plenty of HTTP.
+CMD ["sh", "-lc", "python manage.py migrate && python manage.py collectstatic --noinput && python manage.py ensure_admin && exec gunicorn cladewright.asgi:application -k uvicorn.workers.UvicornWorker --workers ${WEB_CONCURRENCY:-1} --bind 0.0.0.0:${APP_PORT:-8000}"]

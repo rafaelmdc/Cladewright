@@ -139,3 +139,168 @@ class MakeRoundTests(SimpleTestCase):
         self.assertEqual(RANK_DEPTH_ENGINE.damage(2), 12)
         self.assertEqual(RANK_DEPTH_ENGINE.damage(3), 19)
         self.assertEqual(RANK_DEPTH_ENGINE.damage(100), 40)
+
+
+from . import referee, store  # noqa: E402
+
+
+def _pool():
+    return ClashPool.from_blob(_fixture_blob())
+
+
+def _two_humans():
+    return [
+        referee.Player(id="u:1", display="Alice"),
+        referee.Player(id="u:2", display="Bob"),
+    ]
+
+
+class RefereeTests(SimpleTestCase):
+    def _match(self, seed=1):
+        return referee.new_match(
+            "m1", _two_humans(), scope="test", engine_id="rank-depth",
+            pool=_pool(), ranked=True, seed=seed, now=1000.0,
+        )
+
+    def test_difference_model_only_wrong_side_bleeds(self):
+        st = self._match()
+        c = st.round.correct
+        referee.record_lock(st, "u:1", c, now=1001.0)       # Alice right
+        referee.record_lock(st, "u:2", 1 - c, now=1001.0)   # Bob wrong
+        self.assertTrue(referee.both_locked(st))
+        out = referee.resolve_round(st)
+        self.assertEqual(out.hp["u:1"], referee.HP_MAX)      # winner untouched
+        self.assertLess(out.hp["u:2"], referee.HP_MAX)       # loser bled
+        self.assertEqual(out.damaged, ["u:2"])
+        self.assertEqual(out.damage, int(round(st.engine.damage(st.round.gap))))
+
+    def test_both_correct_no_damage(self):
+        st = self._match()
+        c = st.round.correct
+        referee.record_lock(st, "u:1", c)
+        referee.record_lock(st, "u:2", c)
+        out = referee.resolve_round(st)
+        self.assertEqual(out.hp, {"u:1": referee.HP_MAX, "u:2": referee.HP_MAX})
+        self.assertEqual(out.damaged, [])
+
+    def test_both_wrong_no_damage(self):
+        st = self._match()
+        c = st.round.correct
+        referee.record_lock(st, "u:1", 1 - c)
+        referee.record_lock(st, "u:2", 1 - c)
+        out = referee.resolve_round(st)
+        self.assertEqual(out.damaged, [])
+
+    def test_missing_lockin_by_deadline_is_a_miss(self):
+        st = self._match()
+        c = st.round.correct
+        referee.record_lock(st, "u:1", c)  # Alice right; Bob never locks
+        self.assertTrue(referee.deadline_passed(st, now=st.round.deadline + 1))
+        out = referee.resolve_round(st, now=st.round.deadline + 1)
+        self.assertIsNone(out.picks["u:2"])
+        self.assertEqual(out.damaged, ["u:2"])  # a no-show is graded wrong
+
+    def test_lock_is_idempotent_and_rejects_overwrite(self):
+        st = self._match()
+        c = st.round.correct
+        self.assertTrue(referee.record_lock(st, "u:1", c))
+        self.assertFalse(referee.record_lock(st, "u:1", 1 - c))  # can't change the pick
+        self.assertEqual(st.round.locks["u:1"], c)
+
+    def test_resolve_is_idempotent(self):
+        st = self._match()
+        c = st.round.correct
+        referee.record_lock(st, "u:1", c)
+        referee.record_lock(st, "u:2", 1 - c)
+        first = referee.resolve_round(st)
+        hp_after = dict(first.hp)
+        second = referee.resolve_round(st)  # double trigger (both-locked AND deadline)
+        self.assertEqual(second.hp, hp_after)  # no second hit
+
+    def test_elimination_ends_match(self):
+        st = self._match()
+        # Bomb Bob every round until he's eliminated; Alice always right.
+        guard = 0
+        while st.status == "playing" and guard < 100:
+            guard += 1
+            c = st.round.correct
+            referee.record_lock(st, "u:1", c)
+            referee.record_lock(st, "u:2", 1 - c)
+            out = referee.resolve_round(st)
+            if out.over:
+                break
+            referee.start_round(st, _pool(), now=2000.0)
+        self.assertEqual(st.status, "over")
+        self.assertEqual(st.winner, "u:1")
+        self.assertLessEqual(st.player("u:2").hp, 0)
+
+    def test_round_cap_ends_by_hp_as_dead_heat(self):
+        st = self._match()
+        for _ in range(referee.ROUND_CAP + 2):
+            if st.status != "playing":
+                break
+            c = st.round.correct
+            referee.record_lock(st, "u:1", c)
+            referee.record_lock(st, "u:2", c)  # both right forever -> no damage
+            out = referee.resolve_round(st)
+            if out.over:
+                break
+            referee.start_round(st, _pool(), now=2000.0)
+        self.assertEqual(st.status, "over")
+        self.assertIsNone(st.winner)  # equal HP -> dead heat
+        self.assertLessEqual(st.round_num, referee.ROUND_CAP)
+
+    def test_same_seed_same_rounds(self):
+        a = self._match(seed=7)
+        b = self._match(seed=7)
+        self.assertEqual(
+            (a.round.center, a.round.options, a.round.correct),
+            (b.round.center, b.round.options, b.round.correct),
+        )
+
+
+class _FakeRedis:
+    """Minimal dict-backed stand-in for a redis client (set/get/delete)."""
+
+    def __init__(self):
+        self.data: dict[str, str] = {}
+
+    def set(self, key, value, ex=None):
+        self.data[key] = value
+
+    def get(self, key):
+        v = self.data.get(key)
+        return v.encode() if isinstance(v, str) else v
+
+    def delete(self, *keys):
+        for k in keys:
+            self.data.pop(k, None)
+
+
+class MatchStoreTests(SimpleTestCase):
+    def test_roundtrip_preserves_state_and_secret(self):
+        st = referee.new_match(
+            "abc", _two_humans(), scope="test", engine_id="rank-depth",
+            pool=_pool(), ranked=True, seed=3, now=1000.0,
+        )
+        referee.record_lock(st, "u:1", st.round.correct, now=1001.0)
+        s = store.MatchStore(_FakeRedis())
+        s.save(st)
+        back = s.load("abc")
+        self.assertEqual(back.id, "abc")
+        self.assertEqual(back.round.correct, st.round.correct)  # secret persists server-side
+        self.assertEqual(back.round.locks, {"u:1": st.round.correct})
+        self.assertEqual(back.round.options, st.round.options)  # stayed a tuple
+        self.assertEqual([p.hp for p in back.players], [referee.HP_MAX, referee.HP_MAX])
+
+    def test_load_missing_is_none_and_delete(self):
+        s = store.MatchStore(_FakeRedis())
+        self.assertIsNone(s.load("nope"))
+        st = referee.new_match(
+            "z", _two_humans(), scope="t", engine_id="rank-depth",
+            pool=_pool(), ranked=False, seed=1, now=1.0,
+        )
+        s.save(st)
+        self.assertIsNotNone(s.load("z"))
+        s.delete("z")
+        self.assertIsNone(s.load("z"))

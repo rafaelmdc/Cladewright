@@ -17,7 +17,14 @@ import { loadAsset, loadHybridAsset, loadMixed, loadRemoteAsset } from "../lib/a
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import type { AssetTip, InternedAsset } from "../lib/asset/types";
 import { decodeConfig } from "../lib/game/config";
-import { DEFAULT_ENGINE, HP_MAX, makeRound, type ClashRound } from "../lib/game/cladeClash";
+import {
+  BOT_DELAY_JITTER_MS,
+  BOT_DELAY_MIN_MS,
+  DEFAULT_ENGINE,
+  HP_MAX,
+  makeRound,
+  type ClashRound,
+} from "../lib/game/cladeClash";
 import type { Relatedness } from "../lib/game/distance";
 import { useTitle } from "../lib/useTitle";
 
@@ -142,12 +149,13 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
     if (phase !== "playing" || !round) return;
     secondsRef.current = ROUND_SECONDS;
     setSeconds(ROUND_SECONDS);
-    // The bot: "extremely efficient" — fast reaction, high accuracy (a touch lower on hard,
-    // small-gap rounds). It picks the server-truth answer (derivable here) after a delay.
-    const accuracy = round.gap >= 3 ? 0.97 : 0.86;
-    const correct = Math.random() < accuracy;
+    // The bot: "extremely efficient" — the accuracy + delay policy is owned by the engine
+    // (ENGINE.bot), so the thresholds live in the engine's units, not hardcoded here. It picks
+    // the answer (derivable client-side) after a snappy, slightly randomised delay.
+    const policy = ENGINE.bot(round.gap);
+    const correct = Math.random() < policy.accuracy;
     const choice: Side = (correct ? round.correct : (round.correct ^ 1)) as Side;
-    const delay = 700 + Math.random() * 1600 + (round.gap < 2 ? 600 : 0);
+    const delay = BOT_DELAY_MIN_MS + Math.random() * BOT_DELAY_JITTER_MS + policy.delayBiasMs;
     botTimer.current = window.setTimeout(() => {
       botPickRef.current = choice;
       setBotPick(choice);

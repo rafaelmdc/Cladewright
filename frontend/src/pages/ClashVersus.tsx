@@ -4,12 +4,13 @@
 // candidates — but the opponent is a person and every reveal comes from the server.
 
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { LeafBackground } from "../components/LeafBackground";
 import { Wordmark } from "../components/Brand";
 import { ScopePicker } from "../components/ScopePicker";
 import { fetchMe } from "../lib/auth";
+import { defaultConfig, encodeConfig } from "../lib/game/config";
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import {
   createRoom,
@@ -33,6 +34,7 @@ type Stage = "setup" | "searching";
 
 export function ClashVersus() {
   useTitle("Clade Clash · Versus");
+  const navigate = useNavigate();
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
   const [scope, setScope] = useState<string>("");
@@ -108,20 +110,16 @@ export function ClashVersus() {
     setStage("setup");
   }, []);
 
+  // Duel a bot — client-side, instant, no wait and no server load (it's unranked, and the
+  // answer is derivable locally anyway). Reuses the Phase 0 solo health-duel on the chosen
+  // pack: an "extremely efficient" opponent you can play the moment you land here.
+  const playBot = useCallback(() => {
+    if (!scope) return;
+    navigate(`/clash?c=${encodeConfig(defaultConfig("clash_solo", { scopes: [scope] }))}`);
+  }, [scope, navigate]);
+
   // Once paired, the duel owns the screen.
   if (pairing) return <Shell><Duel match={match} onExit={rematch} /></Shell>;
-
-  if (authed === false) {
-    return (
-      <Shell>
-        <Card>
-          <h1 className="font-hand text-4xl font-bold text-clade-ink">Clade Clash · Versus</h1>
-          <p className="mt-2 font-hand text-xl text-clade-ink/70">Sign in to duel — ranked matches need an account.</p>
-          <Link to="/login" className="btn-play mt-5 inline-block">Sign in</Link>
-        </Card>
-      </Shell>
-    );
-  }
 
   if (stage === "searching") {
     return (
@@ -161,19 +159,35 @@ export function ClashVersus() {
           <ScopePicker scopes={scopes} value={scope ? [scope] : []} onChange={(k) => setScope(k[k.length - 1] ?? "")} multiple={false} />
         </div>
 
+        {/* Bot duel is client-side + unranked, so it needs no account and no waiting. */}
         <div className="mt-6 flex flex-wrap items-center gap-3">
-          <button onClick={onQuick} disabled={!scope} className="btn-play text-xl disabled:opacity-50">⚔ Quick match</button>
-          <button onClick={onCreateRoom} disabled={!scope} className="pill disabled:opacity-50">Invite a friend</button>
-          <div className="flex items-center gap-2">
-            <input
-              value={joinCode}
-              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-              placeholder="ROOM CODE"
-              maxLength={6}
-              className="w-32 rounded-lg border border-clade-ink/20 bg-clade-paper px-3 py-1.5 font-mono uppercase tracking-widest text-clade-ink placeholder:text-clade-ink/30"
-            />
-            <button onClick={onJoinRoom} disabled={joinCode.length < 6} className="pill disabled:opacity-40">Join</button>
-          </div>
+          <button onClick={playBot} disabled={!scope} className="btn-play text-xl disabled:opacity-50">🤖 Play a bot</button>
+          <span className="font-mono text-[11px] text-clade-ink/40">instant · unranked</span>
+        </div>
+
+        {/* Ranked human duels need an account. */}
+        <div className="mt-6 border-t border-clade-ink/10 pt-5">
+          <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-clade-ink/40">Ranked · vs people</p>
+          {authed === false ? (
+            <p className="font-hand text-lg text-clade-ink/70">
+              <Link to="/login" className="text-clade-accent underline underline-offset-2">Sign in</Link> to duel real players — ranked matches need an account.
+            </p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <button onClick={onQuick} disabled={!scope} className="btn-play disabled:opacity-50">⚔ Quick match</button>
+              <button onClick={onCreateRoom} disabled={!scope} className="pill disabled:opacity-50">Invite a friend</button>
+              <div className="flex items-center gap-2">
+                <input
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                  placeholder="ROOM CODE"
+                  maxLength={6}
+                  className="w-32 rounded-lg border border-clade-ink/20 bg-clade-paper px-3 py-1.5 font-mono uppercase tracking-widest text-clade-ink placeholder:text-clade-ink/30"
+                />
+                <button onClick={onJoinRoom} disabled={joinCode.length < 6} className="pill disabled:opacity-40">Join</button>
+              </div>
+            </div>
+          )}
         </div>
         {error && <p className="mt-3 font-mono text-xs text-red-600">{error}</p>}
       </Card>

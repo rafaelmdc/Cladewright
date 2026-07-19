@@ -18,6 +18,14 @@ import { relatedness, type Relatedness } from "./distance";
  *  reads `relate().mrcaRank`, and missing a round costs `damage(gap)` health. `closeness` is
  *  in whatever units the engine likes — the generator and damage are expressed in those same
  *  units, so engines are self-consistent and interchangeable. */
+/** How the bot plays a round of a given gap: how likely it is to pick right, and a delay
+ *  bias (ms) on top of the base reaction window. Owned by the engine so the thresholds live
+ *  in the engine's own units, not hardcoded in the game loop (a new engine sets its own). */
+export interface BotPolicy {
+  accuracy: number; // P(bot picks the closer relative)
+  delayBiasMs: number; // added to the base reaction delay (harder/closer rounds → slower)
+}
+
 export interface DistanceEngine {
   readonly id: string;
   readonly label: string;
@@ -29,7 +37,16 @@ export interface DistanceEngine {
   readonly minGap: number;
   /** Health a player loses for missing a round whose candidates differ by `gap` closeness. */
   damage(gap: number): number;
+  /** How the bot plays a round of this `gap` (accuracy + delay bias). */
+  bot(gap: number): BotPolicy;
 }
+
+/** Base reaction window the bot's delay bias is added to (ms). Shared across engines. The
+ *  bot is meant to be a STRONG, "extremely efficient" opponent — snappy and near-optimal
+ *  (the answer is derivable from the tree, so it plays close to perfectly), with just enough
+ *  fallibility on the subtlest rounds to stay beatable. */
+export const BOT_DELAY_MIN_MS = 450;
+export const BOT_DELAY_JITTER_MS = 1100;
 
 /** Default (Phase 0): rank by how DEEP the shared clade is — genus beats family beats order.
  *  Topology-only, no branch lengths needed. */
@@ -40,6 +57,9 @@ export const rankDepthEngine: DistanceEngine = {
   closeness: (r) => r.sharedDepth,
   minGap: 2,
   damage: (gap) => Math.min(40, 12 + Math.max(0, gap - 2) * 7), // gap 2 → 12, up to a 40 cap
+  // "Extremely efficient": all-but-perfect on obvious (wide-gap) rounds, only mildly fallible
+  // on the subtlest ones; a touch slower when the gap is tight (still snappy).
+  bot: (gap) => ({ accuracy: gap >= 3 ? 0.99 : 0.9, delayBiasMs: gap < 2 ? 400 : 0 }),
 };
 
 /** Alternative, ready to swap in: rank by NODAL edge distance (fewer edges between the tips =
@@ -51,6 +71,7 @@ export const nodalEngine: DistanceEngine = {
   closeness: (r) => -r.nodal, // fewer edges apart = closer
   minGap: 2, // the far candidate must be ≥2 more edges away to count as clearly further
   damage: (gap) => Math.min(40, 8 + gap * 3),
+  bot: (gap) => ({ accuracy: gap >= 4 ? 0.97 : 0.86, delayBiasMs: gap < 3 ? 600 : 0 }),
 };
 
 /** The engine the game uses unless told otherwise. Later this can be chosen per scope/config. */

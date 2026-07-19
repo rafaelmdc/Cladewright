@@ -300,9 +300,8 @@ function Shell({ children }: { children: React.ReactNode }) {
     <div className="relative flex min-h-screen w-screen flex-col items-center justify-center overflow-hidden bg-clade-bg px-4 py-8">
       <LeafBackground density={16} interactive={false} className="pointer-events-none absolute inset-0 -z-10" />
       <div className="absolute left-4 top-4">
-        <Link to="/">
-          <Wordmark size="text-xl" />
-        </Link>
+        {/* Wordmark is itself a <Link to="/"> — don't wrap it in another (nested <a>). */}
+        <Wordmark size="text-xl" />
       </div>
       {children}
     </div>

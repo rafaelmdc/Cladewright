@@ -9,4 +9,6 @@ from . import consumers
 
 websocket_urlpatterns = [
     re_path(r"^ws/clash/health/$", consumers.HealthConsumer.as_asgi()),
+    # Match ids are random + unguessable; the join token (not the path) authorizes the join.
+    re_path(r"^ws/clash/match/(?P<match_id>[\w-]+)/$", consumers.MatchConsumer.as_asgi()),
 ]

@@ -402,3 +402,146 @@ class MatchmakingTests(SimpleTestCase):
         mm = self._mm(_FakeRedisFull())
         with self.assertRaises(QueueError):
             mm.join_room("ZZZZZZ", 2, "B")
+
+
+from channels.routing import URLRouter  # noqa: E402
+from django.test import override_settings  # noqa: E402
+
+from . import runtime  # noqa: E402
+from .routing import websocket_urlpatterns  # noqa: E402
+from .tokens import issue_join_token  # noqa: E402
+
+
+def _default_pool_loader():
+    from .pools import load_pool
+    return load_pool
+
+
+class _User:
+    is_authenticated = True
+
+    def __init__(self, uid):
+        self.id = uid
+
+
+def _authed_app(user):
+    """Route straight to the ws URLRouter with a pre-authenticated user in scope, so the
+    consumer's auth path is exercised without a real session/DB (origin validation is
+    covered separately via the HealthConsumer)."""
+    router = URLRouter(websocket_urlpatterns)
+
+    async def app(scope, receive, send):
+        scope = dict(scope)
+        scope["user"] = user
+        await router(scope, receive, send)
+
+    return app
+
+
+async def _recv_until(comm, type_, tries=12):
+    """Drain messages until one of ``type_`` (a str or set), returning it; else None."""
+    wanted = {type_} if isinstance(type_, str) else set(type_)
+    for _ in range(tries):
+        msg = await comm.receive_json_from(timeout=2)
+        if msg.get("type") in wanted:
+            return msg
+    return None
+
+
+@override_settings(CHANNEL_LAYERS={"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}})
+class MatchConsumerTests(SimpleTestCase):
+    def setUp(self):
+        self.redis = _FakeRedisFull()
+        runtime._store = store.MatchStore(self.redis)
+        runtime._pool_loader = lambda scope: _pool()
+        runtime._present.clear()
+        runtime._match_locks.clear()
+
+    def tearDown(self):
+        runtime._store = None
+        runtime._pool_loader = _default_pool_loader()
+        runtime._present.clear()
+        runtime._match_locks.clear()
+
+    def _seed_match(self, mid="M", seed=1):
+        st = referee.new_match(
+            mid, _two_humans(), scope="test", engine_id="rank-depth",
+            pool=_pool(), ranked=True, seed=seed, now=1000.0,
+        )
+        store.MatchStore(self.redis).save(st)
+        return st
+
+    async def _connect(self, mid, user_id, seat):
+        token = issue_join_token(mid, user_id, seat)
+        comm = WebsocketCommunicator(_authed_app(_User(user_id)), f"/ws/clash/match/{mid}/?token={token}")
+        connected, _ = await comm.connect()
+        return comm, connected
+
+    async def test_rejects_unauthenticated(self):
+        self._seed_match("A")
+        router = URLRouter(websocket_urlpatterns)
+
+        async def anon_app(scope, receive, send):
+            scope = dict(scope)
+            scope["user"] = None
+            await router(scope, receive, send)
+
+        token = issue_join_token("A", 1, 0)
+        comm = WebsocketCommunicator(anon_app, f"/ws/clash/match/A/?token={token}")
+        connected, _ = await comm.connect()
+        self.assertFalse(connected)
+        await comm.disconnect()
+
+    async def test_rejects_missing_or_foreign_token(self):
+        self._seed_match("B")
+        comm = WebsocketCommunicator(_authed_app(_User(1)), "/ws/clash/match/B/")
+        connected, _ = await comm.connect()
+        self.assertFalse(connected)
+        await comm.disconnect()
+        # A token minted for a DIFFERENT user can't be used by user 1 (IDOR).
+        foreign = issue_join_token("B", 2, 1)
+        comm2 = WebsocketCommunicator(_authed_app(_User(1)), f"/ws/clash/match/B/?token={foreign}")
+        connected2, _ = await comm2.connect()
+        self.assertFalse(connected2)
+        await comm2.disconnect()
+
+    async def test_full_round_grades_and_bleeds_loser(self):
+        st = self._seed_match("C", seed=5)
+        correct = st.round.correct
+
+        c0, ok0 = await self._connect("C", 1, 0)
+        self.assertTrue(ok0)
+        snap0 = await c0.receive_json_from(timeout=2)
+        self.assertEqual(snap0["type"], "match")
+        self.assertEqual(snap0["seat"], 0)
+
+        c1, ok1 = await self._connect("C", 2, 1)
+        self.assertTrue(ok1)
+
+        await c0.send_json_to({"type": "lock", "side": correct})
+        await c1.send_json_to({"type": "lock", "side": 1 - correct})
+
+        reveal = await _recv_until(c0, "reveal")
+        self.assertIsNotNone(reveal)
+        self.assertEqual(reveal["correct"], correct)
+        self.assertEqual(reveal["hp"]["u:1"], referee.HP_MAX)
+        self.assertLess(reveal["hp"]["u:2"], referee.HP_MAX)
+        self.assertEqual(reveal["damaged"], ["u:2"])
+        self.assertIn("next", reveal)
+
+        await c0.disconnect()
+        await c1.disconnect()
+
+    async def test_opponent_lock_is_opaque(self):
+        st = self._seed_match("D", seed=2)
+        c0, _ = await self._connect("D", 1, 0)
+        await c0.receive_json_from(timeout=2)  # snapshot
+        c1, _ = await self._connect("D", 2, 1)
+
+        await c0.send_json_to({"type": "lock", "side": st.round.correct})
+        opp = await _recv_until(c1, "opponent_locked")
+        self.assertIsNotNone(opp)
+        self.assertNotIn("side", opp)
+
+        await c0.disconnect()
+        await c1.disconnect()

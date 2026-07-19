@@ -16,3 +16,12 @@ celery[redis]>=5.4
 # Roaring bitmaps (CRoaring bindings) — compact storage for a player's unique-named-species
 # set: thousands of placements collapse to a few-KB blob instead of one row per species (#55).
 pyroaring>=1.0,<2
+# Realtime Clade Clash versus (#36 Phase 1): Channels serves websockets on the ASGI stack,
+# channels-redis fans match-room messages across pods via the (already-deployed) Redis. The
+# daphne extra is the ASGI dev server (runserver) + the reference prod server; uvicorn workers
+# run it behind gunicorn in prod (see deployment). django-redis is not needed — the channel
+# layer talks to Redis directly.
+channels[daphne]>=4.2,<5
+channels-redis>=4.2,<5
+# ASGI worker class for gunicorn in prod: `gunicorn -k uvicorn.workers.UvicornWorker`.
+uvicorn[standard]>=0.30

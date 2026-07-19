@@ -18,6 +18,9 @@ DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
 ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
 INSTALLED_APPS = [
+    # daphne MUST lead: it swaps `runserver` for the ASGI dev server so websockets work in
+    # dev too (Channels serves both HTTP + ws from one app). See cladewright/asgi.py.
+    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -26,6 +29,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.sites",
     # third-party
+    "channels",  # websocket substrate for Clade Clash realtime versus (#36 Phase 1)
     "rest_framework",
     "corsheaders",
     "allauth",
@@ -37,6 +41,7 @@ INSTALLED_APPS = [
     "apps.scores",
     "apps.accounts",
     "apps.content",
+    "apps.clash",  # Clade Clash realtime versus (#36 Phase 1)
 ]
 
 MIDDLEWARE = [
@@ -262,3 +267,36 @@ _BROKER_TRANSPORT_OPTIONS = {
 CELERY_BROKER_TRANSPORT_OPTIONS = _BROKER_TRANSPORT_OPTIONS
 # The result backend is the same Redis; give it the same self-healing connection options.
 CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = _BROKER_TRANSPORT_OPTIONS
+
+# ── Channels / realtime (Clade Clash versus, #36 Phase 1) ────────────────────────────
+# Websocket consumers fan out match-room messages through a Redis channel layer, so any
+# ASGI pod can hold either player and Redis relays between them (no sticky sessions). The
+# same Redis service backs Celery, so we ISOLATE this layer two ways: a distinct DB index
+# (default /1 vs Celery's /0) AND a key prefix, so the two never collide. Override the URL
+# in prod via CHANNEL_LAYERS_REDIS_URL (falls back to CELERY_BROKER_URL's host on db 1).
+def _channel_redis_url() -> str:
+    explicit = os.environ.get("CHANNEL_LAYERS_REDIS_URL")
+    if explicit:
+        return explicit
+    # Reuse the broker's host/port but a different logical DB, so Celery keys and channel
+    # layer keys never share a keyspace even on one shared Redis.
+    base = CELERY_BROKER_URL.rsplit("/", 1)[0]
+    return f"{base}/1"
+
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [_channel_redis_url()],
+            # Namespace every channel-layer key (shared Redis with Celery, #36 security note).
+            "prefix": "cladewright:clash",
+            # Abandoned group memberships must not linger; a match is short-lived.
+            "group_expiry": int(os.environ.get("CLASH_GROUP_EXPIRY", "1800")),
+        },
+    },
+}
+# Tests + local single-process runs don't need Redis running; opt into the in-memory layer
+# with CHANNEL_LAYERS_IN_MEMORY=1 (the WebsocketCommunicator tests set this).
+if os.environ.get("CHANNEL_LAYERS_IN_MEMORY") == "1":
+    CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}

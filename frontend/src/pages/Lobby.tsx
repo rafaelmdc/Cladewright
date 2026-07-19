@@ -107,6 +107,9 @@ export function Lobby() {
     ? modifierEffects(cfg.modifiers, modInfo)
     : { hidden: new Set<keyof GameSettings>(), forced: {} as Partial<GameSettings> };
   const fields = useMemo(() => gameplayFields(mode, effects.hidden), [mode, effects.hidden]);
+  // Some modes (e.g. Clade Clash) tune only their pack scope — no gameplay dials. Then the
+  // right-hand Settings panel is empty, so drop it and let the pack column run full width.
+  const hasSettings = fields.length > 0;
   const shownSettings = { ...cfg.settings, ...effects.forced };
   const lockedKeys = new Set(Object.keys(effects.forced) as (keyof GameSettings)[]);
   // Live score multiplier the run will score at (∏ active modifiers × ∏ eased settings, #101).
@@ -159,8 +162,13 @@ export function Lobby() {
             <p className="font-hand text-xl text-clade-ink/70">Set up your run, then play.</p>
           </div>
 
-          {/* Left: packs, then difficulty + modifiers. Right: the big settings panel. */}
-          <div className="grid items-start gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
+          {/* Left: packs, then difficulty + modifiers. Right: the big settings panel (only when
+              the mode has gameplay dials). */}
+          <div
+            className={`grid items-start gap-5 ${
+              hasSettings ? "md:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]" : "md:grid-cols-1"
+            }`}
+          >
             <div className="flex flex-col gap-5">
               {/* Packs */}
               <Panel title="Packs">
@@ -260,7 +268,8 @@ export function Lobby() {
               )}
             </div>
 
-            {/* Right: settings (the big panel). */}
+            {/* Right: settings (the big panel) — only for modes that have gameplay dials. */}
+            {hasSettings && (
             <div className="ink-card flex h-full flex-col gap-5 bg-clade-paper p-5">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-baseline gap-3">
@@ -304,6 +313,7 @@ export function Lobby() {
                 }
               />
             </div>
+            )}
           </div>
 
           <button type="button" onClick={start} className="btn-play self-start text-2xl">

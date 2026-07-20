@@ -99,10 +99,28 @@ about node distance). **The fix is the round generator, not a fancier metric:**
 ### The path to a real metric (post-MVP)
 
 When rank-gap rounds start to feel samey, upgrade the *data*, not the game: have the
-pipeline emit branch lengths or a per-scope distance matrix into the asset. Braidworks
-already ships `gtdb_weaver` (branch-length trees), `ncbi_weaver`, and `uniprot_weaver`,
-so patristic / sequence-divergence distance is a pipeline extension. The game loop and
-the `distance()` signature don't change; only what fills them in does.
+pipeline emit branch lengths or a per-scope distance matrix into the asset. The game loop
+and the `distance()` signature don't change; only what fills them in does.
+
+**This needs a NEW data source — the existing weavers cannot supply it.** An earlier draft
+of this doc claimed Braidworks' `gtdb_weaver` made patristic distance "a pipeline
+extension". It does implement real patristic distance (`tree.py`: Newick → per-leaf root
+paths → summed branch length), but on the GTDB **bac120 / ar53** reference trees, which
+cover **bacteria and archaea only**. Every scope this game serves is metazoan (mammals,
+birds, reptiles, amphibians, fish, molluscs, nematodes, flatworms, cnidarians, …), so GTDB
+coverage is **zero**. `ncbi_weaver` returns ranked *lineages* — topology again, no branch
+lengths — and `uniprot_weaver` returns protein accessions, which would mean building an
+alignment pipeline.
+
+Real candidates are dated animal phylogenies: **TimeTree** (divergence times, ~150k
+species; "split 8 Myr ago" is also friendlier reveal copy than substitutions per site) or
+the **VertLife-family supertrees** (Upham mammals, Jetz birds, Tonini squamates, Jetz &
+Pyron amphibians, Rabosky fishtree), which map closely onto five of our scopes.
+
+Coverage would be **partial, and that is a design constraint**: dated phylogenies for
+molluscs — our largest scope at ~153k tips — nematodes and flatworms barely exist. So a
+patristic engine must be per-scope opt-in with `rankDepthEngine` as the fallback, never a
+global swap. The `DistanceEngine` seam already expresses this.
 
 ## Realtime architecture (versus)
 
@@ -223,7 +241,15 @@ Deliberately phased so nothing waits on the hardest part; detail + open decision
    private-room invites, server-authoritative round generation + grading, reaction-time
    plausibility, and the **cross-process Redis match lock** (correct across pods, see
    Realtime → Concurrency). Delivers the #103 substrate.
-3. **Depth & scale** — genetic/patristic distance via the weavers; spectate; and, *if* a
-   competitive ladder is ever wanted, an **ELO / rating ladder** off the `MatchResult` rows
-   (a duel wants a *rating*, not a score leaderboard — the raw results are already recorded
-   with `ranked`/`flagged` for exactly this). Not planned yet; nothing depends on it.
+3. **Depth & scale** — genetic/patristic distance (see *The path to a real metric*: it needs
+   a new dated-phylogeny source, not the existing weavers, and only covers some scopes); and,
+   *if* a competitive ladder is ever wanted, an **ELO / rating ladder** off the `MatchResult`
+   rows (a duel wants a *rating*, not a score leaderboard — the raw results are already
+   recorded with `ranked`/`flagged` for exactly this). Not planned yet; nothing depends on it.
+
+   **Spectate is rejected, not deferred.** A read-only third connection would have been cheap
+   (every frame already broadcasts to a per-match group, and `public_round()` is already the
+   answer-free projection a watcher needs) — but it is not worth having. It also carries a
+   collusion vector: a spectator can *derive* the answer exactly as a player can, then relay
+   it out-of-band, which neither the reaction-time floor nor `FAST_PICK_LIMIT` detects.
+   Don't reintroduce it without a reason better than "it was easy".

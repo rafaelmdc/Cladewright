@@ -32,7 +32,20 @@ play — the Hub renders one card per row.
   round instant to render and instant to grade — the property everything else leans on.
 - **Reveal teaches.** The flip shows the answer *and the shared clade* — "*Leopard*
   shares family *Felidae*; *wolf* only shares order *Carnivora*" — so a round leaves
-  you knowing something, not just scored.
+  you knowing something, not just scored. This is *drawn*, not described: `RevealClado`
+  sketches the round's topology — always `((specimen, near), far)` — with the shared rank
+  named on each join. It was a 10px monospace pill, which is a poor showing for the one
+  line that explains the answer.
+- **The draw favours species people know** (`fameBias`, admin-tunable — see
+  [`admin.md`](admin.md)). A uniform draw over a 6,000-species pack mostly produced rounds
+  like "Puntilla tuco-tuco vs Furtive tuco-tuco": unanswerable, so a coin flip rather than a
+  question. The skew decays across the generator's attempts, so a strong bias can never make
+  a pack unplayable — it only changes which end we look at first. Famous species are also the
+  ones with photographs, so this carries the specimen art too.
+- **The player chooses which names they see** (`nameLens`: common · both · scientific).
+  "Scientific" means scientific *only* — withholding the common name is the whole point of
+  it being the harder lens. It is a **gameplay** setting, not a visual one: lobby-owned,
+  frozen for the run, and carried in the shared config code.
 - **Health, not points (GeoGuessr-Duels-style).** Both sides start at `HP_MAX` (100).
   Each round is a **difference model**: only the side whose outcome *differs* from the
   other takes damage — if you pick the closer relative and your opponent doesn't, they

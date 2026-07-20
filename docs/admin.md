@@ -38,9 +38,21 @@ The web process only **enqueues**; a separate **worker** (the pipeline image, wi
   the old dump + zip). Run before a batch of rebuilds when you want fresh data.
 
 ### Games + the daily (`scores`)
-- **Game mode configs** — one row per mode (`marathon_free`, `marathon_daily`, `classic`).
+- **Game mode configs** — one row per mode (`marathon_free`, `marathon_daily`, `clash_solo`).
   Toggle `enabled` straight from the list to launch/retire a game with no deploy; set
   label/blurb/route/sort. `*_daily` modes surface as the Hub's Daily strip, not a card.
+  **One row = one Hub card.** A new *way to play* an existing game is not a new row — Clade
+  Clash's bot/player choice lives in its lobby (see `clade-clash-design.md`); adding
+  `clash_versus` as its own row is what once put two Clade Clash cards on the Hub.
+- **Game defaults** — the tuning a fresh run starts from, one row per GAME (`marathon`,
+  `clash`; Marathon's free + daily cadences share a row). The SPA overlays these on its
+  hardcoded fallbacks, so retuning is data, not a deploy. Clade Clash's row carries
+  **`fame_bias`** (0–1, default 0.6): how strongly rounds favour species people have heard
+  of. Every tip has a `fame` score (enwiki pageviews), and drawing uniformly from a
+  6,000-species pack mostly produced rounds between two animals nobody can name — a coin
+  flip, not a question. 0 is uniform; 1 strongly favours the famous. **Raising it cannot
+  break a pack**: the bias relaxes itself across the round generator's attempts, so a pack
+  with a thin famous end just falls back to a uniform draw.
 - **Daily rotation entries** — the daily rotation pool: which `(mode, scope)` entries the
   daily cycles through by date (tune *game* + *clade* rotation). Empty pool → the daily falls
   back to rotating the currently-served scopes.

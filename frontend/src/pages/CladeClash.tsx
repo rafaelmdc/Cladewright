@@ -235,10 +235,16 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
           </div>
           <div className="mt-7 flex items-center justify-center gap-3">
             <button onClick={playAgain} className="btn-play">▶ Play again</button>
-            <Link to="/" className="font-mono text-xs uppercase tracking-widest text-clade-ink/50 hover:text-clade-ink">
-              Menu
-            </Link>
+            <Link to="/clash/versus" className="pill">⚔ Duel a player</Link>
           </div>
+          {/* Versus is the same game, not a second one — the Hub shows ONE Clade Clash card
+              (scores migration 0029), so this is where a solo player discovers the duel. */}
+          <Link
+            to="/"
+            className="mt-4 inline-block font-mono text-xs uppercase tracking-widest text-clade-ink/50 hover:text-clade-ink"
+          >
+            Menu
+          </Link>
         </div>
       </Shell>
     );

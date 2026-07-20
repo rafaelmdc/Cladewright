@@ -47,11 +47,12 @@ export function Hub() {
 
           <div className="flex flex-wrap justify-center gap-4">
             {cardGames.map((g) => (
-              // Versus does its own pack pick + matchmaking, so it skips the generic lobby and
-              // links straight to its route; every other mode goes through /play/:mode.
+              // Every game goes through its lobby at /play/:mode. (Clade Clash Versus used to
+              // be special-cased here to skip the lobby, but it is not a separate game — it is
+              // one way to play Clade Clash, reached from inside it. See scores migration 0029.)
               <ModeCard
                 key={g.mode}
-                to={g.mode === "clash_versus" ? g.route : `/play/${g.mode}`}
+                to={`/play/${g.mode}`}
                 title={g.label}
                 blurb={g.blurb}
               />

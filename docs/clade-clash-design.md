@@ -11,9 +11,15 @@ Roadmap, phased rollout, and open decisions live in the tracking issue **#36**
 issues). This doc is the *why* and the invariants any implementation must hold.
 
 Player-facing name: **Clade Clash**. Internal mode keys follow the existing
-`<base>_<cadence>` pattern (cf. `marathon_free`) — e.g. `clash_solo`, `clash_versus`;
-pick them deliberately, they anchor data and routes (see
-[`games-model.md`](games-model.md)).
+`<base>_<cadence>` pattern (cf. `marathon_free`) — the game's key is `clash_solo`; pick
+them deliberately, they anchor data and routes (see [`games-model.md`](games-model.md)).
+
+**Clade Clash is ONE game with several ways to play** — solo, vs a bot, vs a player —
+exactly as the daily is a way to play Time Attack rather than a game of its own. Versus was
+briefly seeded as its own `GameModeConfig` row (`clash_versus`), which made the Hub render
+**two cards for one game**; scores migration 0029 removes it. `/clash/versus` remains a live
+route, reached from inside Clade Clash. Don't reintroduce a second mode row to add a way to
+play — the Hub renders one card per row.
 
 ## The loop
 

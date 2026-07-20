@@ -47,6 +47,10 @@ export interface GameSettings {
   cladeScoreMultiplier: number;
   /** Smallest clade size that earns a completion bonus. */
   cladeMinSize: number;
+  /** Clade Clash only: how strongly rounds favour well-known species (0 uniform … 1 strongly
+   *  famous). ADMIN-owned — served from GameDefaults and deliberately absent from
+   *  SETTINGS_SCHEMA, so it's a balance knob rather than a dial players fiddle with. */
+  fameBias: number;
 }
 
 /** Hardcoded fallbacks — used until the admin-configured defaults load (and if they can't). */
@@ -69,6 +73,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   comboScoreMultiplier: 1.0,
   cladeScoreMultiplier: 2.0,
   cladeMinSize: 3,
+  fameBias: 0.6,
 };
 
 

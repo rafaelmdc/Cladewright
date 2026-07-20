@@ -92,6 +92,7 @@ export function CladeClash() {
       // Chosen in the lobby (Names). A pre-existing config code has no nameLens in its delta,
       // so decodeConfig fills it from the defaults — old links keep showing both names.
       lens={cfg?.settings.nameLens ?? "both"}
+      fameBias={cfg?.settings.fameBias ?? 0}
     />
   );
 }
@@ -103,14 +104,16 @@ function ClashGame({
   asset,
   versusHref,
   lens,
+  fameBias,
 }: {
   asset: InternedAsset;
   scopes: ScopeInfo[];
   scopeKey: string;
   versusHref: string;
   lens: NameLens;
+  fameBias: number;
 }) {
-  const [round, setRound] = useState<ClashRound | null>(() => makeRound(asset, ENGINE));
+  const [round, setRound] = useState<ClashRound | null>(() => makeRound(asset, ENGINE, Math.random, fameBias));
   const [roundNum, setRoundNum] = useState(1);
   const [phase, setPhase] = useState<Phase>("playing");
   const [pick, setPick] = useState<Side | null>(null);
@@ -139,7 +142,7 @@ function ClashGame({
       return;
     }
     setRoundNum((n) => n + 1);
-    setRound(makeRound(asset, ENGINE));
+    setRound(makeRound(asset, ENGINE, Math.random, fameBias));
     setPick(null);
     setBotPick(null);
     setBotLocked(false);
@@ -148,7 +151,9 @@ function ClashGame({
     setDmg({ you: 0, bot: 0 });
     setSeconds(ROUND_SECONDS);
     setPhase("playing");
-  }, [asset, roundNum]);
+    // fameBias belongs here: the admin default arrives asynchronously (fetchGameDefaults), so
+    // omitting it would leave every round after the first drawing on a stale bias.
+  }, [asset, roundNum, fameBias]);
 
   const reveal = useCallback(() => {
     setPhase((p) => {
@@ -225,7 +230,7 @@ function ClashGame({
     setBotHp(HP_MAX);
     setDmg({ you: 0, bot: 0 });
     setRoundNum(1);
-    setRound(makeRound(asset, ENGINE));
+    setRound(makeRound(asset, ENGINE, Math.random, fameBias));
     setPick(null);
     setBotPick(null);
     setBotLocked(false);

@@ -96,19 +96,61 @@ export interface ClashRound {
 const SAMPLE = 400; // candidates compared against the centre per attempt (cheap; pools are ~thousands)
 const ATTEMPTS = 16; // resample the centre this many times before giving up on a fair round
 
+/** Tips sorted by fame, descending — computed once per asset, not per round.
+ *
+ *  Keyed weakly so it dies with the asset (a pack switch shouldn't leak the old ordering).
+ *  `raw.tips` is sorted by id, and re-sorting 6k+ tips every round would be absurd. */
+const famedOrder = new WeakMap<InternedAsset, AssetTip[]>();
+function byFame(asset: InternedAsset): AssetTip[] {
+  let out = famedOrder.get(asset);
+  if (!out) {
+    out = [...asset.raw.tips].sort((a, b) => (b.fame ?? 0) - (a.fame ?? 0));
+    famedOrder.set(asset, out);
+  }
+  return out;
+}
+
+/** How sharply the draw skews: index = N * u^(1 + bias*FAME_SKEW).
+ *
+ *  Tuned against the real 6,441-tip mammalia pack, whose fame is savagely long-tailed (max
+ *  1,375,313; MEDIAN 20) — so a gentle curve barely helps. Median species drawn, by skew:
+ *
+ *    skew  bias 0.6            bias 1.0
+ *      4   rank 604  fame 46   rank 213  fame 932     — still nobody at the default
+ *      8   rank 109  fame 2392 rank  14  fame 77058   — recognisable, still varied
+ *     12   rank  21  fame 30k  rank   0  fame 1.4M    — degenerate: same animal every round
+ *
+ *  8 gives a playable default and a useful range without collapsing to a handful of species
+ *  at the top of the dial. */
+const FAME_SKEW = 8;
+
 /** Build one round, or null if the pool is too small/flat to form a fair one (caller falls back).
- *  `engine` picks the metric; `rng` is injectable so a match can be seeded/replayed later. */
+ *  `engine` picks the metric; `rng` is injectable so a match can be seeded/replayed later.
+ *
+ *  `fameBias` (0..1, admin-tunable via GameDefaults) skews the draw toward well-known species.
+ *  Drawing uniformly from a 6,000-species pack mostly produced animals nobody can recognise —
+ *  "Puntilla tuco-tuco vs Furtive tuco-tuco" isn't a question, it's a coin flip. The bias
+ *  DECAYS across attempts, so a pack whose famous end is too small or too flat to form a fair
+ *  round still falls back to the old uniform behaviour rather than failing. */
 export function makeRound(
   asset: InternedAsset,
   engine: DistanceEngine = DEFAULT_ENGINE,
   rng: () => number = Math.random,
+  fameBias = 0,
 ): ClashRound | null {
   const tips = asset.raw.tips;
   const N = tips.length;
   if (N < 8) return null;
-  const pick = () => tips[(rng() * N) | 0];
+  const bias = Math.max(0, Math.min(1, fameBias));
+  const famed = bias > 0 ? byFame(asset) : tips;
 
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    // Relax the skew as attempts fail: by the final tries this is a plain uniform draw, so a
+    // high bias can never make a pack unplayable — only change which end we look at first.
+    const strength = bias * (1 - attempt / ATTEMPTS);
+    const exp = 1 + strength * FAME_SKEW;
+    const pick = () => famed[Math.min(famed.length - 1, (famed.length * Math.pow(rng(), exp)) | 0)];
+
     const center = pick();
     let near: { tip: AssetTip; r: Relatedness; c: number } | null = null;
     const pool: { tip: AssetTip; r: Relatedness; c: number }[] = [];

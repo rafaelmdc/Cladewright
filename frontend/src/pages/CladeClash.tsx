@@ -27,6 +27,7 @@ import {
   type ClashRound,
 } from "../lib/game/cladeClash";
 import type { Relatedness } from "../lib/game/distance";
+import type { NameLens } from "../lib/game/settings";
 import { useTitle } from "../lib/useTitle";
 
 // The active distance engine — what "closer relative" means, and how much a miss hurts. Swap
@@ -86,6 +87,9 @@ export function CladeClash() {
       scopes={scopes}
       scopeKey={(cfg?.scopes ?? []).join(",")}
       versusHref={versusHref}
+      // Chosen in the lobby (Names). A pre-existing config code has no nameLens in its delta,
+      // so decodeConfig fills it from the defaults — old links keep showing both names.
+      lens={cfg?.settings.nameLens ?? "both"}
     />
   );
 }
@@ -96,11 +100,13 @@ type Side = 0 | 1;
 function ClashGame({
   asset,
   versusHref,
+  lens,
 }: {
   asset: InternedAsset;
   scopes: ScopeInfo[];
   scopeKey: string;
   versusHref: string;
+  lens: NameLens;
 }) {
   const [round, setRound] = useState<ClashRound | null>(() => makeRound(asset, ENGINE));
   const [roundNum, setRoundNum] = useState(1);
@@ -300,10 +306,11 @@ function ClashGame({
           isCorrect={round!.correct === 0}
           botPicked={botPick === 0}
           phase={phase}
+          lens={lens}
           onPick={() => choose(0)}
         />
         <div className="flex flex-col items-center justify-center gap-2">
-          <CenterCard tip={round!.center} />
+          <CenterCard tip={round!.center} lens={lens} />
           <div className="font-hand text-lg italic text-clade-ink/40">closer to…?</div>
         </div>
         <OptionCard
@@ -314,6 +321,7 @@ function ClashGame({
           isCorrect={round!.correct === 1}
           botPicked={botPick === 1}
           phase={phase}
+          lens={lens}
           onPick={() => choose(1)}
         />
       </div>
@@ -344,13 +352,34 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function CenterCard({ tip }: { tip: AssetTip }) {
+/** A specimen's name(s) under the lobby's Names lens. "scientific" shows ONLY the binomial —
+ *  that's the hard mode, so leaking the common name here would defeat it. CardThumb still gets
+ *  both names either way: they're only used to look an image up, never displayed. */
+function SpecimenName({ tip, lens }: { tip: AssetTip; lens: NameLens }) {
+  const common = tip.common || tip.sci;
+  const primary = lens === "scientific" ? tip.sci : common;
+  const secondary = lens === "both" && tip.sci !== primary ? tip.sci : null;
+  return (
+    <>
+      <div
+        className={`font-hand text-2xl font-bold leading-tight text-clade-ink ${
+          lens === "scientific" ? "italic" : ""
+        }`}
+      >
+        {primary}
+      </div>
+      {secondary && <div className="font-hand text-sm italic text-clade-ink/55">{secondary}</div>}
+    </>
+  );
+}
+
+function CenterCard({ tip, lens }: { tip: AssetTip; lens: NameLens }) {
   return (
     <div className="ink-card w-52 max-w-full bg-clade-paper px-4 py-4 text-center shadow-sm">
       <div className="mb-2 font-mono text-[10px] uppercase tracking-widest text-clade-accent">Specimen</div>
       <CardThumb common={tip.common} sci={tip.sci} size={88} />
-      <div className="mt-1 font-hand text-2xl font-bold leading-tight text-clade-ink">{tip.common}</div>
-      <div className="font-hand text-sm italic text-clade-ink/55">{tip.sci}</div>
+      <div className="mt-1" />
+      <SpecimenName tip={tip} lens={lens} />
     </div>
   );
 }
@@ -362,6 +391,7 @@ function OptionCard({
   isCorrect,
   botPicked,
   phase,
+  lens,
   onPick,
 }: {
   tip: AssetTip;
@@ -371,6 +401,7 @@ function OptionCard({
   isCorrect: boolean;
   botPicked: boolean;
   phase: Phase;
+  lens: NameLens;
   onPick: () => void;
 }) {
   const revealed = phase === "revealed";
@@ -389,8 +420,7 @@ function OptionCard({
       className={`ink-card relative flex min-h-[9rem] flex-col items-center justify-center gap-1 bg-clade-paper px-4 py-5 text-center transition ${tone} ${phase === "playing" && !picked ? "cursor-pointer" : "cursor-default"}`}
     >
       <CardThumb common={tip.common} sci={tip.sci} />
-      <div className="font-hand text-2xl font-bold leading-tight text-clade-ink">{tip.common}</div>
-      <div className="font-hand text-sm italic text-clade-ink/55">{tip.sci}</div>
+      <SpecimenName tip={tip} lens={lens} />
 
       {/* your lock-in marker */}
       {picked && !revealed && (

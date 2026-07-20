@@ -6,11 +6,18 @@
 
 export type TreeLayout = "radial" | "rectangular";
 
+/** Which name(s) a specimen shows. A GAMEPLAY choice, not a visual one: "scientific" is a
+ *  genuinely harder game (you must recognise the binomial), so it's lobby-owned, frozen at
+ *  start, and rides in the shared config code — unlike the cosmetic VISUAL_KEYS. */
+export type NameLens = "common" | "both" | "scientific";
+
 export interface GameSettings {
   /** Tree-of-life canvas style: radial (circular) or rectangular phylogram. */
   treeLayout: TreeLayout;
   /** Show the scientific name (smaller) under a species' common name on the tree. */
   showScientific: boolean;
+  /** Which name(s) a specimen card shows: common only, both, or scientific only. */
+  nameLens: NameLens;
   /** Ambient leaves drifting behind the board (and flung by combo explosions). Purely
    *  visual — never affects scoring or ranked status. */
   fallingLeaves: boolean;
@@ -46,6 +53,7 @@ export interface GameSettings {
 export const DEFAULT_SETTINGS: GameSettings = {
   treeLayout: "radial",
   showScientific: true,
+  nameLens: "both", // what Clade Clash already showed before this was configurable
   fallingLeaves: true,
   flashFadeSeconds: 2,
   extantOnly: true,

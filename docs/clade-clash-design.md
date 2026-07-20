@@ -11,9 +11,15 @@ Roadmap, phased rollout, and open decisions live in the tracking issue **#36**
 issues). This doc is the *why* and the invariants any implementation must hold.
 
 Player-facing name: **Clade Clash**. Internal mode keys follow the existing
-`<base>_<cadence>` pattern (cf. `marathon_free`) — e.g. `clash_solo`, `clash_versus`;
-pick them deliberately, they anchor data and routes (see
-[`games-model.md`](games-model.md)).
+`<base>_<cadence>` pattern (cf. `marathon_free`) — the game's key is `clash_solo`; pick
+them deliberately, they anchor data and routes (see [`games-model.md`](games-model.md)).
+
+**Clade Clash is ONE game with several ways to play** — solo, vs a bot, vs a player —
+exactly as the daily is a way to play Time Attack rather than a game of its own. Versus was
+briefly seeded as its own `GameModeConfig` row (`clash_versus`), which made the Hub render
+**two cards for one game**; scores migration 0029 removes it. `/clash/versus` remains a live
+route, reached from inside Clade Clash. Don't reintroduce a second mode row to add a way to
+play — the Hub renders one card per row.
 
 ## The loop
 
@@ -26,7 +32,20 @@ pick them deliberately, they anchor data and routes (see
   round instant to render and instant to grade — the property everything else leans on.
 - **Reveal teaches.** The flip shows the answer *and the shared clade* — "*Leopard*
   shares family *Felidae*; *wolf* only shares order *Carnivora*" — so a round leaves
-  you knowing something, not just scored.
+  you knowing something, not just scored. This is *drawn*, not described: `RevealClado`
+  sketches the round's topology — always `((specimen, near), far)` — with the shared rank
+  named on each join. It was a 10px monospace pill, which is a poor showing for the one
+  line that explains the answer.
+- **The draw favours species people know** (`fameBias`, admin-tunable — see
+  [`admin.md`](admin.md)). A uniform draw over a 6,000-species pack mostly produced rounds
+  like "Puntilla tuco-tuco vs Furtive tuco-tuco": unanswerable, so a coin flip rather than a
+  question. The skew decays across the generator's attempts, so a strong bias can never make
+  a pack unplayable — it only changes which end we look at first. Famous species are also the
+  ones with photographs, so this carries the specimen art too.
+- **The player chooses which names they see** (`nameLens`: common · both · scientific).
+  "Scientific" means scientific *only* — withholding the common name is the whole point of
+  it being the harder lens. It is a **gameplay** setting, not a visual one: lobby-owned,
+  frozen for the run, and carried in the shared config code.
 - **Health, not points (GeoGuessr-Duels-style).** Both sides start at `HP_MAX` (100).
   Each round is a **difference model**: only the side whose outcome *differs* from the
   other takes damage — if you pick the closer relative and your opponent doesn't, they

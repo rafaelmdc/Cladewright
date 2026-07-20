@@ -20,7 +20,7 @@ import {
   encodeConfig,
   type GameConfig,
 } from "../lib/game/config";
-import { gameplayFields } from "../lib/game/schema";
+import { gameplayFields, opponentsFor, type OpponentChoice } from "../lib/game/schema";
 import { fetchGameDefaults, gameDefaults, type GameSettings } from "../lib/game/settings";
 import {
   conflictingModifiers,
@@ -97,6 +97,10 @@ export function Lobby() {
   }, []);
 
   const supportsDifficulty = game?.supports_difficulty ?? true;
+  // Games that ask who you're playing against (Clade Clash). Empty for everything else, so
+  // the panel simply doesn't render and Start keeps using the game's own route.
+  const opponents = useMemo(() => opponentsFor(mode), [mode]);
+  const opponent = opponents.find((o) => o.value === (cfg.opponent ?? "bot")) ?? opponents[0];
   const totalTips = scopes
     .filter((s) => cfg.scopes.includes(s.key))
     .reduce((n, s) => n + s.tip_count, 0);
@@ -131,6 +135,16 @@ export function Lobby() {
     });
   }
 
+  function pickOpponent(o: OpponentChoice) {
+    setCfg((c) => ({
+      ...c,
+      opponent: o.value,
+      // A single-pack opponent (versus) can't carry a mix, so collapse the selection rather
+      // than silently launching with a scope the matchmaker will never pair.
+      scopes: o.single && c.scopes.length > 1 ? [c.scopes[0]] : c.scopes,
+    }));
+  }
+
   function start() {
     const code = encodeConfig(cfg);
     try {
@@ -138,7 +152,10 @@ export function Lobby() {
     } catch {
       /* storage unavailable — the run still launches, the lobby just won't pre-fill next time */
     }
-    const route = game?.route ?? "/marathon";
+    // Games that offer opponents route by the choice (Clade Clash: bot → /clash, player →
+    // /clash/versus); everything else goes to the game's own route. Either way the encoded
+    // config rides along, so the target inherits the packs and settings picked here.
+    const route = opponent?.route ?? game?.route ?? "/marathon";
     navigate(`${route}?c=${code}`);
   }
 
@@ -170,12 +187,45 @@ export function Lobby() {
             }`}
           >
             <div className="flex flex-col gap-5">
+              {/* Opponent — for games that are one game with several ways to play (Clade Clash).
+                  This is a lobby choice, NOT a separate mode: it decides where Start sends you. */}
+              {opponents.length > 0 && (
+                <Panel title="Opponent">
+                  <div className="flex flex-wrap gap-2">
+                    {opponents.map((o) => (
+                      <button
+                        key={o.value}
+                        type="button"
+                        onClick={() => pickOpponent(o)}
+                        className={`pill ${opponent?.value === o.value ? "pill-active" : "border-dashed"}`}
+                      >
+                        {o.label}
+                        <span className="ml-1.5 font-mono text-[10px] opacity-70">{o.hint}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {opponent?.single && (
+                    <p className="mt-2 font-mono text-[11px] text-clade-ink/45">
+                      One pack only — a duel pairs players on the same pack.
+                    </p>
+                  )}
+                </Panel>
+              )}
+
               {/* Packs */}
               <Panel title="Packs">
                 <ScopePicker
                   scopes={scopes}
                   value={cfg.scopes}
-                  onChange={(keys) => setCfg((c) => ({ ...c, scopes: [...keys].sort() }))}
+                  multiple={!opponent?.single}
+                  onChange={(keys) =>
+                    setCfg((c) => ({
+                      ...c,
+                      scopes: opponent?.single
+                        ? keys.slice(-1) // single-select: the last click wins
+                        : [...keys].sort(),
+                    }))
+                  }
                 />
                 {/* Sets (#120): one-click presets that select a curated bundle of packs. A set
                     is "active" when the selection matches its members exactly. */}
@@ -284,18 +334,23 @@ export function Lobby() {
                     </button>
                   )}
                 </div>
-                <span
-                  className={`font-mono text-[11px] uppercase tracking-wide ${
-                    multiplier === 1
-                      ? "text-clade-ink/45"
-                      : multiplier > 1
-                        ? "text-clade-accent"
-                        : "text-clade-ink/55"
-                  }`}
-                  title="Score multiplier from your modifiers + settings"
-                >
-                  ● {formatMultiplier(multiplier)} run
-                </span>
+                {/* Only for games that actually score. A game with no modifiers has no way to
+                    move its multiplier off 1×, so the badge would just assert "1× run" at a
+                    player — actively misleading on Clade Clash, which isn't scored at all. */}
+                {modInfo && modInfo.modifiers.length > 0 && (
+                  <span
+                    className={`font-mono text-[11px] uppercase tracking-wide ${
+                      multiplier === 1
+                        ? "text-clade-ink/45"
+                        : multiplier > 1
+                          ? "text-clade-accent"
+                          : "text-clade-ink/55"
+                    }`}
+                    title="Score multiplier from your modifiers + settings"
+                  >
+                    ● {formatMultiplier(multiplier)} run
+                  </span>
+                )}
               </div>
               <SettingsFields
                 fields={fields}

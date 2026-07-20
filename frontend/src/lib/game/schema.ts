@@ -70,14 +70,52 @@ const MARATHON_FIELDS: SettingField[] = [
 export const SETTINGS_SCHEMA: Record<string, SettingField[]> = {
   marathon_free: MARATHON_FIELDS,
   marathon_daily: MARATHON_FIELDS,
-  // Clade Clash (#36) configures only its pack scope — the round count/timer are fixed for
-  // now (see CladeClash.tsx). No gameplay dials, so the lobby shows just the pack picker.
-  // (Round cap / timer could graduate into fields here later.)
-  clash_solo: [],
+  // Clade Clash (#36). Round count/timer are fixed for now (see CladeClash.tsx); the one dial
+  // is which name(s) a specimen shows. It is deliberately NOT `visual: true` — "Scientific
+  // only" is a harder game, not a display preference, so the lobby owns it and it's frozen
+  // for the run. (Round cap / timer could graduate into fields here later.)
+  clash_solo: [
+    { key: "nameLens", kind: "segmented", label: "Names", group: "Play",
+      hint: "Scientific only is the hard mode — no common name to fall back on.",
+      options: [
+        { value: "common", label: "Common" },
+        { value: "both", label: "Both" },
+        { value: "scientific", label: "Scientific" },
+      ] },
+  ],
 };
 
 export function schemaFor(mode: string): SettingField[] {
   return SETTINGS_SCHEMA[mode] ?? SETTINGS_SCHEMA.marathon_free;
+}
+
+/** Games where the lobby asks WHO you're playing against, and where Start sends you.
+ *
+ *  Clade Clash is ONE game with several ways to play (see docs/clade-clash-design.md) — the
+ *  opponent is a lobby choice, NOT a second game mode. Adding a mode row per way to play is
+ *  what put two Clade Clash cards on the Hub; scores migration 0029 undid that.
+ *
+ *  `route` is where Start navigates for that choice; the encoded config rides along, so the
+ *  target inherits the packs picked in the lobby. `single` marks choices that can only take
+ *  ONE pack — versus matchmaking queues per scope key, so a mix would only ever pair with
+ *  someone holding the identical mix. */
+export interface OpponentChoice {
+  value: "bot" | "player";
+  label: string;
+  hint: string;
+  route: string;
+  single?: boolean;
+}
+
+export const OPPONENTS: Record<string, OpponentChoice[]> = {
+  clash_solo: [
+    { value: "bot", label: "🤖 Bot", hint: "instant · unranked", route: "/clash" },
+    { value: "player", label: "⚔ Player", hint: "ranked · needs an account", route: "/clash/versus", single: true },
+  ],
+};
+
+export function opponentsFor(mode: string): OpponentChoice[] {
+  return OPPONENTS[mode] ?? [];
 }
 
 /** Visual-only fields (the in-game gear keeps these) vs gameplay fields (the lobby owns).

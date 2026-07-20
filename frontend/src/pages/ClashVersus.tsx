@@ -1,17 +1,23 @@
-// Clade Clash — realtime versus (#36 Phase 1). Pick a pack, then quick-match a stranger or
-// invite a friend by room code; the duel itself is server-refereed over a websocket
-// (useClashMatch). The board mirrors Phase 0's solo look — facing HP bars, a specimen, two
-// candidates — but the opponent is a person and every reveal comes from the server.
+// Clade Clash — realtime versus (#36 Phase 1). Quick-match a stranger or invite a friend by
+// room code; the duel itself is server-refereed over a websocket (useClashMatch). The board
+// mirrors solo's look — facing HP bars, a specimen, two candidates — but the opponent is a
+// person and every reveal comes from the server.
+//
+// The PACK is chosen in the Clade Clash lobby (/play/clash_solo, Opponent → Player) and
+// arrives here as ?c=<encoded GameConfig>, exactly like the solo surface. Versus is not a
+// separate game with its own setup — it's one way to play Clade Clash. The inline picker
+// below is only a fallback for a bare /clash/versus (an old bookmark or shared link).
 
-import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
-import { CardThumb } from "../components/clash/CardThumb";
+import { HealthGauge } from "../components/clash/HealthGauge";
+import { SpecimenPlate } from "../components/clash/SpecimenPlate";
 import { LeafBackground } from "../components/LeafBackground";
 import { Wordmark } from "../components/Brand";
 import { ScopePicker } from "../components/ScopePicker";
 import { fetchMe } from "../lib/auth";
-import { defaultConfig, encodeConfig } from "../lib/game/config";
+import { decodeConfig } from "../lib/game/config";
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import {
   createRoom,
@@ -37,6 +43,7 @@ export function ClashVersus() {
   useTitle("Clade Clash · Versus");
   const navigate = useNavigate();
   const [authed, setAuthed] = useState<boolean | null>(null);
+  const [params] = useSearchParams();
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
   const [scope, setScope] = useState<string>("");
   const [stage, setStage] = useState<Stage>("setup");
@@ -47,13 +54,21 @@ export function ClashVersus() {
 
   const match = useClashMatch(pairing);
 
+  // The pack comes from the lobby as ?c=<config>. Only fall back to the first available scope
+  // when there's no config at all (a bare /clash/versus), so the inline picker has a value.
+  const lobbyScope = useMemo(() => {
+    const code = params.get("c");
+    const cfg = code ? decodeConfig(code) : null;
+    return cfg?.scopes?.[0] ?? "";
+  }, [params]);
+
   useEffect(() => {
     fetchMe().then((m) => setAuthed(m.authenticated));
     fetchScopes().then((list) => {
       setScopes(list);
-      setScope((s) => s || list[0]?.key || "");
+      setScope((s) => s || lobbyScope || list[0]?.key || "");
     });
-  }, []);
+  }, [lobbyScope]);
 
   // While searching (queued or hosting a room), poll for the pairing.
   useEffect(() => {
@@ -111,13 +126,8 @@ export function ClashVersus() {
     setStage("setup");
   }, []);
 
-  // Duel a bot — client-side, instant, no wait and no server load (it's unranked, and the
-  // answer is derivable locally anyway). Reuses the Phase 0 solo health-duel on the chosen
-  // pack: an "extremely efficient" opponent you can play the moment you land here.
-  const playBot = useCallback(() => {
-    if (!scope) return;
-    navigate(`/clash?c=${encodeConfig(defaultConfig("clash_solo", { scopes: [scope] }))}`);
-  }, [scope, navigate]);
+  /** Back to the one Clade Clash lobby, where packs + opponent are chosen. */
+  const toLobby = useCallback(() => navigate("/play/clash_solo"), [navigate]);
 
   // Once paired, the duel owns the screen.
   if (pairing) return <Shell><Duel match={match} onExit={rematch} /></Shell>;
@@ -155,15 +165,22 @@ export function ClashVersus() {
         <h1 className="mt-1 font-hand text-5xl font-bold text-clade-ink">Clade Clash · Versus</h1>
         <p className="font-hand text-xl text-clade-ink/70">Spot the closer relative faster than your opponent. First to lose all health is out.</p>
 
+        {/* The pack normally arrives from the lobby, so just show it and offer a way back.
+            Only a bare /clash/versus (old bookmark) falls through to the inline picker. */}
         <div className="mt-5">
           <p className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-clade-ink/40">Pack</p>
-          <ScopePicker scopes={scopes} value={scope ? [scope] : []} onChange={(k) => setScope(k[k.length - 1] ?? "")} multiple={false} />
-        </div>
-
-        {/* Bot duel is client-side + unranked, so it needs no account and no waiting. */}
-        <div className="mt-6 flex flex-wrap items-center gap-3">
-          <button onClick={playBot} disabled={!scope} className="btn-play text-xl disabled:opacity-50">🤖 Play a bot</button>
-          <span className="font-mono text-[11px] text-clade-ink/40">instant · unranked</span>
+          {lobbyScope ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="pill pill-active">
+                {scopes.find((s) => s.key === scope)?.label ?? scope}
+              </span>
+              <button onClick={toLobby} className="font-mono text-[11px] uppercase tracking-widest text-clade-ink/45 underline-offset-2 hover:text-clade-ink hover:underline">
+                change in lobby
+              </button>
+            </div>
+          ) : (
+            <ScopePicker scopes={scopes} value={scope ? [scope] : []} onChange={(k) => setScope(k[k.length - 1] ?? "")} multiple={false} />
+          )}
         </div>
 
         {/* Ranked human duels need an account. */}
@@ -212,8 +229,8 @@ function Duel({ match, onExit }: { match: MatchView; onExit: () => void }) {
         <div className="font-mono text-[11px] uppercase tracking-widest text-clade-ink/45">Match over</div>
         <h1 className={`mt-1 font-hand text-5xl font-bold ${over.youWon ? "text-clade-accent" : "text-clade-ink"}`}>{label}</h1>
         <div className="mt-6 flex flex-col gap-3">
-          {you && <VsHpBar label={you.display} hp={you.hp} highlight={over.youWon} />}
-          {opp && <VsHpBar label={opp.display} hp={opp.hp} highlight={!over.youWon && !over.deadHeat} reverse />}
+          {you && <HealthGauge label={you.display} hp={you.hp} highlight={over.youWon} />}
+          {opp && <HealthGauge label={opp.display} hp={opp.hp} highlight={!over.youWon && !over.deadHeat} reverse />}
         </div>
         <div className="mt-7 flex items-center justify-center gap-3">
           <button onClick={onExit} className="btn-play">▶ New match</button>
@@ -230,12 +247,12 @@ function Duel({ match, onExit }: { match: MatchView; onExit: () => void }) {
   return (
     <div className="flex w-full max-w-3xl flex-col items-center">
       <div className="mb-4 flex w-full items-end gap-4">
-        <VsHpBar label={you.display} hp={you.hp} dmg={phase === "revealed" && reveal?.iBled ? reveal.damage : 0} highlight />
+        <HealthGauge label={you.display} hp={you.hp} dmg={phase === "revealed" && reveal?.iBled ? reveal.damage : 0} highlight />
         <div className="shrink-0 pb-1 text-center font-mono text-[11px] uppercase tracking-widest text-clade-ink/45">
           R{round.num}
           {!ranked && <div className="text-[9px] text-amber-600">unranked</div>}
         </div>
-        <VsHpBar label={opp.display} hp={opp.hp} dmg={phase === "revealed" && reveal?.oppBled ? reveal.damage : 0} reverse />
+        <HealthGauge label={opp.display} hp={opp.hp} dmg={phase === "revealed" && reveal?.oppBled ? reveal.damage : 0} reverse />
       </div>
 
       <Timer round={round} frozen={phase !== "playing"} />
@@ -299,11 +316,13 @@ function Card({ children, wide }: { children: React.ReactNode; wide?: boolean })
 
 function VsCenterCard({ tip }: { tip: { common: string; sci: string } }) {
   return (
-    <div className="ink-card w-52 max-w-full bg-clade-paper px-4 py-4 text-center shadow-sm">
-      <div className="mb-2 font-mono text-[10px] uppercase tracking-widest text-clade-accent">Specimen</div>
-      <CardThumb common={tip.common} sci={tip.sci} size={88} />
-      <div className="mt-1 font-hand text-2xl font-bold leading-tight text-clade-ink">{tip.common}</div>
-      <div className="font-hand text-sm italic text-clade-ink/55">{tip.sci}</div>
+    <div className="ink-card w-52 max-w-full overflow-hidden bg-clade-paper p-0 shadow-sm">
+      <div className="border-b-2 border-clade-ink/10 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-clade-accent">
+        Specimen
+      </div>
+      {/* The duel's rounds come from the server, which sends both names, so the plate shows
+          both — the lobby's Names lens applies to solo play. */}
+      <SpecimenPlate common={tip.common} sci={tip.sci} lens="both" compact />
     </div>
   );
 }
@@ -327,23 +346,21 @@ function VsOptionCard({
       : "border-clade-ink/15 hover:border-clade-ink/40"
     : isCorrect
       ? "border-clade-accent ring-2 ring-clade-accent"
-      : "border-red-400/60 opacity-70";
+      : "border-clade-ink/15 opacity-60 grayscale";
   return (
     <button
       type="button"
       disabled={phase !== "playing" || myPick !== null}
       onClick={onPick}
-      className={`ink-card relative flex min-h-[9rem] flex-col items-center justify-center gap-1 bg-clade-paper px-4 py-5 text-center transition ${tone} ${phase === "playing" && myPick === null ? "cursor-pointer" : "cursor-default"}`}
+      className={`ink-card relative flex flex-col overflow-hidden bg-clade-paper p-0 text-left transition ${tone} ${phase === "playing" && myPick === null ? "cursor-pointer" : "cursor-default"}`}
     >
-      <CardThumb common={tip.common} sci={tip.sci} />
-      <div className="font-hand text-2xl font-bold leading-tight text-clade-ink">{tip.common}</div>
-      <div className="font-hand text-sm italic text-clade-ink/55">{tip.sci}</div>
+      <SpecimenPlate common={tip.common} sci={tip.sci} lens="both" />
       {picked && !revealed && (
         <span className="absolute right-2 top-2 rounded-full bg-clade-accent px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-clade-paper">you</span>
       )}
       {revealed && reveal && (
-        <div className="mt-2 flex flex-col items-center gap-1">
-          <span className={`rounded-full px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${isCorrect ? "bg-clade-accent text-clade-paper" : "border border-red-400/60 text-red-600"}`}>
+        <div className="flex flex-col items-center gap-1 border-t-2 border-clade-ink/10 px-3 py-2">
+          <span className={`rounded-full px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${isCorrect ? "bg-clade-accent text-clade-paper" : "border border-clade-ink/25 text-clade-ink/55"}`}>
             {isCorrect ? "closer" : "further"}
             {reveal.mrcaRank[side] ? ` · shares ${reveal.mrcaRank[side]}` : ""}
           </span>
@@ -364,23 +381,3 @@ function VsTag({ label, good, muted }: { label: string; good: boolean; muted?: b
     </span>
   );
 }
-
-function VsHpBar({ label, hp, dmg = 0, reverse, highlight }: { label: string; hp: number; dmg?: number; reverse?: boolean; highlight?: boolean }) {
-  const pct = Math.max(0, Math.min(100, hp)); // HP_MAX is 100
-  const color = hp <= 25 ? "bg-red-500" : hp <= 55 ? "bg-amber-500" : "bg-clade-accent";
-  return (
-    <div className="flex-1">
-      <div className={`flex items-baseline justify-between font-mono text-[10px] uppercase tracking-widest ${reverse ? "flex-row-reverse" : ""}`}>
-        <span className={`truncate ${highlight ? "text-clade-accent" : "text-clade-ink/50"}`}>{label}</span>
-        <span className="tabular-nums text-clade-ink/60">
-          {dmg > 0 && <span className="mr-1 text-red-500">−{dmg}</span>}
-          {Math.max(0, Math.round(hp))}
-        </span>
-      </div>
-      <div className="relative mt-1 h-2.5 overflow-hidden rounded-full bg-clade-ink/10">
-        <div className={`absolute inset-y-0 ${reverse ? "right-0" : "left-0"} rounded-full ${color} transition-[width] duration-500`} style={{ width: `${pct}%` }} />
-      </div>
-    </div>
-  );
-}
-

@@ -42,6 +42,14 @@ class GameDefaultsAdmin(admin.ModelAdmin):
         ("Clade-completion bonus", {
             "fields": ("clade_score_multiplier", "clade_min_size"),
         }),
+        ("Clade Clash", {
+            "fields": ("fame_bias",),
+            "description": "Applies to the 'clash' row. Rounds are drawn from the pack skewed "
+                           "toward well-known species — a round between two animals nobody has "
+                           "heard of is a coin flip, not a question. 0 = uniform, 1 = strongly "
+                           "favour the famous. The bias relaxes itself if a fair round can't "
+                           "otherwise be formed, so raising it can't make rounds fail.",
+        }),
         ("Score multipliers (#101)", {
             "fields": ("setting_multipliers",),
             "description": "Per-setting score derates for score-easing settings. Leave empty to "

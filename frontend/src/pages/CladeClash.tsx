@@ -15,9 +15,11 @@ import { LeafBackground } from "../components/LeafBackground";
 import { LoadingTree } from "../components/LoadingTree";
 import { loadAsset, loadHybridAsset, loadMixed, loadRemoteAsset } from "../lib/asset/load";
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
-import { CardThumb } from "../components/clash/CardThumb";
+import { HealthGauge } from "../components/clash/HealthGauge";
+import { RevealClado } from "../components/clash/RevealClado";
+import { SpecimenPlate } from "../components/clash/SpecimenPlate";
 import type { AssetTip, InternedAsset } from "../lib/asset/types";
-import { decodeConfig } from "../lib/game/config";
+import { decodeConfig, defaultConfig, encodeConfig } from "../lib/game/config";
 import {
   BOT_DELAY_JITTER_MS,
   BOT_DELAY_MIN_MS,
@@ -27,6 +29,7 @@ import {
   type ClashRound,
 } from "../lib/game/cladeClash";
 import type { Relatedness } from "../lib/game/distance";
+import type { NameLens } from "../lib/game/settings";
 import { useTitle } from "../lib/useTitle";
 
 // The active distance engine — what "closer relative" means, and how much a miss hurts. Swap
@@ -74,14 +77,43 @@ export function CladeClash() {
   }, [cfg]);
 
   if (!asset) return <LoadingTree />;
-  return <ClashGame asset={asset} scopes={scopes} scopeKey={(cfg?.scopes ?? []).join(",")} />;
+  // Post-match shortcut into the duel on the SAME pack. A duel pairs on one scope key, so
+  // carry only the first (the lobby already collapses a mix when Player is chosen).
+  const first = (cfg?.scopes ?? [])[0];
+  const versusHref = first
+    ? `/clash/versus?c=${encodeConfig(defaultConfig("clash_solo", { scopes: [first] }))}`
+    : "/clash/versus";
+  return (
+    <ClashGame
+      asset={asset}
+      scopes={scopes}
+      scopeKey={(cfg?.scopes ?? []).join(",")}
+      versusHref={versusHref}
+      // Chosen in the lobby (Names). A pre-existing config code has no nameLens in its delta,
+      // so decodeConfig fills it from the defaults — old links keep showing both names.
+      lens={cfg?.settings.nameLens ?? "both"}
+      fameBias={cfg?.settings.fameBias ?? 0}
+    />
+  );
 }
 
 type Phase = "playing" | "revealed" | "over";
 type Side = 0 | 1;
 
-function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scopeKey: string }) {
-  const [round, setRound] = useState<ClashRound | null>(() => makeRound(asset, ENGINE));
+function ClashGame({
+  asset,
+  versusHref,
+  lens,
+  fameBias,
+}: {
+  asset: InternedAsset;
+  scopes: ScopeInfo[];
+  scopeKey: string;
+  versusHref: string;
+  lens: NameLens;
+  fameBias: number;
+}) {
+  const [round, setRound] = useState<ClashRound | null>(() => makeRound(asset, ENGINE, Math.random, fameBias));
   const [roundNum, setRoundNum] = useState(1);
   const [phase, setPhase] = useState<Phase>("playing");
   const [pick, setPick] = useState<Side | null>(null);
@@ -110,7 +142,7 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
       return;
     }
     setRoundNum((n) => n + 1);
-    setRound(makeRound(asset, ENGINE));
+    setRound(makeRound(asset, ENGINE, Math.random, fameBias));
     setPick(null);
     setBotPick(null);
     setBotLocked(false);
@@ -119,7 +151,9 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
     setDmg({ you: 0, bot: 0 });
     setSeconds(ROUND_SECONDS);
     setPhase("playing");
-  }, [asset, roundNum]);
+    // fameBias belongs here: the admin default arrives asynchronously (fetchGameDefaults), so
+    // omitting it would leave every round after the first drawing on a stale bias.
+  }, [asset, roundNum, fameBias]);
 
   const reveal = useCallback(() => {
     setPhase((p) => {
@@ -196,7 +230,7 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
     setBotHp(HP_MAX);
     setDmg({ you: 0, bot: 0 });
     setRoundNum(1);
-    setRound(makeRound(asset, ENGINE));
+    setRound(makeRound(asset, ENGINE, Math.random, fameBias));
     setPick(null);
     setBotPick(null);
     setBotLocked(false);
@@ -230,15 +264,21 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
           </div>
           <h1 className={`mt-1 font-hand text-5xl font-bold ${youWon ? "text-clade-accent" : "text-clade-ink"}`}>{win}</h1>
           <div className="mt-6 flex flex-col gap-3">
-            <HpBar label="You" hp={youHp} highlight={youWon} />
-            <HpBar label="Bot" hp={botHp} highlight={win === "Bot wins"} />
+            <HealthGauge label="You" hp={youHp} max={HP_MAX} highlight={youWon} />
+            <HealthGauge label="Bot" hp={botHp} max={HP_MAX} highlight={win === "Bot wins"} />
           </div>
           <div className="mt-7 flex items-center justify-center gap-3">
             <button onClick={playAgain} className="btn-play">▶ Play again</button>
-            <Link to="/" className="font-mono text-xs uppercase tracking-widest text-clade-ink/50 hover:text-clade-ink">
-              Menu
-            </Link>
+            <Link to={versusHref} className="pill">⚔ Duel a player</Link>
           </div>
+          {/* Versus is the same game, not a second one — one Hub card, one lobby (Opponent →
+              Bot | Player). This is just the post-match shortcut, on the same pack. */}
+          <Link
+            to="/"
+            className="mt-4 inline-block font-mono text-xs uppercase tracking-widest text-clade-ink/50 hover:text-clade-ink"
+          >
+            Menu
+          </Link>
         </div>
       </Shell>
     );
@@ -249,11 +289,11 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
     <Shell>
       {/* HUD: facing health bars (GeoGuessr-style) with the round between them */}
       <div className="mb-4 flex w-full max-w-3xl items-end gap-4">
-        <HpBar label="You" hp={youHp} dmg={phase === "revealed" ? dmg.you : 0} highlight />
+        <HealthGauge label="You" hp={youHp} max={HP_MAX} dmg={phase === "revealed" ? dmg.you : 0} highlight />
         <div className="shrink-0 pb-1 font-mono text-[11px] uppercase tracking-widest text-clade-ink/45">
           R{roundNum}
         </div>
-        <HpBar label="Bot" hp={botHp} dmg={phase === "revealed" ? dmg.bot : 0} reverse />
+        <HealthGauge label="Bot" hp={botHp} max={HP_MAX} dmg={phase === "revealed" ? dmg.bot : 0} reverse />
       </div>
 
       {/* timer bar */}
@@ -264,7 +304,7 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
         />
       </div>
 
-      <div className="grid w-full max-w-3xl grid-cols-1 items-stretch gap-4 sm:grid-cols-[1fr_auto_1fr]">
+      <div className="grid w-full max-w-3xl grid-cols-1 items-start gap-4 sm:grid-cols-3">
         <OptionCard
           tip={round!.options[0]}
           rel={round!.rel[0]}
@@ -273,10 +313,11 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
           isCorrect={round!.correct === 0}
           botPicked={botPick === 0}
           phase={phase}
+          lens={lens}
           onPick={() => choose(0)}
         />
         <div className="flex flex-col items-center justify-center gap-2">
-          <CenterCard tip={round!.center} />
+          <CenterCard tip={round!.center} lens={lens} />
           <div className="font-hand text-lg italic text-clade-ink/40">closer to…?</div>
         </div>
         <OptionCard
@@ -287,9 +328,28 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
           isCorrect={round!.correct === 1}
           botPicked={botPick === 1}
           phase={phase}
+          lens={lens}
           onPick={() => choose(1)}
         />
       </div>
+
+      {/* The payoff: WHY one is closer, drawn rather than described. Reserves no space while
+          playing, so the board doesn't shift when it appears. */}
+      <AnimatePresence>
+        {phase === "revealed" && round && (
+          <div className="mt-4 flex w-full justify-center">
+            <RevealClado
+              center={round.center}
+              near={round.options[round.correct]}
+              far={round.options[round.correct === 0 ? 1 : 0]}
+              nearRel={round.rel[round.correct]}
+              farRel={round.rel[round.correct === 0 ? 1 : 0]}
+              youPickedNear={pick === null ? null : pick === round.correct}
+              lens={lens}
+            />
+          </div>
+        )}
+      </AnimatePresence>
 
       <div className="mt-4 h-5 font-mono text-xs uppercase tracking-widest text-clade-ink/40">
         {phase === "playing"
@@ -317,13 +377,13 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function CenterCard({ tip }: { tip: AssetTip }) {
+function CenterCard({ tip, lens }: { tip: AssetTip; lens: NameLens }) {
   return (
-    <div className="ink-card w-52 max-w-full bg-clade-paper px-4 py-4 text-center shadow-sm">
-      <div className="mb-2 font-mono text-[10px] uppercase tracking-widest text-clade-accent">Specimen</div>
-      <CardThumb common={tip.common} sci={tip.sci} size={88} />
-      <div className="mt-1 font-hand text-2xl font-bold leading-tight text-clade-ink">{tip.common}</div>
-      <div className="font-hand text-sm italic text-clade-ink/55">{tip.sci}</div>
+    <div className="ink-card w-full overflow-hidden bg-clade-paper p-0 shadow-sm ring-2 ring-clade-accent/25">
+      <div className="border-b-2 border-clade-ink/10 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-clade-accent">
+        Specimen
+      </div>
+      <SpecimenPlate common={tip.common} sci={tip.sci} lens={lens} compact />
     </div>
   );
 }
@@ -335,6 +395,7 @@ function OptionCard({
   isCorrect,
   botPicked,
   phase,
+  lens,
   onPick,
 }: {
   tip: AssetTip;
@@ -344,28 +405,42 @@ function OptionCard({
   isCorrect: boolean;
   botPicked: boolean;
   phase: Phase;
+  lens: NameLens;
   onPick: () => void;
 }) {
   const revealed = phase === "revealed";
+  const live = phase === "playing" && !picked;
+  // Reveal desaturates the losing plate rather than just fading it: at a glance the correct
+  // animal is the one still in full colour.
   const tone = !revealed
     ? picked
       ? "border-clade-accent ring-2 ring-clade-accent/40"
-      : "border-clade-ink/15 hover:border-clade-ink/40"
+      : "border-clade-ink/15 hover:border-clade-accent/70"
     : isCorrect
       ? "border-clade-accent ring-2 ring-clade-accent"
-      : "border-red-400/60 opacity-70";
+      : "border-clade-ink/15 opacity-60 grayscale";
   return (
-    <button
+    <motion.button
       type="button"
       disabled={phase !== "playing" || picked}
       onClick={onPick}
-      className={`ink-card relative flex min-h-[9rem] flex-col items-center justify-center gap-1 bg-clade-paper px-4 py-5 text-center transition ${tone} ${phase === "playing" && !picked ? "cursor-pointer" : "cursor-default"}`}
+      /* It should look pickable before you commit, and spent once you have. */
+      whileHover={live ? { y: -2 } : undefined}
+      whileTap={live ? { y: 0, scale: 0.99 } : undefined}
+      className={`ink-card relative flex flex-col overflow-hidden bg-clade-paper p-0 text-left transition ${tone} ${live ? "cursor-pointer" : "cursor-default"}`}
     >
-      <CardThumb common={tip.common} sci={tip.sci} />
-      <div className="font-hand text-2xl font-bold leading-tight text-clade-ink">{tip.common}</div>
-      <div className="font-hand text-sm italic text-clade-ink/55">{tip.sci}</div>
+      <SpecimenPlate common={tip.common} sci={tip.sci} lens={lens} />
 
-      {/* your lock-in marker */}
+      {/* lock-in: an ink underline sweeps the plate, so a spent pick reads as committed */}
+      {picked && !revealed && (
+        <motion.div
+          layout
+          initial={{ scaleX: 0 }}
+          animate={{ scaleX: 1 }}
+          transition={{ duration: 0.25, ease: "easeOut" }}
+          className="absolute inset-x-0 bottom-0 h-1 origin-left bg-clade-accent"
+        />
+      )}
       {picked && !revealed && (
         <span className="absolute right-2 top-2 rounded-full bg-clade-accent px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-clade-paper">
           you
@@ -378,10 +453,10 @@ function OptionCard({
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mt-2 flex flex-col items-center gap-1"
+            className="flex flex-col items-center gap-1 border-t-2 border-clade-ink/10 px-3 py-2"
           >
             <span
-              className={`rounded-full px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${isCorrect ? "bg-clade-accent text-clade-paper" : "border border-red-400/60 text-red-600"}`}
+              className={`rounded-full px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${isCorrect ? "bg-clade-accent text-clade-paper" : "border border-clade-ink/25 text-clade-ink/55"}`}
             >
               {isCorrect ? "closer" : "further"}
               {rel.mrcaRank ? ` · shares ${rel.mrcaRank}` : ""}
@@ -393,7 +468,7 @@ function OptionCard({
           </motion.div>
         )}
       </AnimatePresence>
-    </button>
+    </motion.button>
   );
 }
 
@@ -409,36 +484,3 @@ function Tag({ label, good, muted }: { label: string; good: boolean; muted?: boo
   );
 }
 
-function HpBar({
-  label,
-  hp,
-  dmg = 0,
-  reverse,
-  highlight,
-}: {
-  label: string;
-  hp: number;
-  dmg?: number;
-  reverse?: boolean;
-  highlight?: boolean;
-}) {
-  const pct = Math.max(0, Math.min(100, (hp / HP_MAX) * 100));
-  const color = hp <= 25 ? "bg-red-500" : hp <= 55 ? "bg-amber-500" : "bg-clade-accent";
-  return (
-    <div className="flex-1">
-      <div className={`flex items-baseline justify-between font-mono text-[10px] uppercase tracking-widest ${reverse ? "flex-row-reverse" : ""}`}>
-        <span className={highlight ? "text-clade-accent" : "text-clade-ink/50"}>{label}</span>
-        <span className="tabular-nums text-clade-ink/60">
-          {dmg > 0 && <span className="mr-1 text-red-500">−{dmg}</span>}
-          {Math.max(0, Math.round(hp))}
-        </span>
-      </div>
-      <div className="relative mt-1 h-2.5 overflow-hidden rounded-full bg-clade-ink/10">
-        <div
-          className={`absolute inset-y-0 ${reverse ? "right-0" : "left-0"} rounded-full ${color} transition-[width] duration-500`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  );
-}

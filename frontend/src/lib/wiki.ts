@@ -7,12 +7,19 @@ export interface WikiSummary {
   title: string;
   description?: string; // short gloss, e.g. "species of mammal"
   extract: string; // plain-text lead paragraph
-  thumbnail?: string; // image URL, if any
+  thumbnail?: string; // small (~200px) image URL, if any — fine for hover cards
+  /** A card-sized render (~640px wide). NOT `originalimage`: that is the untouched upload and
+   *  is routinely several MB, which is slow and pointless at card size. Wikimedia serves any
+   *  width from the same path, so we rewrite the thumbnail's width prefix instead — one URL,
+   *  already on their CDN, sharp on HiDPI without the download. */
+  big?: string;
   url: string; // canonical desktop article URL
 }
 
 const API = "https://en.wikipedia.org/api/rest_v1/page/summary/";
-const LS_PREFIX = "cw.wiki.v1.";
+// v2: added `big`. The bump matters — summaries are cached with no TTL, so on v1 every
+// already-seen species would keep serving a record that has no big image, forever.
+const LS_PREFIX = "cw.wiki.v2.";
 
 // Two cache layers: an in-memory Map (hot, dedupes within a session) backed by
 // localStorage (survives reloads, so we never re-hit Wikipedia for a name we've already
@@ -38,6 +45,28 @@ function writeStore(key: string, value: WikiSummary | null): void {
   }
 }
 
+/** Ask Wikimedia for a card-width render of the same file.
+ *
+ *  Their thumbnails live at `…/thumb/<a>/<ab>/<File>/<N>px-<File>`, and <N> is just a request
+ *  for a size they generate on demand — so bumping it is free and stays on their CDN. Returns
+ *  null for anything that isn't a /thumb/ URL (some summaries link the original directly), and
+ *  never upscales past what we ask for. */
+// Wikimedia no longer renders arbitrary thumbnail widths — an unlisted size now returns
+// `400 Use thumbnail sizes listed on https://w.wiki/GHai`, which shows up as a broken image.
+// Probing a real file gave 250 / 330 / 500 / 1280 as accepted, so ask for 500: comfortably
+// sharper than the ~330 default at card size, without pulling a multi-megabyte original.
+// Consumers must still handle failure (see SpecimenPlate's onError) — this list is Wikimedia's
+// to change, and the summary's own thumbnail URL is always a safe fallback.
+const CARD_WIDTH = 500;
+function cardSized(thumb: string | undefined, originalWidth?: number): string | undefined {
+  if (!thumb || !thumb.includes("/thumb/")) return undefined;
+  // Never ask for more than the source has: upscales are rejected too.
+  if (originalWidth && originalWidth < CARD_WIDTH) return undefined;
+  return thumb.replace(/\/(\d+)px-([^/]+)$/, (m, have: string, file: string) =>
+    Number(have) >= CARD_WIDTH ? m : `/${CARD_WIDTH}px-${file}`,
+  );
+}
+
 async function fetchOne(title: string): Promise<WikiSummary | null> {
   const res = await fetch(API + encodeURIComponent(title.replace(/ /g, "_")), {
     headers: { accept: "application/json" },
@@ -51,6 +80,7 @@ async function fetchOne(title: string): Promise<WikiSummary | null> {
     description: j.description,
     extract: j.extract,
     thumbnail: j.thumbnail?.source,
+    big: cardSized(j.thumbnail?.source, j.originalimage?.width) ?? j.thumbnail?.source,
     url:
       j.content_urls?.desktop?.page ??
       `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`,

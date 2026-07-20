@@ -9,6 +9,7 @@ refine when Phase 3/5 game state is concrete.
 from __future__ import annotations
 
 from django.conf import settings
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 
@@ -99,6 +100,20 @@ class GameDefaults(models.Model):
     clade_min_size = models.IntegerField(
         default=3, help_text="Smallest clade size that earns a completion bonus."
     )
+    # Clade Clash. Its round generator drew uniformly from the whole pool, which on a 6,000-
+    # species pack mostly produces animals nobody can recognise ("Puntilla tuco-tuco vs
+    # Furtive tuco-tuco") — an unanswerable round is a coin flip, not a question. Every tip
+    # already carries a `fame` score (enwiki pageviews), so the draw is skewed toward the
+    # famous end instead. Admin-tunable because the right amount is a playtest question.
+    fame_bias = models.FloatField(
+        default=0.6,
+        validators=[MinValueValidator(0.0), MaxValueValidator(1.0)],
+        help_text=(
+            "Clade Clash: how strongly rounds favour well-known species. "
+            "0 = uniform (anything in the pack), 1 = strongly favour the most famous. "
+            "The bias relaxes automatically if a fair round can't be formed."
+        ),
+    )
 
     # Score multiplier for score-EASING settings (#101). Every run is on the board, ranked by
     # base × multiplier; a relaxed setting (infinite time, a longer clock) derates the run
@@ -140,6 +155,7 @@ class GameDefaults(models.Model):
             "comboScoreMultiplier": self.combo_score_multiplier,
             "cladeScoreMultiplier": self.clade_score_multiplier,
             "cladeMinSize": self.clade_min_size,
+            "fameBias": self.fame_bias,
         }
 
 

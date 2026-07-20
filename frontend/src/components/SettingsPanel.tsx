@@ -23,7 +23,8 @@ interface Props {
   /** Setting keys the active modifiers have made irrelevant (modifierEffects().hidden) — these
    *  dials are dropped from the gear. */
   hidden?: Set<keyof GameSettings>;
-  /** DEV CHEAT (remove before launch): auto-place N random organisms onto the tree. */
+  /** DEV-ONLY CHEAT: auto-place N random organisms onto the tree. Rendered only under
+   *  `import.meta.env.DEV` (see below) — never present in a production build. */
   onAutofill?: (n: number) => void;
 }
 

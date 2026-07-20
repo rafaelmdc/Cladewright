@@ -11,7 +11,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
-import { CardThumb } from "../components/clash/CardThumb";
+import { HealthGauge } from "../components/clash/HealthGauge";
+import { SpecimenPlate } from "../components/clash/SpecimenPlate";
 import { LeafBackground } from "../components/LeafBackground";
 import { Wordmark } from "../components/Brand";
 import { ScopePicker } from "../components/ScopePicker";
@@ -228,8 +229,8 @@ function Duel({ match, onExit }: { match: MatchView; onExit: () => void }) {
         <div className="font-mono text-[11px] uppercase tracking-widest text-clade-ink/45">Match over</div>
         <h1 className={`mt-1 font-hand text-5xl font-bold ${over.youWon ? "text-clade-accent" : "text-clade-ink"}`}>{label}</h1>
         <div className="mt-6 flex flex-col gap-3">
-          {you && <VsHpBar label={you.display} hp={you.hp} highlight={over.youWon} />}
-          {opp && <VsHpBar label={opp.display} hp={opp.hp} highlight={!over.youWon && !over.deadHeat} reverse />}
+          {you && <HealthGauge label={you.display} hp={you.hp} highlight={over.youWon} />}
+          {opp && <HealthGauge label={opp.display} hp={opp.hp} highlight={!over.youWon && !over.deadHeat} reverse />}
         </div>
         <div className="mt-7 flex items-center justify-center gap-3">
           <button onClick={onExit} className="btn-play">▶ New match</button>
@@ -246,12 +247,12 @@ function Duel({ match, onExit }: { match: MatchView; onExit: () => void }) {
   return (
     <div className="flex w-full max-w-3xl flex-col items-center">
       <div className="mb-4 flex w-full items-end gap-4">
-        <VsHpBar label={you.display} hp={you.hp} dmg={phase === "revealed" && reveal?.iBled ? reveal.damage : 0} highlight />
+        <HealthGauge label={you.display} hp={you.hp} dmg={phase === "revealed" && reveal?.iBled ? reveal.damage : 0} highlight />
         <div className="shrink-0 pb-1 text-center font-mono text-[11px] uppercase tracking-widest text-clade-ink/45">
           R{round.num}
           {!ranked && <div className="text-[9px] text-amber-600">unranked</div>}
         </div>
-        <VsHpBar label={opp.display} hp={opp.hp} dmg={phase === "revealed" && reveal?.oppBled ? reveal.damage : 0} reverse />
+        <HealthGauge label={opp.display} hp={opp.hp} dmg={phase === "revealed" && reveal?.oppBled ? reveal.damage : 0} reverse />
       </div>
 
       <Timer round={round} frozen={phase !== "playing"} />
@@ -315,11 +316,13 @@ function Card({ children, wide }: { children: React.ReactNode; wide?: boolean })
 
 function VsCenterCard({ tip }: { tip: { common: string; sci: string } }) {
   return (
-    <div className="ink-card w-52 max-w-full bg-clade-paper px-4 py-4 text-center shadow-sm">
-      <div className="mb-2 font-mono text-[10px] uppercase tracking-widest text-clade-accent">Specimen</div>
-      <CardThumb common={tip.common} sci={tip.sci} size={88} />
-      <div className="mt-1 font-hand text-2xl font-bold leading-tight text-clade-ink">{tip.common}</div>
-      <div className="font-hand text-sm italic text-clade-ink/55">{tip.sci}</div>
+    <div className="ink-card w-52 max-w-full overflow-hidden bg-clade-paper p-0 shadow-sm">
+      <div className="border-b-2 border-clade-ink/10 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-clade-accent">
+        Specimen
+      </div>
+      {/* The duel's rounds come from the server, which sends both names, so the plate shows
+          both — the lobby's Names lens applies to solo play. */}
+      <SpecimenPlate common={tip.common} sci={tip.sci} lens="both" compact />
     </div>
   );
 }
@@ -343,23 +346,21 @@ function VsOptionCard({
       : "border-clade-ink/15 hover:border-clade-ink/40"
     : isCorrect
       ? "border-clade-accent ring-2 ring-clade-accent"
-      : "border-red-400/60 opacity-70";
+      : "border-clade-ink/15 opacity-60 grayscale";
   return (
     <button
       type="button"
       disabled={phase !== "playing" || myPick !== null}
       onClick={onPick}
-      className={`ink-card relative flex min-h-[9rem] flex-col items-center justify-center gap-1 bg-clade-paper px-4 py-5 text-center transition ${tone} ${phase === "playing" && myPick === null ? "cursor-pointer" : "cursor-default"}`}
+      className={`ink-card relative flex flex-col overflow-hidden bg-clade-paper p-0 text-left transition ${tone} ${phase === "playing" && myPick === null ? "cursor-pointer" : "cursor-default"}`}
     >
-      <CardThumb common={tip.common} sci={tip.sci} />
-      <div className="font-hand text-2xl font-bold leading-tight text-clade-ink">{tip.common}</div>
-      <div className="font-hand text-sm italic text-clade-ink/55">{tip.sci}</div>
+      <SpecimenPlate common={tip.common} sci={tip.sci} lens="both" />
       {picked && !revealed && (
         <span className="absolute right-2 top-2 rounded-full bg-clade-accent px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-clade-paper">you</span>
       )}
       {revealed && reveal && (
-        <div className="mt-2 flex flex-col items-center gap-1">
-          <span className={`rounded-full px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${isCorrect ? "bg-clade-accent text-clade-paper" : "border border-red-400/60 text-red-600"}`}>
+        <div className="flex flex-col items-center gap-1 border-t-2 border-clade-ink/10 px-3 py-2">
+          <span className={`rounded-full px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${isCorrect ? "bg-clade-accent text-clade-paper" : "border border-clade-ink/25 text-clade-ink/55"}`}>
             {isCorrect ? "closer" : "further"}
             {reveal.mrcaRank[side] ? ` · shares ${reveal.mrcaRank[side]}` : ""}
           </span>
@@ -380,23 +381,3 @@ function VsTag({ label, good, muted }: { label: string; good: boolean; muted?: b
     </span>
   );
 }
-
-function VsHpBar({ label, hp, dmg = 0, reverse, highlight }: { label: string; hp: number; dmg?: number; reverse?: boolean; highlight?: boolean }) {
-  const pct = Math.max(0, Math.min(100, hp)); // HP_MAX is 100
-  const color = hp <= 25 ? "bg-red-500" : hp <= 55 ? "bg-amber-500" : "bg-clade-accent";
-  return (
-    <div className="flex-1">
-      <div className={`flex items-baseline justify-between font-mono text-[10px] uppercase tracking-widest ${reverse ? "flex-row-reverse" : ""}`}>
-        <span className={`truncate ${highlight ? "text-clade-accent" : "text-clade-ink/50"}`}>{label}</span>
-        <span className="tabular-nums text-clade-ink/60">
-          {dmg > 0 && <span className="mr-1 text-red-500">−{dmg}</span>}
-          {Math.max(0, Math.round(hp))}
-        </span>
-      </div>
-      <div className="relative mt-1 h-2.5 overflow-hidden rounded-full bg-clade-ink/10">
-        <div className={`absolute inset-y-0 ${reverse ? "right-0" : "left-0"} rounded-full ${color} transition-[width] duration-500`} style={{ width: `${pct}%` }} />
-      </div>
-    </div>
-  );
-}
-

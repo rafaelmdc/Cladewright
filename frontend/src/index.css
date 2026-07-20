@@ -15,6 +15,10 @@
   --clade-accent: 63 107 76; /* #3f6b4c forest green */
   --clade-accentSoft: 205 216 203;
   --clade-note: 241 231 196;
+  /* Semantic damage colours, kept OFF the accent hue and warm-biased so they sit on cream
+     paper instead of fighting it (Tailwind's red-500/amber-500 read as neon here). */
+  --hp-bad: #b4442e;
+  --hp-warn: #c79a3a;
 }
 
 /* High contrast — for dim / low-quality panels where the creams wash out to white. White
@@ -27,6 +31,8 @@
   --clade-accent: 22 90 48; /* #165a30 deep green */
   --clade-accentSoft: 188 216 194;
   --clade-note: 250 233 160;
+  --hp-bad: #a8341c; /* deeper, to hold contrast on white cards */
+  --hp-warn: #a97b16;
 }
 
 /* Dark — warm near-black paper, cream ink, a brighter green that reads on dark. */
@@ -38,6 +44,8 @@
   --clade-accent: 124 173 137; /* #7cad89 lifted green */
   --clade-accentSoft: 58 78 62;
   --clade-note: 92 82 52;
+  --hp-bad: #e0765c; /* lifted, so it reads against near-black */
+  --hp-warn: #d9b45e;
 }
 
 body {

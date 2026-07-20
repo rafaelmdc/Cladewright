@@ -7,12 +7,17 @@ export interface WikiSummary {
   title: string;
   description?: string; // short gloss, e.g. "species of mammal"
   extract: string; // plain-text lead paragraph
-  thumbnail?: string; // image URL, if any
+  thumbnail?: string; // small (~200px) image URL, if any — fine for hover cards
+  /** Full-resolution image URL. The summary response carries this alongside the thumbnail;
+   *  Clade Clash's specimen plates need it, because a 200px render looks soft at card width. */
+  big?: string;
   url: string; // canonical desktop article URL
 }
 
 const API = "https://en.wikipedia.org/api/rest_v1/page/summary/";
-const LS_PREFIX = "cw.wiki.v1.";
+// v2: added `big`. The bump matters — summaries are cached with no TTL, so on v1 every
+// already-seen species would keep serving a record that has no big image, forever.
+const LS_PREFIX = "cw.wiki.v2.";
 
 // Two cache layers: an in-memory Map (hot, dedupes within a session) backed by
 // localStorage (survives reloads, so we never re-hit Wikipedia for a name we've already
@@ -51,6 +56,7 @@ async function fetchOne(title: string): Promise<WikiSummary | null> {
     description: j.description,
     extract: j.extract,
     thumbnail: j.thumbnail?.source,
+    big: j.originalimage?.source ?? j.thumbnail?.source,
     url:
       j.content_urls?.desktop?.page ??
       `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`,

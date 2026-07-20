@@ -334,18 +334,23 @@ export function Lobby() {
                     </button>
                   )}
                 </div>
-                <span
-                  className={`font-mono text-[11px] uppercase tracking-wide ${
-                    multiplier === 1
-                      ? "text-clade-ink/45"
-                      : multiplier > 1
-                        ? "text-clade-accent"
-                        : "text-clade-ink/55"
-                  }`}
-                  title="Score multiplier from your modifiers + settings"
-                >
-                  ● {formatMultiplier(multiplier)} run
-                </span>
+                {/* Only for games that actually score. A game with no modifiers has no way to
+                    move its multiplier off 1×, so the badge would just assert "1× run" at a
+                    player — actively misleading on Clade Clash, which isn't scored at all. */}
+                {modInfo && modInfo.modifiers.length > 0 && (
+                  <span
+                    className={`font-mono text-[11px] uppercase tracking-wide ${
+                      multiplier === 1
+                        ? "text-clade-ink/45"
+                        : multiplier > 1
+                          ? "text-clade-accent"
+                          : "text-clade-ink/55"
+                    }`}
+                    title="Score multiplier from your modifiers + settings"
+                  >
+                    ● {formatMultiplier(multiplier)} run
+                  </span>
+                )}
               </div>
               <SettingsFields
                 fields={fields}

@@ -32,13 +32,17 @@ export function SpecimenPlate({
   compact?: boolean;
 }) {
   const [src, setSrc] = useState<string | null | undefined>(undefined); // undefined=loading
+  const [fallback, setFallback] = useState<string | null>(null); // the plain thumbnail
 
   useEffect(() => {
     let alive = true;
     setSrc(undefined);
+    setFallback(null);
     // Scientific name first (precise taxon article), then the common name as a fallback.
     fetchWikiSummary([sci, common]).then((w) => {
-      if (alive) setSrc(w?.big ?? w?.thumbnail ?? null);
+      if (!alive) return;
+      setSrc(w?.big ?? w?.thumbnail ?? null);
+      setFallback(w?.big && w.thumbnail && w.big !== w.thumbnail ? w.thumbnail : null);
     });
     return () => {
       alive = false;
@@ -65,6 +69,17 @@ export function SpecimenPlate({
             className="h-full w-full object-cover"
             /* Decorative: the name below already carries the meaning, and under the
                scientific lens an alt of the common name would leak the answer. */
+            onError={() => {
+              // Wikimedia's accepted thumbnail widths are theirs to change; if the card-sized
+              // URL ever stops resolving, drop to the summary's own thumbnail rather than
+              // showing a broken-image icon. Then give up and use the hatched panel.
+              if (fallback) {
+                setSrc(fallback);
+                setFallback(null);
+              } else {
+                setSrc(null);
+              }
+            }}
           />
         )}
         {src === undefined && <div className="h-full w-full animate-pulse bg-clade-ink/[0.08]" />}

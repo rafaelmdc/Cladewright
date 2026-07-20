@@ -16,6 +16,7 @@ import { LoadingTree } from "../components/LoadingTree";
 import { loadAsset, loadHybridAsset, loadMixed, loadRemoteAsset } from "../lib/asset/load";
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import { HealthGauge } from "../components/clash/HealthGauge";
+import { RevealClado } from "../components/clash/RevealClado";
 import { SpecimenPlate } from "../components/clash/SpecimenPlate";
 import type { AssetTip, InternedAsset } from "../lib/asset/types";
 import { decodeConfig, defaultConfig, encodeConfig } from "../lib/game/config";
@@ -298,7 +299,7 @@ function ClashGame({
         />
       </div>
 
-      <div className="grid w-full max-w-3xl grid-cols-1 items-stretch gap-4 sm:grid-cols-[1fr_auto_1fr]">
+      <div className="grid w-full max-w-3xl grid-cols-1 items-start gap-4 sm:grid-cols-3">
         <OptionCard
           tip={round!.options[0]}
           rel={round!.rel[0]}
@@ -326,6 +327,24 @@ function ClashGame({
           onPick={() => choose(1)}
         />
       </div>
+
+      {/* The payoff: WHY one is closer, drawn rather than described. Reserves no space while
+          playing, so the board doesn't shift when it appears. */}
+      <AnimatePresence>
+        {phase === "revealed" && round && (
+          <div className="mt-4 flex w-full justify-center">
+            <RevealClado
+              center={round.center}
+              near={round.options[round.correct]}
+              far={round.options[round.correct === 0 ? 1 : 0]}
+              nearRel={round.rel[round.correct]}
+              farRel={round.rel[round.correct === 0 ? 1 : 0]}
+              youPickedNear={pick === null ? null : pick === round.correct}
+              lens={lens}
+            />
+          </div>
+        )}
+      </AnimatePresence>
 
       <div className="mt-4 h-5 font-mono text-xs uppercase tracking-widest text-clade-ink/40">
         {phase === "playing"
@@ -355,7 +374,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 function CenterCard({ tip, lens }: { tip: AssetTip; lens: NameLens }) {
   return (
-    <div className="ink-card w-52 max-w-full overflow-hidden bg-clade-paper p-0 shadow-sm">
+    <div className="ink-card w-full overflow-hidden bg-clade-paper p-0 shadow-sm ring-2 ring-clade-accent/25">
       <div className="border-b-2 border-clade-ink/10 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-clade-accent">
         Specimen
       </div>

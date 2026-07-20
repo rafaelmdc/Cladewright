@@ -112,15 +112,74 @@ coverage is **zero**. `ncbi_weaver` returns ranked *lineages* — topology again
 lengths — and `uniprot_weaver` returns protein accessions, which would mean building an
 alignment pipeline.
 
-Real candidates are dated animal phylogenies: **TimeTree** (divergence times, ~150k
-species; "split 8 Myr ago" is also friendlier reveal copy than substitutions per site) or
-the **VertLife-family supertrees** (Upham mammals, Jetz birds, Tonini squamates, Jetz &
-Pyron amphibians, Rabosky fishtree), which map closely onto five of our scopes.
+Real candidates are dated animal phylogenies (chronograms). Coverage is **partial, and that
+is a design constraint**: dated trees for molluscs — our largest scope — nematodes and
+flatworms barely exist. So a patristic engine is per-scope opt-in with `rankDepthEngine` as
+the fallback, never a global swap. The `DistanceEngine` seam already expresses this.
 
-Coverage would be **partial, and that is a design constraint**: dated phylogenies for
-molluscs — our largest scope at ~153k tips — nematodes and flatworms barely exist. So a
-patristic engine must be per-scope opt-in with `rankDepthEngine` as the fallback, never a
-global swap. The `DistanceEngine` seam already expresses this.
+#### The cheap reduction: one number per node
+
+A chronogram is **ultrametric** — every extant tip sits at time zero. So the patristic
+distance between two living tips collapses to `2 × age(MRCA)`, and `relatedness()` already
+returns `mrcaIdx`. The whole engine is therefore:
+
+```ts
+closeness: (r) => -nodeAge[r.mrcaIdx]
+```
+
+**One float per node**, not a pairwise matrix (10k birds would be 50M pairs — unshippable).
+`InternedAsset` already carries per-node-index arrays, so `nodeAge` slots straight in.
+Rounds also get *better*: rank-depth ties constantly because many nodes share a rank, while
+ages are continuous, so distinct MRCAs give distinct closeness. `minGap` and `damage` become
+millions of years — self-explanatory units — and the reveal reads "these split 8 Myr ago"
+instead of "shared family".
+
+#### The blocker is topology, not branch lengths
+
+Our tree is Catalogue of Life: a **taxonomy**, not a phylogeny. Chronograms are inferred
+phylogenies with genuinely different topology, and many Linnaean groups are paraphyletic.
+Ages cannot be bolted onto CoL nodes — the nodes do not correspond. **A dated pack is built
+from the chronogram itself**, and lives alongside the CoL packs. Different distance,
+different pack.
+
+#### Sources, and the licence gate
+
+| Source | Coverage | Licence |
+|---|---|---|
+| **TimeTree 5** | 137,306 spp, all life | ✗ *"Redistribution of TimeTree data and its transformations are not permitted"* — a served asset **is** redistribution |
+| **DateLife / OpenTreeChronograms** | 253 chronograms, 187 studies, 99,474 spp (Mar 2024); stores patristic distances **in Myr** | GPL — redistributable |
+| **Fish Tree of Life** (Rabosky) | 11,638 genetic / 31,516 all-taxon | R package is BSD-2; **data licence unconfirmed** |
+| **VertLife / BirdTree** | birds ~10k, mammals ~5.9k, squamates 9,755, amphibians 7,238, sharks 1,192 | **unconfirmed** — the Jetz Lab statement talks about open science without naming a licence |
+
+**Confirming the VertLife and fishtree *data* licences is a hard gate on all of this.** It is
+an email, not an investigation, but nothing ships before it is answered.
+
+#### Measured coverage (2026-07-20)
+
+Share of tips in a clade that has a published dated megatree, by fame rank:
+
+| Fame band | Species | Covered | % |
+|---|---|---|---|
+| top 100 | 100 | 73 | 73.0% |
+| top 1,000 | 900 | 557 | 61.9% |
+| top 5,000 | 4,000 | 1,826 | 45.7% |
+| top 20,000 | 15,000 | 10,906 | 72.7% |
+| the rest | 355,534 | 62,715 | 17.6% |
+
+~74,700 of ~375,500 tips (20%) sit in covered classes. But **"in a covered clade" is not "in
+the tree"** — the published trees are smaller than our pools (Aves ~100%, Mammalia ~92%,
+Amphibia ~81%, Reptilia ~78%, but **Teleostei only ~33%**: 11,638 inferred against our
+35,777). Realistic matched coverage is **45–55k tips**.
+
+The dip at top-5k is charismatic invertebrates, and the loss is real — roughly a quarter of
+our top 100. The most famous uncovered species are the immortal jellyfish (fame 562,324),
+pinworm, Humboldt squid, *C. elegans*, crown-of-thorns starfish and the box jellyfish. This
+is the strongest argument for Deep Time as a **pack family alongside** the CoL packs rather
+than a replacement: the immortal jellyfish keeps its home, it just never gets a Myr distance.
+
+Record per-tip provenance (inferred vs grafted) in the asset. It is free at build time and
+unrecoverable later, so it exists to diagnose "these rounds feel wrong" if that ever happens.
+It deliberately gates **nothing** — no ranked policy, no round-generator special case.
 
 ## Realtime architecture (versus)
 
@@ -241,11 +300,54 @@ Deliberately phased so nothing waits on the hardest part; detail + open decision
    private-room invites, server-authoritative round generation + grading, reaction-time
    plausibility, and the **cross-process Redis match lock** (correct across pods, see
    Realtime → Concurrency). Delivers the #103 substrate.
-3. **Depth & scale** — genetic/patristic distance (see *The path to a real metric*: it needs
-   a new dated-phylogeny source, not the existing weavers, and only covers some scopes); and,
-   *if* a competitive ladder is ever wanted, an **ELO / rating ladder** off the `MatchResult`
-   rows (a duel wants a *rating*, not a score leaderboard — the raw results are already
-   recorded with `ranked`/`flagged` for exactly this). Not planned yet; nothing depends on it.
+3. **Depth & scale** — patristic distance in two tracks (below), and *if* a competitive ladder
+   is ever wanted, an **ELO / rating ladder** off the `MatchResult` rows (a duel wants a
+   *rating*, not a score leaderboard — results already carry `ranked`/`flagged` for exactly
+   this). Nothing depends on any of it.
+
+   **Track A — harvest what exists** *(weeks)*. Ingest all six published chronograms (fish,
+   birds, squamates, amphibians, mammals, sharks; ~46–67k tips), reconcile names against our
+   CoL tips, build packs from the trees with node ages in Myr, and ship the engine above. Then
+   **play it** — the whole point is finding out whether Myr rounds are actually more fun than
+   rank-gap ones. Validate on **birds first**: ~100% match rate, so a bad result indicts the
+   *metric* rather than the data. Ingest every tree including fish — filtering at grading time
+   is always recoverable, filtering at ingest is not.
+
+   **Track B — build what doesn't exist** *(months; a genuine research project)*. ~300k tips
+   have no published dated tree: gastropods (109,620), flatworms, polychaetes, bivalves,
+   sponges, bryozoans, corals, nematodes.
+
+   - **B0. Coverage dry run — the gate.** `phylotaR` / `SuperCRUNCH` against GenBank for one
+     target clade, asking only *how many species have ≥2 usable markers*. An afternoon, no
+     compute. 15k sequenced gastropods means a real tree; 2k means stop here.
+   - **B1.** Mine GenBank via `pyPHLAWD` / `phylotaR` — clusters homologous sequences and
+     assembles the supermatrix without an a-priori sequence list.
+   - **B2.** Multi-locus: `COI` + `16S` (species-level) with `18S` / `28S` (slow-evolving,
+     informative at depth) and `H3`. COI *alone* saturates above family — that is why
+     COI-only is a dead end and a multi-marker matrix is not.
+   - **B3.** MAFFT align, concatenate with partitions.
+   - **B4.** Constrain the backbone above family level to a published deep phylogeny or the
+     Open Tree synthesis. Never let a supermatrix invent deep relationships.
+   - **B5.** IQ-TREE / RAxML inference — the genuinely compute-bound step.
+   - **B6.** `treePL` dating, calibrated with Paleobiology Database fossils. This is what
+     turns substitutions into millions of years, and where the real methodological judgement
+     sits.
+   - **B7.** Graft the unsequenced by taxonomy, recorded as grafted.
+
+   Output feeds Track A's steps 2–4 unchanged — the builder and engine don't care where a
+   chronogram came from. **Order matters:** A first (cheap, and tells you if the metric is
+   even worth having), B0 as the probe, B1–B7 only when both say go.
+
+   **On publishing Track B.** The contribution is *not* "a dated gastropod phylogeny" (a
+   one-off someone else will produce anyway) and *not* "a database of every distance" — that
+   is TimeTree, DateLife and Open Tree already. The defensible claim is a **modern, open,
+   containerised, continuously-running pipeline**. Know the prior art before writing:
+   **SUPERSMART** (Antonelli et al., Syst Biol 2016) is literally a "Self-Updating Platform"
+   for dated phylogenies, and there is a continuously-updated fern tree of life (2022). The
+   `supersmartR` repo — "*towards* a modular SUPERSMART pipeline" — suggests the 2016 platform
+   bit-rotted, which is the opening: this would be an **implementation** contribution
+   (reproducible, maintained, actually running), not a conceptual one. Claim the concept and
+   a reviewer hands you Antonelli 2016.
 
    **Spectate is rejected, not deferred.** A read-only third connection would have been cheap
    (every frame already broadcasts to a per-match group, and `public_round()` is already the

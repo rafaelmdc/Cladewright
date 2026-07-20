@@ -17,7 +17,7 @@ import { loadAsset, loadHybridAsset, loadMixed, loadRemoteAsset } from "../lib/a
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import { CardThumb } from "../components/clash/CardThumb";
 import type { AssetTip, InternedAsset } from "../lib/asset/types";
-import { decodeConfig } from "../lib/game/config";
+import { decodeConfig, defaultConfig, encodeConfig } from "../lib/game/config";
 import {
   BOT_DELAY_JITTER_MS,
   BOT_DELAY_MIN_MS,
@@ -74,13 +74,34 @@ export function CladeClash() {
   }, [cfg]);
 
   if (!asset) return <LoadingTree />;
-  return <ClashGame asset={asset} scopes={scopes} scopeKey={(cfg?.scopes ?? []).join(",")} />;
+  // Post-match shortcut into the duel on the SAME pack. A duel pairs on one scope key, so
+  // carry only the first (the lobby already collapses a mix when Player is chosen).
+  const first = (cfg?.scopes ?? [])[0];
+  const versusHref = first
+    ? `/clash/versus?c=${encodeConfig(defaultConfig("clash_solo", { scopes: [first] }))}`
+    : "/clash/versus";
+  return (
+    <ClashGame
+      asset={asset}
+      scopes={scopes}
+      scopeKey={(cfg?.scopes ?? []).join(",")}
+      versusHref={versusHref}
+    />
+  );
 }
 
 type Phase = "playing" | "revealed" | "over";
 type Side = 0 | 1;
 
-function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scopeKey: string }) {
+function ClashGame({
+  asset,
+  versusHref,
+}: {
+  asset: InternedAsset;
+  scopes: ScopeInfo[];
+  scopeKey: string;
+  versusHref: string;
+}) {
   const [round, setRound] = useState<ClashRound | null>(() => makeRound(asset, ENGINE));
   const [roundNum, setRoundNum] = useState(1);
   const [phase, setPhase] = useState<Phase>("playing");
@@ -235,10 +256,10 @@ function ClashGame({ asset }: { asset: InternedAsset; scopes: ScopeInfo[]; scope
           </div>
           <div className="mt-7 flex items-center justify-center gap-3">
             <button onClick={playAgain} className="btn-play">▶ Play again</button>
-            <Link to="/clash/versus" className="pill">⚔ Duel a player</Link>
+            <Link to={versusHref} className="pill">⚔ Duel a player</Link>
           </div>
-          {/* Versus is the same game, not a second one — the Hub shows ONE Clade Clash card
-              (scores migration 0029), so this is where a solo player discovers the duel. */}
+          {/* Versus is the same game, not a second one — one Hub card, one lobby (Opponent →
+              Bot | Player). This is just the post-match shortcut, on the same pack. */}
           <Link
             to="/"
             className="mt-4 inline-block font-mono text-xs uppercase tracking-widest text-clade-ink/50 hover:text-clade-ink"

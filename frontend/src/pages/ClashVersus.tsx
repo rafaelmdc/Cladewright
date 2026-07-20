@@ -1,17 +1,22 @@
-// Clade Clash — realtime versus (#36 Phase 1). Pick a pack, then quick-match a stranger or
-// invite a friend by room code; the duel itself is server-refereed over a websocket
-// (useClashMatch). The board mirrors Phase 0's solo look — facing HP bars, a specimen, two
-// candidates — but the opponent is a person and every reveal comes from the server.
+// Clade Clash — realtime versus (#36 Phase 1). Quick-match a stranger or invite a friend by
+// room code; the duel itself is server-refereed over a websocket (useClashMatch). The board
+// mirrors solo's look — facing HP bars, a specimen, two candidates — but the opponent is a
+// person and every reveal comes from the server.
+//
+// The PACK is chosen in the Clade Clash lobby (/play/clash_solo, Opponent → Player) and
+// arrives here as ?c=<encoded GameConfig>, exactly like the solo surface. Versus is not a
+// separate game with its own setup — it's one way to play Clade Clash. The inline picker
+// below is only a fallback for a bare /clash/versus (an old bookmark or shared link).
 
-import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { CardThumb } from "../components/clash/CardThumb";
 import { LeafBackground } from "../components/LeafBackground";
 import { Wordmark } from "../components/Brand";
 import { ScopePicker } from "../components/ScopePicker";
 import { fetchMe } from "../lib/auth";
-import { defaultConfig, encodeConfig } from "../lib/game/config";
+import { decodeConfig } from "../lib/game/config";
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import {
   createRoom,
@@ -37,6 +42,7 @@ export function ClashVersus() {
   useTitle("Clade Clash · Versus");
   const navigate = useNavigate();
   const [authed, setAuthed] = useState<boolean | null>(null);
+  const [params] = useSearchParams();
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
   const [scope, setScope] = useState<string>("");
   const [stage, setStage] = useState<Stage>("setup");
@@ -47,13 +53,21 @@ export function ClashVersus() {
 
   const match = useClashMatch(pairing);
 
+  // The pack comes from the lobby as ?c=<config>. Only fall back to the first available scope
+  // when there's no config at all (a bare /clash/versus), so the inline picker has a value.
+  const lobbyScope = useMemo(() => {
+    const code = params.get("c");
+    const cfg = code ? decodeConfig(code) : null;
+    return cfg?.scopes?.[0] ?? "";
+  }, [params]);
+
   useEffect(() => {
     fetchMe().then((m) => setAuthed(m.authenticated));
     fetchScopes().then((list) => {
       setScopes(list);
-      setScope((s) => s || list[0]?.key || "");
+      setScope((s) => s || lobbyScope || list[0]?.key || "");
     });
-  }, []);
+  }, [lobbyScope]);
 
   // While searching (queued or hosting a room), poll for the pairing.
   useEffect(() => {
@@ -111,13 +125,8 @@ export function ClashVersus() {
     setStage("setup");
   }, []);
 
-  // Duel a bot — client-side, instant, no wait and no server load (it's unranked, and the
-  // answer is derivable locally anyway). Reuses the Phase 0 solo health-duel on the chosen
-  // pack: an "extremely efficient" opponent you can play the moment you land here.
-  const playBot = useCallback(() => {
-    if (!scope) return;
-    navigate(`/clash?c=${encodeConfig(defaultConfig("clash_solo", { scopes: [scope] }))}`);
-  }, [scope, navigate]);
+  /** Back to the one Clade Clash lobby, where packs + opponent are chosen. */
+  const toLobby = useCallback(() => navigate("/play/clash_solo"), [navigate]);
 
   // Once paired, the duel owns the screen.
   if (pairing) return <Shell><Duel match={match} onExit={rematch} /></Shell>;
@@ -155,15 +164,22 @@ export function ClashVersus() {
         <h1 className="mt-1 font-hand text-5xl font-bold text-clade-ink">Clade Clash · Versus</h1>
         <p className="font-hand text-xl text-clade-ink/70">Spot the closer relative faster than your opponent. First to lose all health is out.</p>
 
+        {/* The pack normally arrives from the lobby, so just show it and offer a way back.
+            Only a bare /clash/versus (old bookmark) falls through to the inline picker. */}
         <div className="mt-5">
           <p className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-clade-ink/40">Pack</p>
-          <ScopePicker scopes={scopes} value={scope ? [scope] : []} onChange={(k) => setScope(k[k.length - 1] ?? "")} multiple={false} />
-        </div>
-
-        {/* Bot duel is client-side + unranked, so it needs no account and no waiting. */}
-        <div className="mt-6 flex flex-wrap items-center gap-3">
-          <button onClick={playBot} disabled={!scope} className="btn-play text-xl disabled:opacity-50">🤖 Play a bot</button>
-          <span className="font-mono text-[11px] text-clade-ink/40">instant · unranked</span>
+          {lobbyScope ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="pill pill-active">
+                {scopes.find((s) => s.key === scope)?.label ?? scope}
+              </span>
+              <button onClick={toLobby} className="font-mono text-[11px] uppercase tracking-widest text-clade-ink/45 underline-offset-2 hover:text-clade-ink hover:underline">
+                change in lobby
+              </button>
+            </div>
+          ) : (
+            <ScopePicker scopes={scopes} value={scope ? [scope] : []} onChange={(k) => setScope(k[k.length - 1] ?? "")} multiple={false} />
+          )}
         </div>
 
         {/* Ranked human duels need an account. */}

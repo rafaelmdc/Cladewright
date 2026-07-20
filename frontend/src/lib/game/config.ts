@@ -7,12 +7,19 @@
 import type { Difficulty } from "../scores";
 import { gameDefaults, type GameSettings } from "./settings";
 
+/** Who you're playing against. Only meaningful for games that declare opponents in
+ *  `lib/game/schema.ts` (Clade Clash); every other game ignores it. */
+export type Opponent = "bot" | "player";
+
 export interface GameConfig {
   mode: string; // the game, e.g. "marathon_free"
   difficulty: Difficulty; // the lens — common | scientific
   scopes: string[]; // the chosen packs (sorted; a mix is first-class)
   settings: GameSettings; // per-game tuning + visual dials
   modifiers: string[]; // active gameplay mutators — empty until the modifier feature (#101)
+  /** Chosen in the lobby for games that offer it; decides which surface Start launches.
+   *  Absent (or "bot") for every other game. */
+  opponent?: Opponent;
 }
 
 // Bump when the encoded shape changes incompatibly; decode rejects other versions so an old
@@ -30,6 +37,7 @@ export function defaultConfig(
     scopes: opts?.scopes ? [...opts.scopes].sort() : [],
     settings: { ...gameDefaults() },
     modifiers: [],
+    opponent: "bot",
   };
 }
 
@@ -65,6 +73,9 @@ export function encodeConfig(cfg: GameConfig): string {
     st: settingsDelta(cfg.settings),
   };
   if (cfg.modifiers.length) payload.x = cfg.modifiers;
+  // Only carried when it's the non-default choice, so ordinary codes are unchanged in length
+  // and every previously-shared link still decodes identically.
+  if (cfg.opponent === "player") payload.o = cfg.opponent;
   return b64urlEncode(payload);
 }
 
@@ -81,6 +92,7 @@ export function decodeConfig(code: string): GameConfig | null {
       scopes: Array.isArray(p.s) ? (p.s as unknown[]).filter((x): x is string => typeof x === "string") : [],
       settings: { ...gameDefaults(), ...delta },
       modifiers: Array.isArray(p.x) ? (p.x as unknown[]).filter((x): x is string => typeof x === "string") : [],
+      opponent: p.o === "player" ? "player" : "bot",
     };
   } catch {
     return null;

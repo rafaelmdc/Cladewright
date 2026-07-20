@@ -40,7 +40,8 @@ import {
   previewMultiplier,
   type ModifierInfo,
 } from "../lib/game/multipliers";
-import { PlacedList, buildPlacedList } from "../components/PlacedList";
+import { PlacedList } from "../components/PlacedList";
+import { buildPlacedList } from "../lib/game/placedList";
 import { useTitle } from "../lib/useTitle";
 import { useIsNarrow, useVisualViewportHeight } from "../lib/useViewport";
 import { createInducedTree, place, type InducedTree, type Placement } from "../lib/tree/induced";
@@ -650,8 +651,11 @@ function Game({
     setRev((n) => n + 1);
   }
 
-  // DEV CHEAT (remove before launch): drop N random, not-yet-placed species onto the
-  // tree at once so we don't have to hand-type one to test layout/rendering at scale.
+  // DEV-ONLY CHEAT: drop N random, not-yet-placed species onto the tree at once so we don't
+  // have to hand-type one to test layout/rendering at scale. Reachable ONLY through the gear
+  // panel's dev block, which is behind `import.meta.env.DEV` — Vite substitutes that with
+  // `false` in `vite build`, so the control never exists in a production bundle. It pushes to
+  // transcriptRef/timingsRef (the arrays that get submitted), so keep that gate intact.
   function autofill(n: number) {
     const placed = treeRef.current.namedTips;
     const pool = asset.raw.tips.filter(
@@ -732,12 +736,15 @@ function Game({
         />
       </div>
       {/* No tuning panel on the daily — it's fixed and ranked. */}
+      {/* onAutofill gates the PROP, not just the control: passing `autofill` unconditionally
+          kept the function (and its "cheat: +N placed" string) alive in the production bundle,
+          because a live reference defeats tree-shaking. It was unreachable, but shipped. */}
       {!isDaily && (
         <SettingsPanel
           mode={mode}
           settings={settings}
           onChange={updateSettings}
-          onAutofill={autofill}
+          onAutofill={import.meta.env.DEV ? autofill : undefined}
           multiplier={runMultiplier}
           hidden={effects.hidden}
         />

@@ -1,5 +1,6 @@
-# Automatic linting on every PR + branch push (NOT main image builds — that's
-# build-images.yml). Backend: ruff. Frontend: eslint + tsc typecheck. See GitHub issue #66.
+# Automatic checks on every PR + branch push (NOT main image builds — that's
+# build-images.yml). Backend: ruff + the Django test suite. Frontend: eslint + tsc typecheck.
+# See GitHub issue #66.
 name: lint
 
 on:
@@ -17,6 +18,26 @@ jobs:
           python-version: "3.12"
       - run: pip install ruff
       - run: ruff check .
+        working-directory: backend
+
+  # The suite (109 tests) needs no services: settings fall back to sqlite when neither
+  # DATABASE_URL nor POSTGRES_* is set (see settings.py), so this is a plain pip install
+  # and ~20s. It was previously only ever run by hand, which meant nothing stopped a
+  # broken test reaching main.
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # requirements.txt, not `pip install -e .` — pyproject has no [build-system] and the
+      # backend is a flat layout with several top-level packages, so setuptools
+      # auto-discovery would fail. This is also exactly what the Dockerfile installs.
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - run: python manage.py test
         working-directory: backend
 
   frontend:

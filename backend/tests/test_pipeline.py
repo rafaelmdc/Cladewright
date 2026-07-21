@@ -171,6 +171,66 @@ def test_offline_enrich_fame_is_zero(coldp_dir: Path):
     assert all(t["fame"] == 0 for t in doc["tips"])
 
 
+@pytest.mark.parametrize(
+    "common,sci,expected",
+    [
+        # the real thing
+        ("Red fox", "Vulpes vulpes", True),
+        ("bright goby", "Ilypnus luculentus", True),
+        # a common name that merely LOOKS binomial — the second word is not the epithet
+        ("Manta ray", "Mobula birostris", True),
+        ("Sulfurhead aulonocara", "Aulonocara maylandi", True),
+        # the pipeline's own fallback (#145's reported example)
+        ("Oxyeleotris herwerdenii", "Oxyeleotris herwerdenii", False),
+        (None, "Vulpes vulpes", False),
+        # a synonym binomial harvested from Wikidata as a "vernacular"
+        ("Melanochromis labrosus", "Abactochromis labrosus", False),
+        # a vernacular in another script
+        ("キビレマツカサ", "Myripristis chryseres", False),
+        # a Wikipedia title's disambiguator, which is not a name anyone says
+        ("Pholidota (plant)", "Pholidota", False),
+    ],
+)
+def test_has_vernacular_recognises_real_common_names(common, sci, expected):
+    """#145: `common` falls back to the binomial, so "has a common name" has to be its own
+    boolean — and three different things masquerade as vernaculars in the harvest."""
+    assert enrich.has_vernacular(common, sci) is expected
+
+
+def test_has_common_flag_lands_on_every_tip(coldp_dir: Path):
+    """The flag is baked per tip, and agrees with the display name it describes."""
+    doc = build(coldp_dir, size=100, clade_floor=10)
+    for tip in doc["tips"]:
+        assert isinstance(tip["has_common"], bool)
+        # False must mean the display name fell back to the binomial.
+        if not tip["has_common"]:
+            assert tip["common"] == tip["sci"] or not enrich.has_vernacular(
+                tip["common"], tip["sci"]
+            )
+
+
+def test_has_image_is_omitted_when_the_build_could_not_look(coldp_dir: Path):
+    """Offline builds have no way to ask Wikipedia. The flag is then ABSENT rather than
+    False — the client treats absent as "check for me" and False as "don't draw this"."""
+    doc = build(coldp_dir, size=100, clade_floor=10)
+    assert all("has_image" not in t for t in doc["tips"])
+
+
+def test_has_image_is_baked_when_the_provider_knows(coldp_dir: Path):
+    class PicturedProvider(enrich.OfflineProvider):
+        def has_image(self, scientific_name: str) -> bool | None:
+            return scientific_name == "Panthera leo"
+
+    taxa = ingest.ingest_coldp(coldp_dir, scope="kingdom=Animalia")
+    tree = backbone.build_backbone(taxa)
+    enriched = enrich.enrich(pool.select_pool(tree), PicturedProvider())
+    doc = assetmod.build_asset(tree, enriched, scope="kingdom=Animalia")
+    validate.validate_asset(doc)
+    tips = {t["id"]: t for t in doc["tips"]}
+    assert tips["tip:Panthera_leo"]["has_image"] is True
+    assert tips["tip:Ursus_arctos"]["has_image"] is False
+
+
 def _hybrid_doc() -> dict:
     return {
         "version": 1, "schema": "1.0", "scope": "bugs", "pool_size": 3,

@@ -23,6 +23,13 @@ export interface AssetTip {
   // name ties (famous "robin" wins). Optional: older assets predate it → treated as 0.
   // Keep in sync with backend asset.py.
   fame?: number;
+  // Whether `common` is a REAL vernacular rather than the binomial the pipeline falls back
+  // to when it finds none (#145). Optional: assets built before the flag existed omit it, and
+  // lib/game/commonName.ts derives it for those. Keep in sync with backend asset.py.
+  has_common?: boolean;
+  // Whether the species has a picture on Wikipedia — the art every Clade Clash card is built
+  // around (#146). Optional for the same reason; lib/wiki/images.ts fills the gap at runtime.
+  has_image?: boolean;
   traits: {
     environment: string[];
     biomes: string[];

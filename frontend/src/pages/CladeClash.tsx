@@ -1,53 +1,36 @@
-// Clade Clash — the distance-guessing mode (#36). A centre species sits between two
-// candidates; pick the closer relative before the clock runs out. Solo play is you vs a bot.
+// Clade Clash vs the bot — the solo way to play (#36). A centre species sits between two
+// candidates; pick the closer relative before the clock runs out.
 //
-// Phase 0: SOLO + BOT, UNRANKED. The answer is derivable from the loaded tree, so ranked
-// integrity (server grading + reaction-time plausibility) waits for Phase 1 realtime — here
-// nothing is submitted, so a modified client only fools itself. Same packs + lobby as Time
-// Attack. See docs/clade-clash-design.md.
+// UNRANKED, and dealt + graded on the client (`useBotMatch`): nothing is submitted, so a
+// modified client only fools itself, and the mode needs no account and no round-trip. The
+// board is shared with the ranked human duel (`components/clash/ClashBoard`) — one game, two
+// ways to play, one surface. This page's whole job is to load the pack the lobby chose and
+// hand a driver to the board.
+//
+// See docs/clade-clash-design.md.
 
-import { AnimatePresence, motion } from "framer-motion";
-import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
 
 import { Wordmark } from "../components/Brand";
+import { ClashBoard } from "../components/clash/ClashBoard";
 import { LeafBackground } from "../components/LeafBackground";
 import { LoadingTree } from "../components/LoadingTree";
 import { loadAsset, loadHybridAsset, loadMixed, loadRemoteAsset } from "../lib/asset/load";
-import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
-import { HealthGauge } from "../components/clash/HealthGauge";
-import { RevealClado } from "../components/clash/RevealClado";
-import { SpecimenPlate } from "../components/clash/SpecimenPlate";
-import type { AssetTip, InternedAsset } from "../lib/asset/types";
-import { decodeConfig, defaultConfig, encodeConfig } from "../lib/game/config";
-import {
-  BOT_DELAY_JITTER_MS,
-  BOT_DELAY_MIN_MS,
-  DEFAULT_ENGINE,
-  HP_MAX,
-  makeRound,
-  type ClashRound,
-} from "../lib/game/cladeClash";
-import type { Relatedness } from "../lib/game/distance";
-import type { NameLens } from "../lib/game/settings";
+import { fetchScopes } from "../lib/asset/scopes";
+import type { InternedAsset } from "../lib/asset/types";
+import { useBotMatch } from "../lib/clash/useBotMatch";
+import { engineFor } from "../lib/game/cladeClash";
+import { decodeConfig, defaultConfig, encodeConfig, type GameConfig } from "../lib/game/config";
 import { useTitle } from "../lib/useTitle";
-
-// The active distance engine — what "closer relative" means, and how much a miss hurts. Swap
-// it (or thread it from the lobby config / scope later) to change the metric without touching
-// the game loop. See lib/game/cladeClash.ts.
-const ENGINE = DEFAULT_ENGINE;
-
-const ROUND_CAP = 20; // safety ceiling: if nobody's health hits 0 by here, the higher HP wins
-const ROUND_SECONDS = 12; // per-round clock; runs out → auto-reveal, an unlocked pick counts as a miss
-const REVEAL_MS = 2200; // how long the reveal lingers before the next round
 
 export function CladeClash() {
   useTitle("Clade Clash");
-  const [cfg] = useState(() => {
-    const code = new URLSearchParams(window.location.search).get("c");
+  const [params] = useState(() => new URLSearchParams(window.location.search));
+  const [cfg] = useState<GameConfig | null>(() => {
+    const code = params.get("c");
     return code ? decodeConfig(code) : null;
   });
-  const [scopes, setScopes] = useState<ScopeInfo[]>([]);
   const [asset, setAsset] = useState<InternedAsset | null>(null);
 
   // Resolve the scope from the lobby config (like Marathon); a bare /clash with no config
@@ -56,7 +39,6 @@ export function CladeClash() {
     let cancelled = false;
     fetchScopes().then((list) => {
       if (cancelled) return;
-      setScopes(list);
       const valid = new Set(list.map((s) => s.key));
       const chosen = (cfg?.scopes ?? []).filter((k) => valid.has(k));
       const apply = (a: InternedAsset) => !cancelled && setAsset(a);
@@ -76,290 +58,69 @@ export function CladeClash() {
     };
   }, [cfg]);
 
-  if (!asset) return <LoadingTree />;
-  // Post-match shortcut into the duel on the SAME pack. A duel pairs on one scope key, so
-  // carry only the first (the lobby already collapses a mix when Player is chosen).
-  const first = (cfg?.scopes ?? [])[0];
-  const versusHref = first
-    ? `/clash/versus?c=${encodeConfig(defaultConfig("clash_solo", { scopes: [first] }))}`
+  // Post-match shortcut into a human duel on the SAME packs.
+  const scopes = cfg?.scopes ?? [];
+  const versusHref = scopes.length
+    ? `/clash/versus?c=${encodeConfig(defaultConfig("clash_solo", { scopes }))}`
     : "/clash/versus";
-  return (
-    <ClashGame
-      asset={asset}
-      scopes={scopes}
-      scopeKey={(cfg?.scopes ?? []).join(",")}
-      versusHref={versusHref}
-      // Chosen in the lobby (Names). A pre-existing config code has no nameLens in its delta,
-      // so decodeConfig fills it from the defaults — old links keep showing both names.
-      lens={cfg?.settings.nameLens ?? "both"}
-      fameBias={cfg?.settings.fameBias ?? 0}
-    />
-  );
+
+  if (!asset) return <LoadingTree />;
+  return <BotGame asset={asset} cfg={cfg} engineId={params.get("engine")} versusHref={versusHref} />;
 }
 
-type Phase = "playing" | "revealed" | "over";
-type Side = 0 | 1;
-
-function ClashGame({
+function BotGame({
   asset,
+  cfg,
+  engineId,
   versusHref,
-  lens,
-  fameBias,
 }: {
   asset: InternedAsset;
-  scopes: ScopeInfo[];
-  scopeKey: string;
+  cfg: GameConfig | null;
+  engineId: string | null;
   versusHref: string;
-  lens: NameLens;
-  fameBias: number;
 }) {
-  const [round, setRound] = useState<ClashRound | null>(() => makeRound(asset, ENGINE, Math.random, fameBias));
-  const [roundNum, setRoundNum] = useState(1);
-  const [phase, setPhase] = useState<Phase>("playing");
-  const [pick, setPick] = useState<Side | null>(null);
-  const [botPick, setBotPick] = useState<Side | null>(null);
-  const [botLocked, setBotLocked] = useState(false);
-  const [seconds, setSeconds] = useState(ROUND_SECONDS);
-  const [youHp, setYouHp] = useState(HP_MAX);
-  const [botHp, setBotHp] = useState(HP_MAX);
-  const [dmg, setDmg] = useState<{ you: number; bot: number }>({ you: 0, bot: 0 }); // this round's hits (for the reveal)
+  const match = useBotMatch(asset, {
+    // The metric is resolved through the registry by id, exactly as a duel resolves the
+    // `engine_id` it was created with — so shipping a new metric is one registry entry
+    // (lib/game/cladeClash.ts#ENGINES) plus its mirror in distance.py, and nothing here.
+    // `?engine=nodal` is the dev handle until it graduates into a lobby dial.
+    engine: engineFor(engineId),
+    // Chosen in the lobby (Names). A pre-existing config code has no nameLens in its delta, so
+    // decodeConfig fills it from the defaults — old links keep showing both names.
+    lens: cfg?.settings.nameLens ?? "both",
+    fameBias: cfg?.settings.fameBias ?? 0,
+  });
 
-  const pickRef = useRef<Side | null>(null);
-  const botPickRef = useRef<Side | null>(null);
-  const youHpRef = useRef(HP_MAX); // HP source of truth (reveal reads/writes these, not stale state)
-  const botHpRef = useRef(HP_MAX);
-  const overRef = useRef(false); // a killing blow this round → end after the reveal lingers
-  const secondsRef = useRef(ROUND_SECONDS); // clock source of truth (reveal reads the live value)
-  const botTimer = useRef<number | undefined>(undefined);
-  const tick = useRef<number | undefined>(undefined);
-
-  // If the pool can't form a fair round at all, bail gracefully.
-  const flat = round === null;
-
-  const nextRound = useCallback(() => {
-    if (overRef.current || roundNum >= ROUND_CAP) {
-      setPhase("over");
-      return;
-    }
-    setRoundNum((n) => n + 1);
-    setRound(makeRound(asset, ENGINE, Math.random, fameBias));
-    setPick(null);
-    setBotPick(null);
-    setBotLocked(false);
-    pickRef.current = null;
-    botPickRef.current = null;
-    setDmg({ you: 0, bot: 0 });
-    setSeconds(ROUND_SECONDS);
-    setPhase("playing");
-    // fameBias belongs here: the admin default arrives asynchronously (fetchGameDefaults), so
-    // omitting it would leave every round after the first drawing on a stale bias.
-  }, [asset, roundNum, fameBias]);
-
-  const reveal = useCallback(() => {
-    setPhase((p) => {
-      if (p !== "playing" || !round) return p;
-      // Difference model (GeoGuessr-style): only a differing outcome deals damage; matching
-      // picks — both right OR both wrong — are a wash. A null pick (timeout) counts as a miss.
-      const youMiss = pickRef.current !== round.correct;
-      const botMiss = botPickRef.current !== round.correct;
-      let dy = 0;
-      let db = 0;
-      if (youMiss && !botMiss) dy = ENGINE.damage(round.gap);
-      else if (botMiss && !youMiss) db = ENGINE.damage(round.gap);
-      youHpRef.current = Math.max(0, youHpRef.current - dy);
-      botHpRef.current = Math.max(0, botHpRef.current - db);
-      setYouHp(youHpRef.current);
-      setBotHp(botHpRef.current);
-      setDmg({ you: dy, bot: db });
-      if (youHpRef.current <= 0 || botHpRef.current <= 0) overRef.current = true; // killing blow
-      window.clearTimeout(botTimer.current);
-      window.clearInterval(tick.current);
-      window.setTimeout(nextRound, REVEAL_MS);
-      return "revealed";
-    });
-  }, [round, nextRound]);
-
-  // Per-round clock + bot scheduling. Restarts whenever a fresh round starts.
-  useEffect(() => {
-    if (phase !== "playing" || !round) return;
-    secondsRef.current = ROUND_SECONDS;
-    setSeconds(ROUND_SECONDS);
-    // The bot: "extremely efficient" — the accuracy + delay policy is owned by the engine
-    // (ENGINE.bot), so the thresholds live in the engine's units, not hardcoded here. It picks
-    // the answer (derivable client-side) after a snappy, slightly randomised delay.
-    const policy = ENGINE.bot(round.gap);
-    const correct = Math.random() < policy.accuracy;
-    const choice: Side = (correct ? round.correct : (round.correct ^ 1)) as Side;
-    const delay = BOT_DELAY_MIN_MS + Math.random() * BOT_DELAY_JITTER_MS + policy.delayBiasMs;
-    botTimer.current = window.setTimeout(() => {
-      botPickRef.current = choice;
-      setBotPick(choice);
-      setBotLocked(true);
-      if (pickRef.current !== null) reveal(); // both locked → reveal now
-    }, delay);
-
-    // The interval body (not a setState updater) mutates secondsRef, so it's safe under
-    // StrictMode's double-invoke and reveal() always reads the true remaining time.
-    tick.current = window.setInterval(() => {
-      secondsRef.current -= 1;
-      setSeconds(secondsRef.current);
-      if (secondsRef.current <= 0) {
-        window.clearInterval(tick.current);
-        reveal(); // time up → reveal regardless of locks
-      }
-    }, 1000);
-
-    return () => {
-      window.clearTimeout(botTimer.current);
-      window.clearInterval(tick.current);
-    };
-  }, [round, phase, reveal]);
-
-  function choose(side: Side) {
-    if (phase !== "playing" || pick !== null) return;
-    setPick(side);
-    pickRef.current = side;
-    if (botPickRef.current !== null) reveal(); // opponent already in → reveal
-  }
-
-  function playAgain() {
-    youHpRef.current = HP_MAX;
-    botHpRef.current = HP_MAX;
-    overRef.current = false;
-    setYouHp(HP_MAX);
-    setBotHp(HP_MAX);
-    setDmg({ you: 0, bot: 0 });
-    setRoundNum(1);
-    setRound(makeRound(asset, ENGINE, Math.random, fameBias));
-    setPick(null);
-    setBotPick(null);
-    setBotLocked(false);
-    pickRef.current = null;
-    botPickRef.current = null;
-    setSeconds(ROUND_SECONDS);
-    setPhase("playing");
-  }
-
-  if (flat) {
+  // The pack is too small or too flat to form a fair round: the driver reports ready, with no
+  // round and no result.
+  if (match.connected && !match.round && !match.over) {
     return (
       <Shell>
         <div className="ink-card bg-clade-paper px-8 py-10 text-center">
           <p className="font-hand text-2xl text-clade-ink">This pack is too small for a duel.</p>
-          <p className="mt-1 font-mono text-xs text-clade-ink/55">Pick a bigger pack (or a mix) and try again.</p>
-          <Link to="/play/clash_solo" className="btn-play mt-4 inline-block">▶ Back to setup</Link>
-        </div>
-      </Shell>
-    );
-  }
-
-  if (phase === "over") {
-    const win = youHp <= 0 && botHp > 0 ? "Bot wins" : botHp <= 0 && youHp > 0 ? "You win"
-      : youHp > botHp ? "You win" : youHp < botHp ? "Bot wins" : "Dead heat";
-    const youWon = win === "You win";
-    return (
-      <Shell>
-        <div className="ink-card w-[22rem] max-w-full bg-clade-paper px-8 py-8 text-center">
-          <div className="font-mono text-[11px] uppercase tracking-widest text-clade-ink/45">
-            Match over · {roundNum} round{roundNum === 1 ? "" : "s"}
-          </div>
-          <h1 className={`mt-1 font-hand text-5xl font-bold ${youWon ? "text-clade-accent" : "text-clade-ink"}`}>{win}</h1>
-          <div className="mt-6 flex flex-col gap-3">
-            <HealthGauge label="You" hp={youHp} max={HP_MAX} highlight={youWon} />
-            <HealthGauge label="Bot" hp={botHp} max={HP_MAX} highlight={win === "Bot wins"} />
-          </div>
-          <div className="mt-7 flex items-center justify-center gap-3">
-            <button onClick={playAgain} className="btn-play">▶ Play again</button>
-            <Link to={versusHref} className="pill">⚔ Duel a player</Link>
-          </div>
-          {/* Versus is the same game, not a second one — one Hub card, one lobby (Opponent →
-              Bot | Player). This is just the post-match shortcut, on the same pack. */}
-          <Link
-            to="/"
-            className="mt-4 inline-block font-mono text-xs uppercase tracking-widest text-clade-ink/50 hover:text-clade-ink"
-          >
-            Menu
+          <p className="mt-1 font-mono text-xs text-clade-ink/55">
+            Pick a bigger pack (or a mix) and try again.
+          </p>
+          <Link to="/play/clash_solo" className="btn-play mt-4 inline-block">
+            ▶ Back to setup
           </Link>
         </div>
       </Shell>
     );
   }
 
-  const frac = seconds / ROUND_SECONDS;
   return (
     <Shell>
-      {/* HUD: facing health bars (GeoGuessr-style) with the round between them */}
-      <div className="mb-4 flex w-full max-w-3xl items-end gap-4">
-        <HealthGauge label="You" hp={youHp} max={HP_MAX} dmg={phase === "revealed" ? dmg.you : 0} highlight />
-        <div className="shrink-0 pb-1 font-mono text-[11px] uppercase tracking-widest text-clade-ink/45">
-          R{roundNum}
-        </div>
-        <HealthGauge label="Bot" hp={botHp} max={HP_MAX} dmg={phase === "revealed" ? dmg.bot : 0} reverse />
-      </div>
-
-      {/* timer bar */}
-      <div className="mb-5 h-1.5 w-full max-w-3xl overflow-hidden rounded-full bg-clade-ink/10">
-        <div
-          className={`h-full rounded-full transition-[width] duration-1000 ease-linear ${seconds <= 3 ? "bg-red-500" : "bg-clade-accent"}`}
-          style={{ width: `${phase === "playing" ? frac * 100 : 100}%` }}
-        />
-      </div>
-
-      <div className="grid w-full max-w-3xl grid-cols-1 items-start gap-4 sm:grid-cols-3">
-        <OptionCard
-          tip={round!.options[0]}
-          rel={round!.rel[0]}
-          side={0}
-          picked={pick === 0}
-          isCorrect={round!.correct === 0}
-          botPicked={botPick === 0}
-          phase={phase}
-          lens={lens}
-          onPick={() => choose(0)}
-        />
-        <div className="flex flex-col items-center justify-center gap-2">
-          <CenterCard tip={round!.center} lens={lens} />
-          <div className="font-hand text-lg italic text-clade-ink/40">closer to…?</div>
-        </div>
-        <OptionCard
-          tip={round!.options[1]}
-          rel={round!.rel[1]}
-          side={1}
-          picked={pick === 1}
-          isCorrect={round!.correct === 1}
-          botPicked={botPick === 1}
-          phase={phase}
-          lens={lens}
-          onPick={() => choose(1)}
-        />
-      </div>
-
-      {/* The payoff: WHY one is closer, drawn rather than described. Reserves no space while
-          playing, so the board doesn't shift when it appears. */}
-      <AnimatePresence>
-        {phase === "revealed" && round && (
-          <div className="mt-4 flex w-full justify-center">
-            <RevealClado
-              center={round.center}
-              near={round.options[round.correct]}
-              far={round.options[round.correct === 0 ? 1 : 0]}
-              nearRel={round.rel[round.correct]}
-              farRel={round.rel[round.correct === 0 ? 1 : 0]}
-              youPickedNear={pick === null ? null : pick === round.correct}
-              lens={lens}
-            />
-          </div>
-        )}
-      </AnimatePresence>
-
-      <div className="mt-4 h-5 font-mono text-xs uppercase tracking-widest text-clade-ink/40">
-        {phase === "playing"
-          ? pick === null
-            ? "pick the closer relative"
-            : botLocked
-              ? "revealing…"
-              : "locked in — waiting on the bot"
-          : ""}
-      </div>
+      <ClashBoard
+        match={match}
+        // Versus is the same game, not a second one — one Hub card, one lobby (Opponent →
+        // Bot | Player). This is just the post-match shortcut, on the same packs.
+        exit={
+          <Link to={versusHref} className="pill">
+            ⚔ Duel a player
+          </Link>
+        }
+      />
     </Shell>
   );
 }
@@ -376,111 +137,3 @@ function Shell({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
-
-function CenterCard({ tip, lens }: { tip: AssetTip; lens: NameLens }) {
-  return (
-    <div className="ink-card w-full overflow-hidden bg-clade-paper p-0 shadow-sm ring-2 ring-clade-accent/25">
-      <div className="border-b-2 border-clade-ink/10 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-clade-accent">
-        Specimen
-      </div>
-      <SpecimenPlate common={tip.common} sci={tip.sci} lens={lens} compact />
-    </div>
-  );
-}
-
-function OptionCard({
-  tip,
-  rel,
-  picked,
-  isCorrect,
-  botPicked,
-  phase,
-  lens,
-  onPick,
-}: {
-  tip: AssetTip;
-  rel: Relatedness;
-  side: Side;
-  picked: boolean;
-  isCorrect: boolean;
-  botPicked: boolean;
-  phase: Phase;
-  lens: NameLens;
-  onPick: () => void;
-}) {
-  const revealed = phase === "revealed";
-  const live = phase === "playing" && !picked;
-  // Reveal desaturates the losing plate rather than just fading it: at a glance the correct
-  // animal is the one still in full colour.
-  const tone = !revealed
-    ? picked
-      ? "border-clade-accent ring-2 ring-clade-accent/40"
-      : "border-clade-ink/15 hover:border-clade-accent/70"
-    : isCorrect
-      ? "border-clade-accent ring-2 ring-clade-accent"
-      : "border-clade-ink/15 opacity-60 grayscale";
-  return (
-    <motion.button
-      type="button"
-      disabled={phase !== "playing" || picked}
-      onClick={onPick}
-      /* It should look pickable before you commit, and spent once you have. */
-      whileHover={live ? { y: -2 } : undefined}
-      whileTap={live ? { y: 0, scale: 0.99 } : undefined}
-      className={`ink-card relative flex flex-col overflow-hidden bg-clade-paper p-0 text-left transition ${tone} ${live ? "cursor-pointer" : "cursor-default"}`}
-    >
-      <SpecimenPlate common={tip.common} sci={tip.sci} lens={lens} />
-
-      {/* lock-in: an ink underline sweeps the plate, so a spent pick reads as committed */}
-      {picked && !revealed && (
-        <motion.div
-          layout
-          initial={{ scaleX: 0 }}
-          animate={{ scaleX: 1 }}
-          transition={{ duration: 0.25, ease: "easeOut" }}
-          className="absolute inset-x-0 bottom-0 h-1 origin-left bg-clade-accent"
-        />
-      )}
-      {picked && !revealed && (
-        <span className="absolute right-2 top-2 rounded-full bg-clade-accent px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-clade-paper">
-          you
-        </span>
-      )}
-
-      {/* reveal: verdict + who picked it */}
-      <AnimatePresence>
-        {revealed && (
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex flex-col items-center gap-1 border-t-2 border-clade-ink/10 px-3 py-2"
-          >
-            <span
-              className={`rounded-full px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${isCorrect ? "bg-clade-accent text-clade-paper" : "border border-clade-ink/25 text-clade-ink/55"}`}
-            >
-              {isCorrect ? "closer" : "further"}
-              {rel.mrcaRank ? ` · shares ${rel.mrcaRank}` : ""}
-            </span>
-            <div className="flex gap-1">
-              {picked && <Tag label="you" good={isCorrect} />}
-              {botPicked && <Tag label="bot" good={isCorrect} muted />}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.button>
-  );
-}
-
-function Tag({ label, good, muted }: { label: string; good: boolean; muted?: boolean }) {
-  return (
-    <span
-      className={`rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider ${
-        good ? "text-clade-accent" : "text-red-500"
-      } ${muted ? "opacity-70" : ""}`}
-    >
-      {label} {good ? "✓" : "✗"}
-    </span>
-  );
-}
-

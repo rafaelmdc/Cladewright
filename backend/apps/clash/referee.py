@@ -65,6 +65,10 @@ class MatchState:
     seed: int
     ranked: bool
     players: list[Player]
+    # Draw skew toward well-known species (0..1), resolved from GameDefaults when the match is
+    # created and then FROZEN on the match — retuning the admin dial mid-duel would change the
+    # game under the players, and the match must stay replayable from (seed, round_num).
+    fame_bias: float = 0.0
     round: Optional[RoundState] = None
     round_num: int = 0
     status: str = "playing"  # "playing" | "over"
@@ -108,6 +112,7 @@ def new_match(
     engine_id: str,
     pool: ClashPool,
     ranked: bool,
+    fame_bias: float = 0.0,
     seed: Optional[int] = None,
     now: Optional[float] = None,
 ) -> MatchState:
@@ -120,6 +125,7 @@ def new_match(
         seed=seed if seed is not None else random.randrange(1 << 62),
         ranked=ranked,
         players=list(players),
+        fame_bias=fame_bias,
     )
     start_round(state, pool, now=now)
     if state.round is None:
@@ -135,7 +141,7 @@ def start_round(state: MatchState, pool: ClashPool, *, now: Optional[float] = No
         _end_by_hp(state)
         return False
     next_num = state.round_num + 1
-    rnd = make_round(pool, state.engine, _round_rng(state.seed, next_num))
+    rnd = make_round(pool, state.engine, _round_rng(state.seed, next_num), state.fame_bias)
     if rnd is None:
         _end_by_hp(state)
         return False
@@ -292,6 +298,8 @@ def from_dict(d: dict) -> MatchState:
         seed=d["seed"],
         ranked=d["ranked"],
         players=players,
+        # Default 0.0 keeps a match written by an older process (mid-deploy) decodable.
+        fame_bias=float(d.get("fame_bias", 0.0)),
         round=rnd,
         round_num=d["round_num"],
         status=d["status"],

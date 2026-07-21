@@ -62,3 +62,12 @@ class EnrichedTip:
     common: str           # resolved display name (vernacular → wikidata → sci)
     aliases: list[str]
     fame: int = 0
+    # Whether ``common`` is a REAL vernacular rather than the scientific name this falls back
+    # to. Two thirds of a pack like Fish have no vernacular at all, so a game mode that
+    # promises common names needs to know the difference rather than guess at the render
+    # site (#145). See enrich.py::has_vernacular.
+    has_common: bool = False
+    # Whether the species has a picture on Wikipedia. Clade Clash is built around the art, so
+    # its round generator draws only from species that HAVE some (#146). None = never looked
+    # (offline builds); the client then falls back to asking Wikipedia itself.
+    has_image: bool | None = None

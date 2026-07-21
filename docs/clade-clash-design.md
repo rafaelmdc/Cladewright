@@ -30,22 +30,64 @@ play — the Hub renders one card per row.
 
 - **One judgement per round: "is Y or Z the closer relative of X?"** That makes a
   round instant to render and instant to grade — the property everything else leans on.
-- **Reveal teaches.** The flip shows the answer *and the shared clade* — "*Leopard*
-  shares family *Felidae*; *wolf* only shares order *Carnivora*" — so a round leaves
-  you knowing something, not just scored. This is *drawn*, not described: `RevealClado`
-  sketches the round's topology — always `((specimen, near), far)` — with the shared rank
-  named on each join. It was a 10px monospace pill, which is a poor showing for the one
-  line that explains the answer.
+- **Reveal teaches — so it has to last long enough to read.** The flip shows the answer
+  *and the shared clade* — "*Leopard* shares family *Felidae*; *wolf* only shares order
+  *Carnivora*" — so a round leaves you knowing something, not just scored. This is *drawn*,
+  not described: `RevealClado` sketches the round's topology — always `((specimen, near),
+  far)` — with the shared rank named on each join. It was a 10px monospace pill, which is a
+  poor showing for the one line that explains the answer.
+
+  It also used to linger **2.2 seconds** (2.5 in versus), which is not enough to read a
+  cladogram, two verdicts and the damage before the board changes — the game's one teaching
+  moment arrived and left while you were still looking at it (#144). Now **6 seconds**, with
+  the wait shown as a draining ring (`RevealCountdown`) and a "next →" skip for anyone
+  faster. Solo's timer and the server's `REVEAL_SECONDS` are two clocks for one wait: change
+  one and change the other.
+- **Every card is a picture with a name under it — so a species that has neither is not
+  drawable.** This is the constraint the round generator now enforces, and it fixes two bugs
+  that looked unrelated (#145, #146):
+  - **Names.** `tip.common` falls back to the binomial, so the "Common" lens silently served
+    Latin for the two thirds of a Fish pack with no vernacular — plus Japanese labels and
+    synonym binomials the harvest mistook for vernaculars. A real boolean now answers this
+    (`has_common`, see [`game-asset-format.md`](game-asset-format.md)), and any lens that
+    promises a common name draws only from species that have one.
+  - **Pictures.** Nothing ever filtered on art. The doc used to claim fame carried it
+    ("famous species are also the ones with photographs") — a proxy, and a leaky one: plenty
+    of mid-fame fish have an article, a common name and no photo, which is a card with a
+    hatched blank where the animal should be. Builds now bake `has_image`; the client screens
+    candidate rounds against Wikipedia in **batches of 50 titles, cached permanently**
+    (`lib/wikiImages.ts`), so packs built before the flag are fixed too. A round is drawn as
+    one of a batch and the first fully-showable one wins; if none is, an unscreened round
+    still plays — a pack with little art should look worse, not stop.
+
+  Coverage is the reason both flags need a *measured* answer rather than a proxy: in the Fish
+  pack **29% of species have a picture** and **29% have a real common name**. The versus pool
+  applies both server-side (it cannot call Wikipedia mid-draw, so it depends entirely on the
+  baked flags), and gives up on them entirely if they'd leave a pack under 8 drawable tips —
+  a small badly-covered pack must still deal a round.
 - **The draw favours species people know** (`fameBias`, admin-tunable — see
   [`admin.md`](admin.md)). A uniform draw over a 6,000-species pack mostly produced rounds
   like "Puntilla tuco-tuco vs Furtive tuco-tuco": unanswerable, so a coin flip rather than a
   question. The skew decays across the generator's attempts, so a strong bias can never make
-  a pack unplayable — it only changes which end we look at first. Famous species are also the
-  ones with photographs, so this carries the specimen art too.
+  a pack unplayable — it only changes which end we look at first. **Both ends implement it**:
+  solo had it from the start and versus did not, so a duel on a 37,000-species pack drew
+  uniformly — the same coin-flip problem, in the ranked mode. `FAME_SKEW` in `cladeClash.ts`
+  and `_FAME_SKEW` in `distance.py` must agree, or a duel is a different game from the solo
+  practice that taught it to you. The bias is resolved from `GameDefaults` when a match is
+  created and then **frozen on the match**: retuning the dial mid-duel would change the game
+  under the players, and a match must stay replayable from `(seed, round_num)`.
 - **The player chooses which names they see** (`nameLens`: common · both · scientific).
   "Scientific" means scientific *only* — withholding the common name is the whole point of
-  it being the harder lens. It is a **gameplay** setting, not a visual one: lobby-owned,
-  frozen for the run, and carried in the shared config code.
+  it being the harder lens (and the only lens that draws from the whole pack, since it is the
+  only one not promising a vernacular). It is a **gameplay** setting, not a visual one:
+  lobby-owned, frozen for the run, and carried in the shared config code.
+- **You can look closer, but not read your way to the answer.** Hovering a card opens the
+  uncropped picture at a readable size (#143) — the card art is ~200px and cropped to 4:3,
+  which is enough to say "a brown fish" and not enough to do the recognising the game asks
+  for. The Wikipedia lead comes with it, **but only after the reveal**: a species' first
+  paragraph is almost always "…is a species of X in the family Y", which is the answer
+  verbatim, and showing it mid-round would turn a recognition game into a reading game. The
+  panel says so rather than looking broken.
 - **Health, not points (GeoGuessr-Duels-style).** Both sides start at `HP_MAX` (100).
   Each round is a **difference model**: only the side whose outcome *differs* from the
   other takes damage — if you pick the closer relative and your opponent doesn't, they
@@ -60,8 +102,57 @@ play — the Hub renders one card per row.
   Marathon's config panel plus player invites, see
   [`lobby-and-config.md`](lobby-and-config.md)). The round generator simply samples its
   centre + two candidates **from within the chosen scope**.
+
+  **A mix is a first-class scope, in versus too** (#147). Solo always merged packs
+  client-side; versus was capped at one pack because the matchmaking queue keys on the scope
+  string and nothing merged pools server-side. Both are fixed: a mix is written as its member
+  keys **sorted and `+`-joined** (`aves+fish+mammalia`), which is simultaneously the cache
+  key, the queue key and what `MatchResult.scope` records. `ClashPool.from_blobs` unions the
+  blobs — no remapping needed, because ids come from taxon *names*, so `fam:Felidae` is the
+  same id in every pack that holds it, and the shared backbone (`phy:Chordata`) coincides,
+  which is exactly what lets a round put a bird against a fish. Loading is **all or nothing**:
+  a mix with one member missing its current blob refuses, rather than quietly pairing two
+  players on pools that only look alike. Two players still pair only on the *same* mix — the
+  right behaviour, and the reason the key must be canonical.
 - **A bot opponent** is a first-class feature, not just a demo stub: it powers solo
   practice and lets the full three-card versus flow work before any socket exists.
+
+## One game, one board, several drivers
+
+Clade Clash is ONE game with several ways to play — and it was nevertheless *built* as two,
+a client-side page for solo/bot and a websocket page for versus, each carrying its own HUD,
+timer, cards, reveal and game-over card. The rules are identical (same health model, same
+damage curve, same reveal), so every change had to be made twice, and the two drifted: versus
+never got the reveal figure at all, and the fixes in #143–#146 each had to be applied on both
+sides. Adding a way to play must not mean adding a board.
+
+So the *difference* is named instead of duplicated:
+
+- **`ClashBoard`** (`components/clash/ClashBoard.tsx`) renders a match. It knows nothing about
+  where the match came from — no branch anywhere in it says "if solo".
+- **A driver** owns the three things that genuinely differ — who deals the round, who grades
+  it, and who the opponent is — and presents one **`MatchView`** (`lib/clash/match.ts`):
+  - `useBotMatch(asset, …)` deals + grades locally against the bot (**unranked**),
+  - `useClashMatch(pairing)` takes both off the server over a websocket (**ranked**).
+- Anything that varies is a **field on the view**, not a branch in the board: `lens` (a solo
+  choice; a duel always shows both names, since one player quietly on an easier lens is not a
+  fair ranked match), `skipReveal` (absent where the server owns the clock — one player
+  skipping would only desync them), `playAgain` (absent where "again" means re-queueing).
+
+The `MatchView.round` is deliberately the **answer-free** projection the server already
+produces (`public_round()`): the board is handed the same shape either way and therefore
+*cannot* leak what it was never given. The bot driver keeps the answer in a ref that never
+reaches React state.
+
+A third way to play — a daily challenge, a replay viewer, a spectator — is a third driver.
+
+**The engine registry is the same idea one level down.** What "closer" means is already
+pluggable (below), and both halves now resolve an engine by **id** through a registry:
+`ENGINES` in `lib/game/cladeClash.ts` and in `apps/clash/distance.py`. A duel is created with
+an `engine_id` and both ends look up the same metric; solo takes `?engine=` as a dev handle
+until it graduates into a lobby dial. **Shipping a new metric is one entry in each registry
+and nothing else** — but it must be *both*, or you get a metric that works in solo and not in
+versus.
 
 ## The distance signal (the core design decision)
 

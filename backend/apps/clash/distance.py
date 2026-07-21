@@ -18,6 +18,9 @@ from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence
 
 HP_MAX = 100  # starting health for a duel (GeoGuessr-style), mirrors cladeClash.ts
+# Below this many drawable tips a pool can't form rounds at all (make_round bails), so the
+# presentability filters give up rather than empty a small pack. Mirrors make_round's floor.
+_MIN_POOL = 8
 
 
 @dataclass(frozen=True)
@@ -103,7 +106,12 @@ ENGINES = {e.id: e for e in (RANK_DEPTH_ENGINE, NODAL_ENGINE)}
 @dataclass(frozen=True)
 class ClashPool:
     """A ready-to-play pool distilled from an asset blob: the tips to sample and the lookups
-    the metric needs. Built once per match (see ``from_blob``) and reused every round."""
+    the metric needs. Built once per match (see ``from_blob``) and reused every round.
+
+    ``tip_ids`` is ordered by FAME, descending, and holds only the tips a round can actually
+    show. Both are draw concerns, and doing them once at pool construction keeps the generator
+    a pure sampler — the client does the same thing (``byFame`` + ``namedPool``).
+    """
 
     tip_ids: tuple[str, ...]
     lineage: Mapping[str, tuple[str, ...]]
@@ -114,20 +122,50 @@ class ClashPool:
 
     @classmethod
     def from_blob(cls, blob: dict) -> "ClashPool":
-        """Distill a ClashPool from an AssetVersion.blob (tips + nodes)."""
-        rank_of = {node["id"]: node.get("rank") for node in blob.get("nodes", [])}
-        tip_ids: list[str] = []
+        """Distill a ClashPool from one AssetVersion.blob (tips + nodes)."""
+        return cls.from_blobs([blob])
+
+    @classmethod
+    def from_blobs(cls, blobs: list[dict]) -> "ClashPool":
+        """Distill a ClashPool from one or more asset blobs — a mix of packs is one pool
+        (#147). Ids are derived from taxon names, so the union needs no remapping and the
+        shared backbone (``kng:Animalia``) coincides across packs, which is what lets a round
+        span two of them. A tip present in two packs is simply the same tip."""
+        rank_of: dict[str, str | None] = {}
         lineage: dict[str, tuple[str, ...]] = {}
         common: dict[str, str] = {}
         sci: dict[str, str] = {}
-        for tip in blob.get("tips", []):
-            tid = tip["id"]
-            tip_ids.append(tid)
-            lineage[tid] = tuple(tip.get("lineage", []))
-            common[tid] = tip.get("common") or tip.get("sci") or tid
-            sci[tid] = tip.get("sci") or ""
+        fame: dict[str, int] = {}
+        drawable: dict[str, int] = {}  # tip id -> fame (dict, so an overlap doesn't duplicate)
+        for blob in blobs:
+            for node in blob.get("nodes", []):
+                rank_of.setdefault(node["id"], node.get("rank"))
+            for tip in blob.get("tips", []):
+                tid = tip["id"]
+                lineage[tid] = tuple(tip.get("lineage", []))
+                common[tid] = tip.get("common") or tip.get("sci") or tid
+                sci[tid] = tip.get("sci") or ""
+                fame[tid] = int(tip.get("fame") or 0)
+                # A card is a picture with a name under it, so a species missing either can't
+                # be dealt (#145, #146). Both flags are baked by builds from those issues
+                # onward; a pack built before has no opinion on either, so every tip stays
+                # drawable and versus looks exactly as it does today. Versus renders both
+                # names, which is why a vernacular is required here — it matches the client's
+                # default lens (see namedPool in cladeClash.ts).
+                if tip.get("has_image") is False or tip.get("has_common") is False:
+                    drawable.pop(tid, None)
+                    continue
+                drawable[tid] = fame[tid]
+        # A pack can be small AND poorly covered — Wikipedia has a picture for well under half
+        # of some groups. Rather than refuse to start a match on it, fall back to the whole
+        # pool: an ugly duel beats no duel, and it is the same "never make a pack unplayable"
+        # posture the fame bias takes when it relaxes across attempts.
+        if len(drawable) < _MIN_POOL:
+            drawable = fame
+        # Fame descending, then id, so a rebuild at equal fame draws the same rounds.
+        ordered = sorted(drawable.items(), key=lambda kv: (-kv[1], kv[0]))
         return cls(
-            tip_ids=tuple(tip_ids),
+            tip_ids=tuple(tid for tid, _ in ordered),
             lineage=lineage,
             rank_of=rank_of,
             common=common,
@@ -158,31 +196,51 @@ class ClashRound:
 
 _SAMPLE = 400  # candidates compared against the centre per attempt
 _ATTEMPTS = 16  # resample the centre this many times before giving up on a fair round
+# How sharply the draw skews toward famous species. Mirrors FAME_SKEW in cladeClash.ts —
+# see the tuning table there; the two must agree or a duel feels like a different game from
+# the solo practice that taught you it.
+_FAME_SKEW = 8
 
 
 def make_round(
     pool: ClashPool,
     engine: DistanceEngine = DEFAULT_ENGINE,
     rng: random.Random | None = None,
+    fame_bias: float = 0.0,
 ) -> ClashRound | None:
     """Build one fair round, or None if the pool is too small/flat. Mirrors cladeClash.ts
     ``makeRound``: a near candidate at maximum closeness and a far one at least ``min_gap``
     less close, so the answer is unambiguous by construction. ``rng`` is injectable so a
-    match can be seeded + replayed (the referee seeds per match)."""
+    match can be seeded + replayed (the referee seeds per match).
+
+    ``fame_bias`` (0..1, admin-tunable via GameDefaults) skews the draw toward species people
+    have heard of. Solo has had this since the fame work landed; versus did NOT, so a duel on
+    a 37,000-species pack drew uniformly and asked players to compare two gobies nobody can
+    recognise — the exact coin-flip problem the bias exists to solve. The skew decays across
+    attempts, so it can never make a pack unplayable, only change which end we look at first.
+    """
     rng = rng or random
     tips = pool.tip_ids
     n_tips = len(tips)
     if n_tips < 8:
         return None
+    bias = max(0.0, min(1.0, fame_bias))
 
-    for _ in range(_ATTEMPTS):
-        center = tips[rng.randrange(n_tips)]
+    for attempt in range(_ATTEMPTS):
+        strength = bias * (1 - attempt / _ATTEMPTS)
+        exp = 1 + strength * _FAME_SKEW
+
+        def pick() -> str:
+            # tip_ids is fame-ordered, so a >1 exponent pushes the index toward the front.
+            return tips[min(n_tips - 1, int(n_tips * (rng.random() ** exp)))]
+
+        center = pick()
         near: tuple[str, Relatedness, float] | None = None
         candidates: list[tuple[str, Relatedness, float]] = []
         seen = {center}
 
         for _ in range(min(_SAMPLE, n_tips)):
-            t = tips[rng.randrange(n_tips)]
+            t = pick()
             if t in seen:
                 continue
             seen.add(t)

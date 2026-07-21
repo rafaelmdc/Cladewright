@@ -77,8 +77,28 @@ export const nodalEngine: DistanceEngine = {
   bot: (gap) => ({ accuracy: gap >= 4 ? 0.97 : 0.86, delayBiasMs: gap < 3 ? 600 : 0 }),
 };
 
+/** The engines this build ships, by id — the registry a match resolves its `engineId`
+ *  through. It mirrors `ENGINES` in `apps/clash/distance.py`, and the ids are the contract
+ *  between them: a duel is created with an `engine_id`, and the client has to be able to look
+ *  up the same metric to render and grade the same game.
+ *
+ *  **Adding an engine is adding an entry here and in distance.py** — nothing else in the game
+ *  knows an engine by name. Both halves are needed: one alone gives you a metric that works in
+ *  solo but not versus, or the reverse. */
+export const ENGINES: Record<string, DistanceEngine> = {
+  [rankDepthEngine.id]: rankDepthEngine,
+  [nodalEngine.id]: nodalEngine,
+};
+
 /** The engine the game uses unless told otherwise. Later this can be chosen per scope/config. */
 export const DEFAULT_ENGINE = rankDepthEngine;
+export const DEFAULT_ENGINE_ID = rankDepthEngine.id;
+
+/** Resolve an engine id to its engine, falling back to the default. A match whose engine this
+ *  build doesn't ship still plays — on the default metric — rather than failing to render. */
+export function engineFor(id: string | undefined | null): DistanceEngine {
+  return (id && ENGINES[id]) || DEFAULT_ENGINE;
+}
 
 export const HP_MAX = 100; // starting health for a duel (GeoGuessr-style, #36)
 

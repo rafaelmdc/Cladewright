@@ -18,7 +18,7 @@
 
 import { motion, useReducedMotion } from "framer-motion";
 
-import type { Relatedness } from "../../lib/game/distance";
+import { commonNameOf } from "../../lib/game/commonName";
 import type { NameLens } from "../../lib/game/settings";
 
 interface Tip {
@@ -26,25 +26,31 @@ interface Tip {
   sci: string;
 }
 
-/** Name a tip under the active lens — the reveal must not leak the common name in hard mode. */
+/** Name a tip under the active lens — the reveal must not leak the common name in hard mode,
+ *  and must say the same thing the CARD says. Going through commonNameOf is what keeps those
+ *  in step: it strips a Wikipedia title's parenthetical ("Sergeant major (fish)") and rejects
+ *  the binomial the pipeline falls back to, exactly as the plate does. */
 function nameOf(tip: Tip, lens: NameLens): string {
-  return lens === "scientific" ? tip.sci : tip.common || tip.sci;
+  return (lens === "scientific" ? null : commonNameOf(tip)) ?? tip.sci;
 }
 
 export function RevealClado({
   center,
   near,
   far,
-  nearRel,
-  farRel,
+  nearRank,
+  farRank,
   youPickedNear,
   lens = "both",
 }: {
   center: Tip;
   near: Tip;
   far: Tip;
-  nearRel: Relatedness;
-  farRel: Relatedness;
+  /* Just the two MRCA RANKS, not the Relatedness records they came from — the only thing this
+     figure ever read. Taking the strings is what lets versus draw it too: the server sends
+     `mrca_rank` per option and has no client-side Relatedness to hand over. */
+  nearRank: string | null;
+  farRank: string | null;
   /** Drives the "your pick" marker — null when the round timed out with no pick. */
   youPickedNear: boolean | null;
   lens?: NameLens;
@@ -70,7 +76,7 @@ export function RevealClado({
       </p>
       <div className="overflow-x-auto">
         <svg viewBox="0 0 460 126" className="h-auto w-full min-w-[22rem]" role="img"
-             aria-label={`${nameOf(center, lens)} shares ${nearRel.mrcaRank ?? "an ancestor"} with ${nameOf(near, lens)}, and only ${farRel.mrcaRank ?? "a deeper ancestor"} with ${nameOf(far, lens)}.`}>
+             aria-label={`${nameOf(center, lens)} shares ${nearRank ?? "an ancestor"} with ${nameOf(near, lens)}, and only ${farRank ?? "a deeper ancestor"} with ${nameOf(far, lens)}.`}>
           {/* branches — drawn as one stroked path so the ink weight stays even */}
           <path
             d={`M${X.root} ${nearMid} H${X.farJoin}
@@ -90,24 +96,24 @@ export function RevealClado({
 
           {/* the join that matters — the shared clade with the NEAR candidate */}
           <circle cx={X.nearJoin} cy={nearMid} r="4.5" className="fill-clade-accent" />
-          {nearRel.mrcaRank && (
+          {nearRank && (
             <text
               x={(X.farJoin + X.nearJoin) / 2}
               y={nearMid - 8}
               textAnchor="middle"
               className="fill-clade-accent font-hand text-[15px] font-bold"
             >
-              {nearRel.mrcaRank}
+              {nearRank}
             </text>
           )}
 
           {/* the earlier join, where the far candidate splits away */}
           <circle cx={X.farJoin} cy={nearMid} r="3.5" fill="none"
                   stroke="currentColor" strokeOpacity="0.4" strokeWidth="2" className="text-clade-ink" />
-          {farRel.mrcaRank && (
+          {farRank && (
             <text x={(X.farJoin + X.tip) / 2} y={Y.far - 7} textAnchor="middle"
                   className="fill-clade-ink/45 font-mono text-[9px] uppercase tracking-widest">
-              {farRel.mrcaRank}
+              {farRank}
             </text>
           )}
 

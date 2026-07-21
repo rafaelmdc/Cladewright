@@ -117,6 +117,43 @@ play — the Hub renders one card per row.
 - **A bot opponent** is a first-class feature, not just a demo stub: it powers solo
   practice and lets the full three-card versus flow work before any socket exists.
 
+## One game, one board, several drivers
+
+Clade Clash is ONE game with several ways to play — and it was nevertheless *built* as two,
+a client-side page for solo/bot and a websocket page for versus, each carrying its own HUD,
+timer, cards, reveal and game-over card. The rules are identical (same health model, same
+damage curve, same reveal), so every change had to be made twice, and the two drifted: versus
+never got the reveal figure at all, and the fixes in #143–#146 each had to be applied on both
+sides. Adding a way to play must not mean adding a board.
+
+So the *difference* is named instead of duplicated:
+
+- **`ClashBoard`** (`components/clash/ClashBoard.tsx`) renders a match. It knows nothing about
+  where the match came from — no branch anywhere in it says "if solo".
+- **A driver** owns the three things that genuinely differ — who deals the round, who grades
+  it, and who the opponent is — and presents one **`MatchView`** (`lib/clash/match.ts`):
+  - `useBotMatch(asset, …)` deals + grades locally against the bot (**unranked**),
+  - `useClashMatch(pairing)` takes both off the server over a websocket (**ranked**).
+- Anything that varies is a **field on the view**, not a branch in the board: `lens` (a solo
+  choice; a duel always shows both names, since one player quietly on an easier lens is not a
+  fair ranked match), `skipReveal` (absent where the server owns the clock — one player
+  skipping would only desync them), `playAgain` (absent where "again" means re-queueing).
+
+The `MatchView.round` is deliberately the **answer-free** projection the server already
+produces (`public_round()`): the board is handed the same shape either way and therefore
+*cannot* leak what it was never given. The bot driver keeps the answer in a ref that never
+reaches React state.
+
+A third way to play — a daily challenge, a replay viewer, a spectator — is a third driver.
+
+**The engine registry is the same idea one level down.** What "closer" means is already
+pluggable (below), and both halves now resolve an engine by **id** through a registry:
+`ENGINES` in `lib/game/cladeClash.ts` and in `apps/clash/distance.py`. A duel is created with
+an `engine_id` and both ends look up the same metric; solo takes `?engine=` as a dev handle
+until it graduates into a lobby dial. **Shipping a new metric is one entry in each registry
+and nothing else** — but it must be *both*, or you get a metric that works in solo and not in
+versus.
+
 ## The distance signal (the core design decision)
 
 ### What the asset gives us

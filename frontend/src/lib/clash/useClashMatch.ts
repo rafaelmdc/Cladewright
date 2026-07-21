@@ -8,52 +8,19 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import {
+  type MatchView,
+  type Phase,
+  type PlayerView,
+  REVEAL_MS,
+  type RevealView,
+  type RoundView,
+} from "./match";
 import type { Pairing } from "./matchmaking";
 
-export interface Tip {
-  id: string;
-  common: string;
-  sci: string;
-}
-export interface PublicRound {
-  num: number;
-  center: Tip;
-  options: [Tip, Tip];
-  deadline: number; // server epoch SECONDS
-  seconds: number; // full round length
-}
-interface PlayerView {
-  id: string;
-  display: string;
-  hp: number;
-}
-export type Phase = "connecting" | "playing" | "revealed" | "over";
-
-export interface RevealView {
-  correct: 0 | 1;
-  myPick: number | null;
-  oppPick: number | null;
-  mrcaRank: [string | null, string | null];
-  damage: number;
-  iBled: boolean;
-  oppBled: boolean;
-}
-
-export interface MatchView {
-  phase: Phase;
-  connected: boolean;
-  ranked: boolean;
-  you: PlayerView | null;
-  opp: PlayerView | null;
-  round: PublicRound | null;
-  myPick: number | null;
-  oppLocked: boolean;
-  reveal: RevealView | null;
-  over: { youWon: boolean; deadHeat: boolean } | null;
-  opponentLeft: boolean;
-  lock: (side: number) => void;
-}
-
+/** The server's answer-free round projection. Structurally the board's RoundView plus the tip
+ *  ids, which only the wire carries. */
+type PublicRound = RoundView & { center: { id?: string }; options: [{ id?: string }, { id?: string }] };
 // Incoming server messages (only the fields the client reads).
 interface SnapshotMsg {
   seat: number;
@@ -73,10 +40,6 @@ interface RevealMsg {
   winner: string | null;
   next?: PublicRound;
 }
-
-// Matches the server's REVEAL_SECONDS (the next round's deadline is dated past this), so the
-// two clocks agree. Both were raised in #144 to leave time to actually read the reveal.
-export const REVEAL_MS = 6000;
 
 export function useClashMatch(pairing: Pairing | null): MatchView {
   const [phase, setPhase] = useState<Phase>("connecting");
@@ -183,5 +146,10 @@ export function useClashMatch(pairing: Pairing | null): MatchView {
 
   return {
     phase, connected, ranked, you, opp, round, myPick, oppLocked, reveal, over, opponentLeft, lock,
+    // A duel always shows both names: the lens is a solo choice, and one player quietly
+    // playing on an easier lens than the other is not a fair ranked match.
+    lens: "both",
+    // No skipReveal and no playAgain: the SERVER owns the round clock (one player skipping
+    // would only desync them), and "again" means re-queueing, which the page handles.
   };
 }

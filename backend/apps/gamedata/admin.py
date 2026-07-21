@@ -211,6 +211,14 @@ class PipelineJobAdmin(admin.ModelAdmin):
             "fields": ("scope_key", "label", "scope_filter", "enrich", "include_extinct",
                        "load_current", "delete_old"),
         }),
+        ("Backfill (Backfill job only)", {
+            "fields": ("backfill_only", "backfill_force"),
+            "description": "Fill in per-tip fields a BUILT asset is missing — minutes, no dump, "
+                           "no re-harvest. Use this when a new field ships (has_common/has_image "
+                           "for Clade Clash) instead of rebuilding every pack. Set scope_key "
+                           "above for one pack, or leave it blank to do every scope. The version "
+                           "is bumped so clients re-download.",
+        }),
         ("Notable blob (delivery)", {
             "fields": ("notable_max", "notable_coverage", "notable_min", "frontier_rank"),
             "description": "How much of the scope ships as the local client blob. Leave "

@@ -105,6 +105,10 @@ One entry per internal node kept in the induced tree.
   labrosus"). Owned by `pipeline/enrich.py::has_vernacular`, **mirrored** in
   `frontend/src/lib/game/commonName.ts` — the mirror is what makes the flag's absence
   survivable, since it derives the same answer for packs built before the flag existed.
+- Both flags can be added to an **already-built** pack with a **Backfill asset** job
+  (`docs/pipeline-jobs.md#4-backfill`) — minutes, no dump, no re-harvest — rather than
+  rebuilding it. That is the intended way to roll a new derived field out to packs already in
+  production.
 - **`has_image`** records whether Wikipedia has a picture, harvested in bulk at build time
   (50 titles per request). Clade Clash is played by looking at an animal, so its round
   generator draws only from species that have one (#146); fame had been standing in for this

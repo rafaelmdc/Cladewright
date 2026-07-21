@@ -47,13 +47,27 @@ class PipelineJob(models.Model):
         FETCH_PAGEVIEWS = "fetch_pageviews", "Download pageview dump"
         SCAN_DUMPS = "scan_dumps", "Scan dumps on disk"
         DELETE_DUMP = "delete_dump", "Delete a dump from disk"
+        BACKFILL = "backfill", "Backfill asset fields"
 
     kind = models.CharField(
         max_length=16, choices=Kind.choices, default=Kind.BUILD,
-        help_text="Build an asset; download a fresh CoL dump (replaces the old one); "
-                  "download + build the monthly Wikipedia pageview DB ONCE (then every fame "
-                  "build reuses it — the scalable path for huge scopes); or scan/delete the "
-                  "dumps on the worker's disk. Download/scan/delete jobs ignore the scope fields.",
+        help_text="Build an asset; backfill fields a BUILT asset is missing (minutes, no dump "
+                  "— use this when a new per-tip field ships, not a full rebuild); download a "
+                  "fresh CoL dump (replaces the old one); download + build the monthly "
+                  "Wikipedia pageview DB ONCE (then every fame build reuses it — the scalable "
+                  "path for huge scopes); or scan/delete the dumps on the worker's disk. "
+                  "Download/scan/delete jobs ignore the scope fields.",
+    )
+    # BACKFILL only: which backfillers to run (comma-separated keys), blank = all of them.
+    backfill_only = models.CharField(
+        max_length=128, blank=True, default="",
+        help_text="Backfill job: comma-separated field keys to fill (e.g. 'has_image'). "
+                  "Blank runs every backfiller. Leave scope_key blank to do EVERY scope.",
+    )
+    backfill_force = models.BooleanField(
+        default=False,
+        help_text="Backfill job: recompute even where the field is already present. For a "
+                  "backfiller whose RULE changed — not just to fill gaps.",
     )
 
     # What to build. (scope_key/scope_filter are unused for a Download-dump job.)

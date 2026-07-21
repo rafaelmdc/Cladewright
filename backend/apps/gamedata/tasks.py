@@ -97,6 +97,8 @@ def run_pipeline_job(self, job_id: int) -> str:
             result = _run_scan_dumps(job, stream, emit)
         elif job.kind == PipelineJob.Kind.DELETE_DUMP:
             result = _run_delete_dump(job, stream, emit)
+        elif job.kind == PipelineJob.Kind.BACKFILL:
+            result = _run_backfill(job, stream, emit)
         else:
             result = _run_build(job, stream, emit)
     except Exception:  # noqa: BLE001 - record any failure on the job, then re-raise
@@ -122,6 +124,24 @@ def _run_fetch_dump(job, stream, emit) -> str:
     emit(f"== download CoL dump -> {job.coldp_dir} (replaces the old one) ==")
     call_command("fetch_col_dump", "--out", job.coldp_dir, stdout=stream, stderr=stream)
     return f"dump refreshed at {job.coldp_dir}"
+
+
+def _run_backfill(job, stream, emit) -> str:
+    """Add fields an already-built asset is missing, without rebuilding it.
+
+    Minutes rather than hours: no ColDP dump, no backbone, no Wikidata name harvest — see
+    pipeline/backfill.py. A blank scope_key means every scope with a current blob build.
+    """
+    from django.core.management import call_command
+
+    args = ["--scope", job.scope_key] if job.scope_key else ["--all"]
+    for key in [k.strip() for k in (job.backfill_only or "").split(",") if k.strip()]:
+        args += ["--only", key]
+    if job.backfill_force:
+        args.append("--force")
+    emit(f"backfill_asset {' '.join(args)}")
+    call_command("backfill_asset", *args, stdout=stream, stderr=stream)
+    return f"backfilled {job.scope_key or 'all scopes'}"
 
 
 def _run_fetch_pageviews(job, stream, emit) -> str:

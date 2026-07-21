@@ -123,6 +123,55 @@ Notes:
 - The build log now reports fame progress and coverage, e.g.
   `fame: 4,810/6,500 tips scored (74%) — top 1,838,000 (lion)`, so you can see it working.
 
+## 4. Backfill — add a new field without rebuilding
+
+When a new **per-tip field** ships, every pack already in production is missing it. Rebuilding
+them all is the obvious move and the wrong one: a build re-ingests the ColDP dump, re-induces
+the backbone, re-harvests Wikidata names and fame — hours per pack, and the path that
+OOM-kills the worker on big scopes (#131) — to add a value that is usually derivable from
+what the blob already holds.
+
+A **Backfill asset** job adds the missing fields in place:
+
+| field | value |
+|---|---|
+| kind | **Backfill asset** |
+| scope_key | e.g. `fish` — or **blank to do every scope** with a current blob build |
+| backfill_only | *(blank = every backfiller)*, else comma-separated keys, e.g. `has_image` |
+| backfill_force | off, except when a backfiller's **rule** changed (see below) |
+
+Or from a shell: `manage.py backfill_asset --scope fish`, `--all`, `--dry-run`.
+
+Measured on the 37,328-tip Fish pack: **~3 minutes**, against hours for a rebuild.
+
+What can be backfilled today (`pipeline/backfill.py`):
+
+| key | cost | what it fills |
+|---|---|---|
+| `has_common` | none — pure | Is `common` a real vernacular, or the binomial the build fell back to? (#145) |
+| `has_image` | ~1 request per 50 species | Does the species have a picture on Wikipedia? (#146) |
+
+**The invariant that makes this safe: a backfiller may only ADD a value that is missing.**
+Never a name, an id, a lineage, a parent, or the membership of the pool — those are what the
+relational mirror (`TaxonNode`/`TaxonTip`/`Alias`) is built from, so leaving them alone is
+precisely what lets a backfill skip rebuilding the mirror. Something that needs to change one
+of them is not a backfill; it is a build. Adding a future backfiller (fame for a pack built
+before fame existed, a per-node age for a dated pack) is an entry in `BACKFILLERS`.
+
+Notes:
+- **The version is bumped** so clients re-download — the served asset is cache-keyed on it.
+  That is the only reason a backfill writes a version at all; the tips are the same tips.
+- **Re-running fills exactly the gaps.** A failed network batch leaves those species' field
+  *absent* rather than `False` (absent means "let the client check", `False` means "never draw
+  this"), so a second run picks up only what's still missing. A real 37k run left 4,900
+  unresolved on a throttle; the re-run took 27s. Batches now retry with backoff, so this
+  should be rare.
+- **`backfill_force` is for a changed RULE, not a coverage gap.** `has_common` learning to
+  reject non-Latin scripts, say — the values already written are stale, and only `--force`
+  recomputes them.
+- Provenance records every backfill on the asset (what was filled, when), so "why does this
+  pack have `has_image` and that one doesn't" is answerable.
+
 ## Adding a new standard scope
 
 1. Add the `key|label|scope` line to `build_starter_scopes.sh` (keep it the source of truth).

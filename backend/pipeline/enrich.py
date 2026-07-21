@@ -227,6 +227,8 @@ class OfflineProvider:
 
 _WIKI_API = "https://en.wikipedia.org/w/api.php"
 _IMAGE_CHUNK = 50  # the action API's titles-per-request cap for anonymous clients
+_IMAGE_RETRIES = 3  # attempts per batch before giving up on those 50 species
+_IMAGE_BACKOFF = 1.0  # seconds, doubled per retry
 _USER_AGENT = "Cladewright/1.0 (https://cladewright.duarte-correia.pt) build-pipeline"
 
 
@@ -463,6 +465,7 @@ class BraidworksProvider:
         unknown (None), and unknown means "let the client check", not "no picture".
         """
         import json
+        import time
         import urllib.parse
         import urllib.request
 
@@ -473,10 +476,17 @@ class BraidworksProvider:
         total = len(todo)
         for start in range(0, total, _IMAGE_CHUNK):
             batch = todo[start : start + _IMAGE_CHUNK]
-            try:
-                self._image_batch(batch, json, urllib.parse, urllib.request)
-            except Exception:  # noqa: BLE001 - a census is never worth failing a build over
-                pass
+            # Retry a failed batch: a few hundred requests back-to-back will occasionally get
+            # a reset or a throttle, and without this a transient blip silently leaves fifty
+            # species with no answer — a 37k-tip pack lost 13% of its census that way once.
+            # Backing off also stops us hammering Wikimedia on the way down.
+            for attempt in range(_IMAGE_RETRIES):
+                try:
+                    self._image_batch(batch, json, urllib.parse, urllib.request)
+                    break
+                except Exception:  # noqa: BLE001 - a census is never worth failing a build over
+                    if attempt + 1 < _IMAGE_RETRIES:
+                        time.sleep(_IMAGE_BACKOFF * (2 ** attempt))
             if self._progress:
                 self._progress("images", min(start + _IMAGE_CHUNK, total), total)
 

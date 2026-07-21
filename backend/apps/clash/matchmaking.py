@@ -69,6 +69,17 @@ class QueueError(Exception):
     """A matchmaking request that can't be satisfied (unknown room, no pool, self-join)."""
 
 
+def _admin_fame_bias() -> float:
+    """The admin's Clade Clash fame bias, or 0 if it can't be read. A duel must never fail to
+    start over a tuning knob — an unbiased draw is a worse game, not a broken one."""
+    try:
+        from apps.scores.models import GameDefaults
+
+        return float(GameDefaults.load("clash").fame_bias)
+    except Exception:  # noqa: BLE001 - see docstring
+        return 0.0
+
+
 class Matchmaker:
     def __init__(
         self,
@@ -78,12 +89,17 @@ class Matchmaker:
         pool_loader: Callable[[str], Optional[ClashPool]],
         id_gen: Callable[[], str] = lambda: secrets.token_urlsafe(12),
         token_issuer: Callable[[str, int, int], str] = issue_join_token,
+        fame_bias: Callable[[], float] = None,  # type: ignore[assignment]
     ) -> None:
         self._r = redis
         self._store = store
         self._pool_loader = pool_loader
         self._id_gen = id_gen
         self._issue = token_issuer
+        # Injected so the rendezvous stays testable without a database; the default reads the
+        # admin dial the solo game already honours (GameDefaults.fame_bias, #36).
+        self._fame_bias = fame_bias or _admin_fame_bias
+
 
     # ── quick match ──────────────────────────────────────────────────────────────────
     def quick_match(
@@ -173,7 +189,13 @@ class Matchmaker:
         ]
         # Human vs human is ranked; a bot match never routes through matchmaking.
         state = referee.new_match(
-            match_id, players, scope=scope, engine_id=engine_id, pool=pool, ranked=True
+            match_id,
+            players,
+            scope=scope,
+            engine_id=engine_id,
+            pool=pool,
+            ranked=True,
+            fame_bias=self._fame_bias(),
         )
         self._store.save(state)
         return match_id

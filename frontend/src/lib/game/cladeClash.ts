@@ -9,7 +9,10 @@
 // See docs/clade-clash-design.md.
 
 import type { AssetTip, InternedAsset } from "../asset/types";
+import { ensureImages, knownHasImage } from "../wikiImages";
+import { commonNameOf, hasCommonName } from "./commonName";
 import { relatedness, type Relatedness } from "./distance";
+import type { NameLens } from "./settings";
 
 // ---- distance engines -------------------------------------------------------------------
 
@@ -137,12 +140,16 @@ export function makeRound(
   engine: DistanceEngine = DEFAULT_ENGINE,
   rng: () => number = Math.random,
   fameBias = 0,
+  /** The tips this round may draw from, already fame-ordered — the PRESENTABLE subset (see
+   *  playablePool). Filtering up front rather than rejecting after the draw keeps the fame
+   *  skew meaningful: the exponent indexes into this list, so its famous end stays the famous
+   *  end. Omit to draw from the whole pack. */
+  pool?: AssetTip[],
 ): ClashRound | null {
-  const tips = asset.raw.tips;
-  const N = tips.length;
-  if (N < 8) return null;
   const bias = Math.max(0, Math.min(1, fameBias));
-  const famed = bias > 0 ? byFame(asset) : tips;
+  const famed = pool ?? (bias > 0 ? byFame(asset) : asset.raw.tips);
+  const N = famed.length;
+  if (N < 8) return null;
 
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
     // Relax the skew as attempts fail: by the final tries this is a plain uniform draw, so a
@@ -153,7 +160,7 @@ export function makeRound(
 
     const center = pick();
     let near: { tip: AssetTip; r: Relatedness; c: number } | null = null;
-    const pool: { tip: AssetTip; r: Relatedness; c: number }[] = [];
+    const candidates: { tip: AssetTip; r: Relatedness; c: number }[] = [];
     const seen = new Set<string>([center.id]);
 
     const n = Math.min(SAMPLE, N);
@@ -164,13 +171,13 @@ export function makeRound(
       const r = engine.relate(asset, center.id, t.id);
       if (r.sharedDepth === 0) continue; // unrelated (only shares the implicit root) — skip
       const c = engine.closeness(r);
-      pool.push({ tip: t, r, c });
+      candidates.push({ tip: t, r, c });
       if (!near || c > near.c) near = { tip: t, r, c };
     }
     if (!near) continue;
 
     // The far candidate must be clearly less related than the near one, by the engine's margin.
-    const fars = pool.filter((f) => f.tip.id !== near!.tip.id && near!.c - f.c >= engine.minGap);
+    const fars = candidates.filter((f) => f.tip.id !== near!.tip.id && near!.c - f.c >= engine.minGap);
     if (fars.length === 0) continue;
     const far = fars[(rng() * fars.length) | 0];
 
@@ -180,4 +187,87 @@ export function makeRound(
     return { center, options, correct: correctFirst ? 0 : 1, rel, gap: near.c - far.c };
   }
   return null;
+}
+
+// ---- presentability: only draw species the game can actually SHOW (#145, #146) ------------
+//
+// A round is three cards, and a card is a picture with a name under it. A species with no
+// picture is a hatched placeholder, and under the "Common" lens a species with no vernacular
+// silently shows Latin — both turn a round into a non-question. Fame was doing this job by
+// proxy and doing it badly, so the generator now draws from a pool that is filtered on the
+// real signals.
+
+/** The fame-ordered tips of `asset` that have a real common name. Memoized per (asset, lens):
+ *  it normalizes every name in the pack, which is far too much work to repeat per round.
+ *  Keyed weakly so it dies with the asset, like `byFame`. */
+const namedPools = new WeakMap<InternedAsset, Map<string, AssetTip[]>>();
+function namedPool(asset: InternedAsset, lens: NameLens): AssetTip[] {
+  let byLens = namedPools.get(asset);
+  if (!byLens) namedPools.set(asset, (byLens = new Map()));
+  let out = byLens.get(lens);
+  if (!out) {
+    const ordered = byFame(asset);
+    // "Common" and "both" both promise a name a person would say, so both require one — and
+    // "both" is the DEFAULT, which is where #145 was actually seen. "Scientific" withholds
+    // the common name deliberately, so it draws from the whole pack and stays the widest
+    // (and hardest) lens.
+    out = lens === "scientific" ? ordered : ordered.filter(hasCommonName);
+    byLens.set(lens, out);
+  }
+  return out;
+}
+
+/** How many candidate rounds to draw and screen in one go. Their ~3N distinct species fit in
+ *  a single 50-title image lookup, so the whole screening pass is one request. */
+const SCREEN_BATCH = 12;
+
+export interface RoundOptions {
+  engine?: DistanceEngine;
+  rng?: () => number;
+  fameBias?: number;
+  /** The lens the run is playing under — decides whether a vernacular is required. */
+  lens?: NameLens;
+  /** Set false to skip the image screen (and its network call) entirely. */
+  requireImage?: boolean;
+}
+
+/** Draw a round whose three species can all actually be shown: a real common name when the
+ *  lens needs one, and a picture on all three cards.
+ *
+ *  Rounds are drawn in a batch and screened together, because the image answer comes from the
+ *  network: one request settles the whole batch, and the answers are cached permanently, so a
+ *  warmed pack screens with no request at all. Falls back to an unscreened round rather than
+ *  failing — a pack with little art still plays, it just looks worse, which beats a dead game. */
+export async function makeShowableRound(
+  asset: InternedAsset,
+  opts: RoundOptions = {},
+): Promise<ClashRound | null> {
+  const { engine = DEFAULT_ENGINE, rng = Math.random, fameBias = 0, lens = "both" } = opts;
+  const requireImage = opts.requireImage ?? true;
+  const pool = namedPool(asset, lens);
+
+  const draw = () => makeRound(asset, engine, rng, fameBias, pool);
+  if (!requireImage) return draw();
+
+  const rounds: ClashRound[] = [];
+  for (let i = 0; i < SCREEN_BATCH; i++) {
+    const r = draw();
+    if (r) rounds.push(r);
+  }
+  if (rounds.length === 0) return null;
+
+  const cards = (r: ClashRound) => [r.center, r.options[0], r.options[1]];
+  // Screen the same titles the card itself will try, in the same order (SpecimenPlate asks for
+  // the binomial first, then the common name), so the verdict matches what gets rendered.
+  const titlesOf = (t: AssetTip) => {
+    const c = commonNameOf(t);
+    return c ? [t.sci, c] : [t.sci];
+  };
+  // Prefer a species' own baked flag — a build that has it needs no lookup at all.
+  await ensureImages(rounds.flatMap(cards).filter((t) => t.has_image === undefined).flatMap(titlesOf));
+
+  // Unknown counts as showable: a failed lookup must not empty the board.
+  const shows = (t: AssetTip) =>
+    t.has_image ?? titlesOf(t).some((n) => knownHasImage(n) !== false);
+  return rounds.find((r) => cards(r).every(shows)) ?? rounds[0];
 }

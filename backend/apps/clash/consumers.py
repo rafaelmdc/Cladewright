@@ -32,7 +32,10 @@ from .tokens import verify_join_token
 
 # The reveal lingers this long on both clients before the next round's clock starts, so the
 # server dates the next deadline to match (players get the full ROUND_SECONDS to answer).
-REVEAL_SECONDS = 2.5
+# Raised from 2.5s (#144): the reveal draws the round's cladogram and names the shared clade —
+# the one moment the game TEACHES — and two and a half seconds was not enough to read it before
+# the board changed under you. Mirrored by REVEAL_MS in frontend/src/lib/clash/useClashMatch.ts.
+REVEAL_SECONDS = 6.0
 # Per-connection frame budget — generous for real play (a couple locks per 12s round), tight
 # enough that a script can't flood the referee.
 _RATE_MAX = 20

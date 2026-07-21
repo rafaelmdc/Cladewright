@@ -29,8 +29,13 @@ const post = (url: string, body?: unknown) =>
     body: body ? JSON.stringify(body) : undefined,
   });
 
-/** Join the quick-match queue for a pack; resolves to a Pairing if matched now, else waiting. */
-export async function quickMatch(scope: string, engineId = "rank-depth"): Promise<MatchmakeResult> {
+/** Join the quick-match queue for a pack (or a MIX of packs — #147); resolves to a Pairing if
+ *  matched now, else waiting. The server canonicalises the key, so two players who picked the
+ *  same packs in a different order still queue together. */
+export async function quickMatch(
+  scope: string | string[],
+  engineId = "rank-depth",
+): Promise<MatchmakeResult> {
   const res = await post("/api/clash/queue/", { scope, engine_id: engineId });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "matchmaking failed");
   return res.json();
@@ -42,9 +47,15 @@ export async function pollPairing(): Promise<MatchmakeResult> {
   return res.json();
 }
 
+/** A mix as one key, matching the server's canonical form (sorted, '+'-joined — see
+ *  apps/clash/pools.py). Only needed where the scope rides in the URL rather than a body. */
+function scopeParam(scope: string | string[]): string {
+  return (Array.isArray(scope) ? [...scope].sort().join("+") : scope);
+}
+
 /** Leave the quick-match queue. */
-export async function leaveQueue(scope: string, engineId = "rank-depth"): Promise<void> {
-  await fetch(`/api/clash/queue/?scope=${encodeURIComponent(scope)}&engine_id=${engineId}`, {
+export async function leaveQueue(scope: string | string[], engineId = "rank-depth"): Promise<void> {
+  await fetch(`/api/clash/queue/?scope=${encodeURIComponent(scopeParam(scope))}&engine_id=${engineId}`, {
     method: "DELETE",
     credentials: "include",
     headers: { "X-CSRFToken": csrfToken() },
@@ -52,7 +63,7 @@ export async function leaveQueue(scope: string, engineId = "rank-depth"): Promis
 }
 
 /** Create a private room; returns the code to share. Host then polls pollPairing(). */
-export async function createRoom(scope: string, engineId = "rank-depth"): Promise<string> {
+export async function createRoom(scope: string | string[], engineId = "rank-depth"): Promise<string> {
   const res = await post("/api/clash/rooms/", { scope, engine_id: engineId });
   if (!res.ok) throw new Error("could not create room");
   return (await res.json()).code as string;

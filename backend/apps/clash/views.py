@@ -16,7 +16,7 @@ from rest_framework.views import APIView
 from apps.accounts.models import get_or_create_profile
 
 from .matchmaking import Matchmaker, QueueError
-from .pools import load_pool
+from .pools import load_pool, scope_key, scope_members
 from .store import MatchStore, get_redis
 
 _DEFAULT_ENGINE = "rank-depth"
@@ -31,6 +31,20 @@ def _display(user) -> str:
     return get_or_create_profile(user).display_name
 
 
+def _scope_of(data) -> str:
+    """The requested pack(s), canonicalised (#147).
+
+    A duel may run on a MIX, exactly as a Time Attack run can — accepted either as a list of
+    keys or as a pre-joined string. Canonicalising here (sort + dedupe) is what makes the
+    queue key stable: two players who picked the same two packs in a different order must
+    land in the same queue, not two queues of one.
+    """
+    raw = (data or {}).get("scope")
+    if isinstance(raw, (list, tuple)):
+        return scope_key(str(s) for s in raw)
+    return scope_key(scope_members(str(raw))) if raw else ""
+
+
 class _ClashView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [ScopedRateThrottle]
@@ -42,7 +56,7 @@ class QueueView(_ClashView):
     now or {"status":"waiting"}. GET -> poll for a pairing while waiting. DELETE -> leave."""
 
     def post(self, request: Request) -> Response:
-        scope = (request.data or {}).get("scope")
+        scope = _scope_of(request.data)
         if not scope:
             return Response({"detail": "scope is required"}, status=400)
         engine_id = (request.data or {}).get("engine_id", _DEFAULT_ENGINE)
@@ -60,7 +74,7 @@ class QueueView(_ClashView):
         return Response(pairing or {"status": "waiting"}, status=200)
 
     def delete(self, request: Request) -> Response:
-        scope = (request.query_params or {}).get("scope")
+        scope = _scope_of(request.query_params)
         engine_id = (request.query_params or {}).get("engine_id", _DEFAULT_ENGINE)
         if scope:
             _matchmaker().leave_queue(
@@ -74,7 +88,7 @@ class RoomCreateView(_ClashView):
     pairing once a friend joins."""
 
     def post(self, request: Request) -> Response:
-        scope = (request.data or {}).get("scope")
+        scope = _scope_of(request.data)
         if not scope:
             return Response({"detail": "scope is required"}, status=400)
         engine_id = (request.data or {}).get("engine_id", _DEFAULT_ENGINE)

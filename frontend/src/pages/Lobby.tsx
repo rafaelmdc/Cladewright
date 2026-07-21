@@ -136,13 +136,7 @@ export function Lobby() {
   }
 
   function pickOpponent(o: OpponentChoice) {
-    setCfg((c) => ({
-      ...c,
-      opponent: o.value,
-      // A single-pack opponent (versus) can't carry a mix, so collapse the selection rather
-      // than silently launching with a scope the matchmaker will never pair.
-      scopes: o.single && c.scopes.length > 1 ? [c.scopes[0]] : c.scopes,
-    }));
+    setCfg((c) => ({ ...c, opponent: o.value }));
   }
 
   function start() {
@@ -204,9 +198,10 @@ export function Lobby() {
                       </button>
                     ))}
                   </div>
-                  {opponent?.single && (
+                  {opponent?.value === "player" && cfg.scopes.length > 1 && (
                     <p className="mt-2 font-mono text-[11px] text-clade-ink/45">
-                      One pack only — a duel pairs players on the same pack.
+                      A duel pairs players on the same packs — your opponent needs this exact
+                      mix, so a set is the quickest thing to agree on.
                     </p>
                   )}
                 </Panel>
@@ -217,15 +212,7 @@ export function Lobby() {
                 <ScopePicker
                   scopes={scopes}
                   value={cfg.scopes}
-                  multiple={!opponent?.single}
-                  onChange={(keys) =>
-                    setCfg((c) => ({
-                      ...c,
-                      scopes: opponent?.single
-                        ? keys.slice(-1) // single-select: the last click wins
-                        : [...keys].sort(),
-                    }))
-                  }
+                  onChange={(keys) => setCfg((c) => ({ ...c, scopes: [...keys].sort() }))}
                 />
                 {/* Sets (#120): one-click presets that select a curated bundle of packs. A set
                     is "active" when the selection matches its members exactly. */}

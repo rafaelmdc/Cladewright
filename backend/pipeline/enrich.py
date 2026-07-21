@@ -18,6 +18,7 @@ one to `enrich`.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
@@ -65,6 +66,60 @@ _AUTHORITY_RE = re.compile(r",\s*\d{3,4}\)?\s*$")
 def is_junk_name(name: str) -> bool:
     """True if a string is an authority citation rather than a usable common name."""
     return bool(_AUTHORITY_RE.search(name.strip()))
+
+
+# --- what counts as a real vernacular (#145) ----------------------------------------------
+#
+# MIRRORED in frontend/src/lib/game/commonName.ts, which applies the same three rules to the
+# assets built before ``has_common`` existed. Keep them in step: the client trusts the baked
+# flag when it is there, so a divergence shows up as the two disagreeing about one species.
+
+_PAREN_RE = re.compile(r"\s*\([^)]*\)\s*$")
+
+
+def strip_parenthetical(name: str) -> str:
+    """Drop a Wikipedia title's disambiguator: 'Pholidota (plant)' -> 'Pholidota'. A title
+    artifact, never something a person says (and often the wrong homonym — see #21)."""
+    return _PAREN_RE.sub("", name).strip()
+
+
+def is_latin_script(name: str) -> bool:
+    """Written in the Latin alphabet? Wikidata carries vernaculars in whatever languages an
+    item happens to have, so a species with no English name surfaces e.g. a Japanese one
+    ('キビレマツカサ' for Myripristis chryseres) — 2,184 of them in the Fish pack alone.
+    Accents are fine; other scripts are not."""
+    letters = [c for c in name if c.isalpha()]
+    if not letters:
+        return False
+    return all("LATIN" in unicodedata.name(c, "") for c in letters)
+
+
+def is_synonym_binomial(name: str, scientific_name: str) -> bool:
+    """Is this "vernacular" just another scientific name for the same species?
+
+    Wikidata keeps SYNONYMS as alternative labels, so a species moved between genera carries
+    its old binomial as a "common name" — *Abactochromis labrosus* comes back with
+    "Melanochromis labrosus". It slips past the equals-``scientific_name`` test because the
+    genus differs, and that is the tell: a genus transfer keeps the specific epithet, so a
+    two-word name whose second word is this species' own epithet, behind a capitalised first
+    word, is Latin rather than English.
+    """
+    parts = name.split()
+    sci_parts = scientific_name.split()
+    if len(parts) != 2 or len(sci_parts) < 2:
+        return False
+    genus, epithet = parts
+    return genus[:1].isupper() and genus[1:].islower() and epithet.lower() == sci_parts[1].lower()
+
+
+def has_vernacular(common: str | None, scientific_name: str) -> bool:
+    """Whether ``common`` is a name a person would actually say for this species."""
+    if not common:
+        return False
+    cleaned = strip_parenthetical(common)
+    if not cleaned or normalize(cleaned) == normalize(scientific_name):
+        return False
+    return is_latin_script(cleaned) and not is_synonym_binomial(cleaned, scientific_name)
 
 
 def normalize(name: str) -> str:
@@ -125,6 +180,8 @@ class EnrichProvider(Protocol):
     ) -> None: ...
     def harvest_fame(self, scientific_names: list[str]) -> None: ...
     def fame_for(self, scientific_name: str) -> int: ...
+    def harvest_images(self, scientific_names: list[str]) -> None: ...
+    def has_image(self, scientific_name: str) -> bool | None: ...
     def names_for(self, scientific_name: str) -> list[str]: ...
     def common_name(self, taxon: Taxon) -> str | None: ...
     def names(self, taxon: Taxon) -> list[str]: ...
@@ -149,6 +206,12 @@ class OfflineProvider:
     def fame_for(self, scientific_name: str) -> int:
         return 0
 
+    def harvest_images(self, scientific_names: list[str]) -> None:
+        return None  # offline can't see Wikipedia
+
+    def has_image(self, scientific_name: str) -> bool | None:
+        return None  # unknown, not "no" — the client falls back to asking Wikipedia itself
+
     def names_for(self, scientific_name: str) -> list[str]:
         return []
 
@@ -160,6 +223,11 @@ class OfflineProvider:
         out = [taxon.vernacular] if taxon.vernacular else []
         out.extend(taxon.extra_aliases)
         return [despace(n) for n in out]
+
+
+_WIKI_API = "https://en.wikipedia.org/w/api.php"
+_IMAGE_CHUNK = 50  # the action API's titles-per-request cap for anonymous clients
+_USER_AGENT = "Cladewright/1.0 (https://cladewright.duarte-correia.pt) build-pipeline"
 
 
 class BraidworksProvider:
@@ -183,6 +251,7 @@ class BraidworksProvider:
         self._title: dict[str, str] = {}  # scientific_name -> enwiki article title
         self._pageviews: dict[str, int] = {}  # scientific_name -> enwiki pageviews
         self._sitelinks: dict[str, int] = {}  # scientific_name -> wikidata sitelink count
+        self._images: dict[str, bool] = {}  # scientific_name -> has a picture on enwiki
         # When a dump is configured, fame uses the local (dump) pageviews backend — the
         # one that scales to million-title scopes; otherwise the keyless REST api backend
         # (fine for the few-thousand-title current scopes). See wikipedia_weaver.
@@ -376,6 +445,87 @@ class BraidworksProvider:
             return pv
         return self._sitelinks.get(scientific_name, 0)
 
+    def harvest_images(self, scientific_names: list[str]) -> None:
+        """Record which species have a picture on Wikipedia (#146).
+
+        Clade Clash puts a photograph at the centre of every card, and we had been letting
+        FAME stand in for "has a picture" — a proxy that leaks badly: plenty of mid-fame fish
+        have an article, a common name and no photo, which is a card with a hatched blank
+        where the animal should be.
+
+        Straight to the MediaWiki action API rather than through a weaver: it answers for
+        FIFTY titles per request (a 37k-tip pack costs ~750 calls, minutes at build time) and
+        resolves redirects, so a binomial lands on the article a player would actually see.
+        Wikidata's P18 would have been the "purer" source but disagrees with what the game
+        renders, which comes from enwiki — and matching the renderer is the whole point.
+
+        Never raises: a build must not fail over a picture census. Titles left unanswered stay
+        unknown (None), and unknown means "let the client check", not "no picture".
+        """
+        import json
+        import urllib.parse
+        import urllib.request
+
+        todo = sorted({n for n in scientific_names if n and n not in self._images})
+        if not todo:
+            return
+
+        total = len(todo)
+        for start in range(0, total, _IMAGE_CHUNK):
+            batch = todo[start : start + _IMAGE_CHUNK]
+            try:
+                self._image_batch(batch, json, urllib.parse, urllib.request)
+            except Exception:  # noqa: BLE001 - a census is never worth failing a build over
+                pass
+            if self._progress:
+                self._progress("images", min(start + _IMAGE_CHUNK, total), total)
+
+    def _image_batch(self, batch: list[str], json, parse, request) -> None:
+        params = parse.urlencode(
+            {
+                "action": "query",
+                "format": "json",
+                "formatversion": "2",
+                "prop": "pageimages",
+                "piprop": "thumbnail",
+                "pithumbsize": "500",
+                "redirects": "1",
+                "titles": "|".join(batch),
+            }
+        )
+        req = request.Request(
+            f"{_WIKI_API}?{params}",
+            headers={"User-Agent": _USER_AGENT, "Accept": "application/json"},
+        )
+        with request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode())
+        query = data.get("query") or {}
+
+        # A requested title reaches its page through up to two hops (normalization, then
+        # redirect); follow the chain so the answer lands on the title we ASKED about.
+        hop: dict[str, str] = {}
+        for key in ("normalized", "redirects"):
+            for entry in query.get(key) or []:
+                hop[entry["from"]] = entry["to"]
+
+        def resolve(title: str) -> str:
+            cur = title
+            for _ in range(4):
+                nxt = hop.get(cur)
+                if nxt is None:
+                    return cur
+                cur = nxt
+            return cur
+
+        with_image = {p["title"] for p in query.get("pages") or [] if p.get("thumbnail")}
+        # Every REQUESTED title gets an answer, including ones whose article doesn't exist —
+        # a missing page is a definite "no picture", and recording that is the point.
+        for name in batch:
+            self._images[name] = resolve(name) in with_image
+
+    def has_image(self, scientific_name: str) -> bool | None:
+        return self._images.get(scientific_name)
+
     def names_for(self, scientific_name: str) -> list[str]:
         """Harvested names for any scientific name (species or clade), despaced."""
         return [despace(n) for n in self._cache.get(scientific_name, [])]
@@ -422,11 +572,14 @@ class BraidworksProvider:
 def enrich(pool_taxa: list[Taxon], provider: EnrichProvider | None = None) -> list[EnrichedTip]:
     provider = provider or OfflineProvider()
     provider.prepare(pool_taxa)  # no-op if already prepared
-    provider.harvest_fame([t.scientific_name for t in pool_taxa])  # popularity scores
+    names = [t.scientific_name for t in pool_taxa]
+    provider.harvest_fame(names)  # popularity scores
+    provider.harvest_images(names)  # which species have a picture to show (#146)
     out: list[EnrichedTip] = []
     for taxon in pool_taxa:
         # Display name precedence: CoL/Wikidata vernacular → scientific.
-        common = provider.common_name(taxon) or taxon.scientific_name
+        resolved = provider.common_name(taxon)
+        common = resolved or taxon.scientific_name
 
         # Alias set: scientific name + common name + every harvested name string
         # (Wikidata label/altLabel/vernacular: "panda bear", "the lion", …), all
@@ -438,6 +591,10 @@ def enrich(pool_taxa: list[Taxon], provider: EnrichProvider | None = None) -> li
         out.append(EnrichedTip(
             taxon=taxon, common=common, aliases=aliases,
             fame=provider.fame_for(taxon.scientific_name),
+            # `common` is still the display string (falling back to the binomial keeps every
+            # existing consumer working); this records whether that fallback is what happened.
+            has_common=has_vernacular(resolved, taxon.scientific_name),
+            has_image=provider.has_image(taxon.scientific_name),
         ))
     return out
 

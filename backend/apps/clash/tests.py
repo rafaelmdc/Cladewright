@@ -142,6 +142,156 @@ class MakeRoundTests(SimpleTestCase):
         self.assertEqual(RANK_DEPTH_ENGINE.damage(100), 40)
 
 
+class DrawableTipTests(SimpleTestCase):
+    """What a versus round is allowed to draw (#146): pictured species, famous end first."""
+
+    def _blob(self, tips):
+        return {
+            "nodes": [
+                {"id": "K", "rank": "kingdom"},
+                {"id": "F", "rank": "family"},
+            ],
+            "tips": [{"lineage": ["K", "F"], **t} for t in tips],
+        }
+
+    def test_species_without_a_picture_are_not_drawn(self):
+        pool = ClashPool.from_blob(
+            self._blob(
+                [
+                    {"id": "a", "sci": "Aa aa", "has_image": True},
+                    {"id": "b", "sci": "Bb bb", "has_image": False},
+                    {"id": "c", "sci": "Cc cc"},  # no opinion -> still drawable
+                ]
+            )
+        )
+        self.assertEqual(set(pool.tip_ids), {"a", "c"})
+        # …but they keep their lookups, so an ALREADY-dealt round still renders.
+        self.assertIn("b", pool.lineage)
+
+    def test_a_pack_built_before_the_flag_keeps_every_tip(self):
+        pool = ClashPool.from_blob(self._blob([{"id": x, "sci": x} for x in "abcdefghij"]))
+        self.assertEqual(len(pool.tip_ids), 10)
+
+    def test_tips_are_ordered_by_fame(self):
+        pool = ClashPool.from_blob(
+            self._blob(
+                [
+                    {"id": "obscure", "sci": "O o", "fame": 3},
+                    {"id": "famous", "sci": "F f", "fame": 900},
+                    {"id": "mid", "sci": "M m", "fame": 40},
+                ]
+            )
+        )
+        self.assertEqual(pool.tip_ids, ("famous", "mid", "obscure"))
+
+
+class MixedPoolTests(SimpleTestCase):
+    """A duel on several packs at once (#147). Ids come from taxon names, so a union needs no
+    remapping — and the shared backbone is what lets a round span two packs."""
+
+    BIRDS = {
+        "nodes": [
+            {"id": "phy:Chordata", "rank": "phylum"},
+            {"id": "cls:Aves", "rank": "class"},
+        ],
+        "tips": [
+            {"id": "tip:crow", "sci": "Corvus corax", "fame": 50,
+             "lineage": ["phy:Chordata", "cls:Aves"]},
+        ],
+    }
+    FISH = {
+        "nodes": [
+            {"id": "phy:Chordata", "rank": "phylum"},
+            {"id": "cls:Teleostei", "rank": "class"},
+        ],
+        "tips": [
+            {"id": "tip:cod", "sci": "Gadus morhua", "fame": 900,
+             "lineage": ["phy:Chordata", "cls:Teleostei"]},
+        ],
+    }
+
+    def test_merges_tips_and_nodes(self):
+        pool = ClashPool.from_blobs([self.BIRDS, self.FISH])
+        self.assertEqual(set(pool.tip_ids), {"tip:crow", "tip:cod"})
+        self.assertEqual(pool.rank_of["cls:Aves"], "class")
+        self.assertEqual(pool.rank_of["cls:Teleostei"], "class")
+
+    def test_shared_backbone_relates_tips_across_packs(self):
+        pool = ClashPool.from_blobs([self.BIRDS, self.FISH])
+        r = pool.relate("tip:crow", "tip:cod")
+        self.assertEqual(r.mrca_id, "phy:Chordata")  # they meet where the packs overlap
+
+    def test_fame_order_spans_the_whole_mix(self):
+        pool = ClashPool.from_blobs([self.BIRDS, self.FISH])
+        self.assertEqual(pool.tip_ids, ("tip:cod", "tip:crow"))
+
+    def test_a_tip_in_two_packs_is_one_tip(self):
+        pool = ClashPool.from_blobs([self.BIRDS, self.BIRDS])
+        self.assertEqual(pool.tip_ids, ("tip:crow",))
+
+
+class ScopeKeyTests(SimpleTestCase):
+    """The mix key doubles as the matchmaking queue key, so it has to be canonical (#147)."""
+
+    def test_key_is_sorted_and_deduped(self):
+        from .pools import scope_key
+
+        self.assertEqual(scope_key(["fish", "aves"]), "aves+fish")
+        self.assertEqual(scope_key(["aves", "fish"]), "aves+fish")
+        self.assertEqual(scope_key(["aves", "aves"]), "aves")
+
+    def test_members_round_trip(self):
+        from .pools import scope_key, scope_members
+
+        self.assertEqual(scope_members(scope_key(["fish", "aves"])), ["aves", "fish"])
+        self.assertEqual(scope_members("mammalia"), ["mammalia"])
+
+
+class FameBiasTests(SimpleTestCase):
+    """A duel used to draw uniformly over the whole pack while solo skewed famous (#142)."""
+
+    def _pool(self, n=400):
+        """A synthetic pack: kingdom > family > genus, four species per genus, and fame that
+        descends with the index — so "how famous was the draw" is just the index."""
+        return ClashPool.from_blob(
+            {
+                "nodes": [{"id": "K", "rank": "kingdom"}]
+                + [{"id": f"F{j}", "rank": "family"} for j in range(n // 20)]
+                + [{"id": f"G{j}", "rank": "genus"} for j in range(n // 4)],
+                "tips": [
+                    {
+                        "id": f"t{i}",
+                        "sci": f"G{i} s",
+                        "fame": n - i,
+                        # same genus -> shared depth 3, different family -> 1: a gap of 2,
+                        # which is exactly the rank-depth engine's fairness floor.
+                        "lineage": ["K", f"F{i // 20}", f"G{i // 4}"],
+                    }
+                    for i in range(n)
+                ],
+            }
+        )
+
+    def _mean_rank(self, pool, bias):
+        rng = random.Random(7)
+        idx = {tid: i for i, tid in enumerate(pool.tip_ids)}
+        picks = []
+        for _ in range(120):
+            rnd = make_round(pool, RANK_DEPTH_ENGINE, rng, bias)
+            self.assertIsNotNone(rnd)
+            picks.append(idx[rnd.center])
+        return sum(picks) / len(picks)
+
+    def test_bias_pulls_the_draw_toward_famous_species(self):
+        pool = self._pool()
+        self.assertLess(self._mean_rank(pool, 1.0), self._mean_rank(pool, 0.0) / 2)
+
+    def test_zero_bias_is_the_old_uniform_draw(self):
+        pool = self._pool()
+        mean = self._mean_rank(pool, 0.0)
+        self.assertGreater(mean, len(pool.tip_ids) * 0.3)  # ~half, comfortably not the top
+
+
 from . import referee, store  # noqa: E402
 
 

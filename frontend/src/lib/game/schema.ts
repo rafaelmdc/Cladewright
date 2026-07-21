@@ -96,21 +96,24 @@ export function schemaFor(mode: string): SettingField[] {
  *  what put two Clade Clash cards on the Hub; scores migration 0029 undid that.
  *
  *  `route` is where Start navigates for that choice; the encoded config rides along, so the
- *  target inherits the packs picked in the lobby. `single` marks choices that can only take
- *  ONE pack — versus matchmaking queues per scope key, so a mix would only ever pair with
- *  someone holding the identical mix. */
+ *  target inherits the packs picked in the lobby.
+ *
+ *  Versus used to be restricted to ONE pack, because the matchmaking queue keys on the scope
+ *  string and nothing merged pools server-side. Both are fixed (#147): a mix is a sorted,
+ *  '+'-joined key that the server canonicalises and loads as one merged pool, so a duel can
+ *  run on "All Vertebrates" exactly as a Time Attack run can. Two players still only pair on
+ *  the SAME mix — which is the point, not a limitation. */
 export interface OpponentChoice {
   value: "bot" | "player";
   label: string;
   hint: string;
   route: string;
-  single?: boolean;
 }
 
 export const OPPONENTS: Record<string, OpponentChoice[]> = {
   clash_solo: [
     { value: "bot", label: "🤖 Bot", hint: "instant · unranked", route: "/clash" },
-    { value: "player", label: "⚔ Player", hint: "ranked · needs an account", route: "/clash/versus", single: true },
+    { value: "player", label: "⚔ Player", hint: "ranked · needs an account", route: "/clash/versus" },
   ],
 };
 

@@ -81,6 +81,10 @@ One entry per internal node kept in the induced tree.
   // Wikidata sitelink count as the fallback for taxa with no enwiki article; 0 when
   // neither is known (offline builds). Ranks the pool for the capped "notable" blob,
   // breaks ambiguous name ties (famous "robin" wins), and weights the Marathon bonus.
+  "has_common": true,              // is `common` above a REAL vernacular, or the binomial
+  // we fell back to? See below — `common` is never null, so this is the only way to tell.
+  "has_image": true,               // does the species have a picture on Wikipedia? OMITTED
+  // (not false) when the build had no way to look, e.g. an offline build.
   "traits": {                      // nameless-hint material (Stage 1 metadata)
     "environment": ["terrestrial"],
     "biomes": ["Palearctic","Nearctic"],
@@ -92,6 +96,22 @@ One entry per internal node kept in the induced tree.
 - `lineage` is the precomputed ancestor path; it makes MRCA and "which clades does
   naming this tip complete?" a prefix walk, no tree traversal. At load it is
   interned to an `Int32Array` of node indices (see [`performance.md`](performance.md)).
+- **`common` is never null on a tip** — it falls back to `sci` when no vernacular is known,
+  which is the right thing for a display string and a trap for anything that needs to *know*.
+  Two thirds of the Fish pack have no vernacular, so a game mode promising common names was
+  quietly serving Latin (#145). **`has_common` is that boolean**, and it is stricter than
+  `common != sci`: it also rejects vernaculars in other scripts ("キビレマツカサ") and synonym
+  binomials Wikidata carries as alt-labels (*Abactochromis labrosus* → "Melanochromis
+  labrosus"). Owned by `pipeline/enrich.py::has_vernacular`, **mirrored** in
+  `frontend/src/lib/game/commonName.ts` — the mirror is what makes the flag's absence
+  survivable, since it derives the same answer for packs built before the flag existed.
+- **`has_image`** records whether Wikipedia has a picture, harvested in bulk at build time
+  (50 titles per request). Clade Clash is played by looking at an animal, so its round
+  generator draws only from species that have one (#146); fame had been standing in for this
+  and leaks badly. Three states, and the third matters: `true` draw it, `false` don't,
+  **absent** = this build never looked, so the client asks Wikipedia itself at draw time
+  (`lib/wikiImages.ts`). Absent must never be read as `false`, or a pack built offline would
+  have nothing to draw.
 - `traits` feed the optional **"trait?"** Marathon reveal — surfaced about a *hidden*
   sister to nudge the player, never paired with a name.
 

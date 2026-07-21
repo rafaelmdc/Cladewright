@@ -74,7 +74,9 @@ interface RevealMsg {
   next?: PublicRound;
 }
 
-const REVEAL_MS = 2500; // matches the server's REVEAL_SECONDS (next round dated past this)
+// Matches the server's REVEAL_SECONDS (the next round's deadline is dated past this), so the
+// two clocks agree. Both were raised in #144 to leave time to actually read the reveal.
+export const REVEAL_MS = 6000;
 
 export function useClashMatch(pairing: Pairing | null): MatchView {
   const [phase, setPhase] = useState<Phase>("connecting");

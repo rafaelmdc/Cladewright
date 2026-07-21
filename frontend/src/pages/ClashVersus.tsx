@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { HealthGauge } from "../components/clash/HealthGauge";
+import { RevealCountdown } from "../components/clash/RevealCountdown";
 import { SpecimenPlate } from "../components/clash/SpecimenPlate";
 import { LeafBackground } from "../components/LeafBackground";
 import { Wordmark } from "../components/Brand";
@@ -28,6 +29,7 @@ import {
   pollPairing,
   quickMatch,
 } from "../lib/clash/matchmaking";
+import { REVEAL_MS } from "../lib/clash/useClashMatch";
 import {
   type MatchView,
   type Phase,
@@ -45,7 +47,8 @@ export function ClashVersus() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [params] = useSearchParams();
   const [scopes, setScopes] = useState<ScopeInfo[]>([]);
-  const [scope, setScope] = useState<string>("");
+  // The chosen pack(s) — a duel may run on a MIX, like a Time Attack run (#147).
+  const [picked, setPicked] = useState<string[]>([]);
   const [stage, setStage] = useState<Stage>("setup");
   const [pairing, setPairing] = useState<Pairing | null>(null);
   const [roomCode, setRoomCode] = useState<string | null>(null); // code WE are hosting
@@ -54,21 +57,21 @@ export function ClashVersus() {
 
   const match = useClashMatch(pairing);
 
-  // The pack comes from the lobby as ?c=<config>. Only fall back to the first available scope
+  // The packs come from the lobby as ?c=<config>. Only fall back to the first available pack
   // when there's no config at all (a bare /clash/versus), so the inline picker has a value.
-  const lobbyScope = useMemo(() => {
+  const lobbyScopes = useMemo(() => {
     const code = params.get("c");
     const cfg = code ? decodeConfig(code) : null;
-    return cfg?.scopes?.[0] ?? "";
+    return cfg?.scopes ?? [];
   }, [params]);
 
   useEffect(() => {
     fetchMe().then((m) => setAuthed(m.authenticated));
     fetchScopes().then((list) => {
       setScopes(list);
-      setScope((s) => s || lobbyScope || list[0]?.key || "");
+      setPicked((p) => (p.length ? p : lobbyScopes.length ? lobbyScopes : [list[0]?.key].filter(Boolean) as string[]));
     });
-  }, [lobbyScope]);
+  }, [lobbyScopes]);
 
   // While searching (queued or hosting a room), poll for the pairing.
   useEffect(() => {
@@ -87,23 +90,23 @@ export function ClashVersus() {
   const onQuick = useCallback(async () => {
     setError(null);
     try {
-      const r = await quickMatch(scope);
+      const r = await quickMatch(picked);
       if (isPairing(r)) setPairing(r);
       else setStage("searching");
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [scope]);
+  }, [picked]);
 
   const onCreateRoom = useCallback(async () => {
     setError(null);
     try {
-      setRoomCode(await createRoom(scope));
+      setRoomCode(await createRoom(picked));
       setStage("searching");
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [scope]);
+  }, [picked]);
 
   const onJoinRoom = useCallback(async () => {
     setError(null);
@@ -115,10 +118,10 @@ export function ClashVersus() {
   }, [joinCode]);
 
   const cancel = useCallback(() => {
-    if (!roomCode) leaveQueue(scope);
+    if (!roomCode) leaveQueue(picked);
     setStage("setup");
     setRoomCode(null);
-  }, [roomCode, scope]);
+  }, [roomCode, picked]);
 
   const rematch = useCallback(() => {
     setPairing(null);
@@ -169,17 +172,25 @@ export function ClashVersus() {
             Only a bare /clash/versus (old bookmark) falls through to the inline picker. */}
         <div className="mt-5">
           <p className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-clade-ink/40">Pack</p>
-          {lobbyScope ? (
+          {lobbyScopes.length > 0 ? (
             <div className="flex flex-wrap items-center gap-3">
-              <span className="pill pill-active">
-                {scopes.find((s) => s.key === scope)?.label ?? scope}
-              </span>
+              {picked.map((k) => (
+                <span key={k} className="pill pill-active">
+                  {scopes.find((s) => s.key === k)?.label ?? k}
+                </span>
+              ))}
               <button onClick={toLobby} className="font-mono text-[11px] uppercase tracking-widest text-clade-ink/45 underline-offset-2 hover:text-clade-ink hover:underline">
                 change in lobby
               </button>
             </div>
           ) : (
-            <ScopePicker scopes={scopes} value={scope ? [scope] : []} onChange={(k) => setScope(k[k.length - 1] ?? "")} multiple={false} />
+            <ScopePicker scopes={scopes} value={picked} onChange={setPicked} />
+          )}
+          {picked.length > 1 && (
+            <p className="mt-2 font-mono text-[11px] text-clade-ink/45">
+              Quick match pairs you with someone on this exact mix — a room code is the sure
+              way to duel a friend on it.
+            </p>
           )}
         </div>
 
@@ -192,8 +203,8 @@ export function ClashVersus() {
             </p>
           ) : (
             <div className="flex flex-wrap items-center gap-3">
-              <button onClick={onQuick} disabled={!scope} className="btn-play disabled:opacity-50">⚔ Quick match</button>
-              <button onClick={onCreateRoom} disabled={!scope} className="pill disabled:opacity-50">Invite a friend</button>
+              <button onClick={onQuick} disabled={picked.length === 0} className="btn-play disabled:opacity-50">⚔ Quick match</button>
+              <button onClick={onCreateRoom} disabled={picked.length === 0} className="pill disabled:opacity-50">Invite a friend</button>
               <div className="flex items-center gap-2">
                 <input
                   value={joinCode}
@@ -260,16 +271,18 @@ function Duel({ match, onExit }: { match: MatchView; onExit: () => void }) {
       <div className="grid w-full grid-cols-1 items-stretch gap-4 sm:grid-cols-[1fr_auto_1fr]">
         <VsOptionCard tip={round.options[0]} side={0} phase={phase} myPick={myPick} reveal={reveal} onPick={() => match.lock(0)} />
         <div className="flex flex-col items-center justify-center gap-2">
-          <VsCenterCard tip={round.center} />
+          <VsCenterCard tip={round.center} spoil={phase === "revealed"} />
           <div className="font-hand text-lg italic text-clade-ink/40">closer to…?</div>
         </div>
         <VsOptionCard tip={round.options[1]} side={1} phase={phase} myPick={myPick} reveal={reveal} onPick={() => match.lock(1)} />
       </div>
 
-      <div className="mt-4 h-5 font-mono text-xs uppercase tracking-widest text-clade-ink/40">
+      <div className="mt-4 flex h-7 items-center font-mono text-xs uppercase tracking-widest text-clade-ink/40">
         {opponentLeft ? "opponent left — play it out" : phase === "playing"
           ? myPick === null ? "pick the closer relative" : oppLocked ? "revealing…" : "locked in — waiting on your opponent"
-          : ""}
+          /* No skip here: the server owns the clock, and one player skipping ahead would just
+             desync them from the round everyone else is still on. */
+          : <RevealCountdown ms={REVEAL_MS} />}
       </div>
     </div>
   );
@@ -314,7 +327,7 @@ function Card({ children, wide }: { children: React.ReactNode; wide?: boolean })
   );
 }
 
-function VsCenterCard({ tip }: { tip: { common: string; sci: string } }) {
+function VsCenterCard({ tip, spoil }: { tip: { common: string; sci: string }; spoil: boolean }) {
   return (
     <div className="ink-card w-52 max-w-full overflow-hidden bg-clade-paper p-0 shadow-sm">
       <div className="border-b-2 border-clade-ink/10 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-clade-accent">
@@ -322,7 +335,7 @@ function VsCenterCard({ tip }: { tip: { common: string; sci: string } }) {
       </div>
       {/* The duel's rounds come from the server, which sends both names, so the plate shows
           both — the lobby's Names lens applies to solo play. */}
-      <SpecimenPlate common={tip.common} sci={tip.sci} lens="both" compact />
+      <SpecimenPlate common={tip.common} sci={tip.sci} lens="both" compact spoil={spoil} />
     </div>
   );
 }
@@ -350,11 +363,13 @@ function VsOptionCard({
   return (
     <button
       type="button"
-      disabled={phase !== "playing" || myPick !== null}
+      /* NOT `disabled`: a disabled button emits no pointer events in Chrome, which would kill
+         the hover zoom on a spent card — including during the reveal. `lock()` guards the pick. */
+      aria-disabled={phase !== "playing" || myPick !== null}
       onClick={onPick}
       className={`ink-card relative flex flex-col overflow-hidden bg-clade-paper p-0 text-left transition ${tone} ${phase === "playing" && myPick === null ? "cursor-pointer" : "cursor-default"}`}
     >
-      <SpecimenPlate common={tip.common} sci={tip.sci} lens="both" />
+      <SpecimenPlate common={tip.common} sci={tip.sci} lens="both" spoil={revealed} />
       {picked && !revealed && (
         <span className="absolute right-2 top-2 rounded-full bg-clade-accent px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-clade-paper">you</span>
       )}

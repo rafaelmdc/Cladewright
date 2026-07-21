@@ -229,6 +229,12 @@ def build_asset(
                 # Popularity score (enwiki pageviews, sitelink-count fallback). Ranks the
                 # pool for the capped "notable" blob + weights the Marathon time bonus.
                 "fame": tip.fame,
+                # Whether `common` above is a real vernacular or the binomial we fell back to
+                # (#145), and whether the species has a picture to put on a card (#146). Clade
+                # Clash draws its rounds from the species that pass both. `has_image` is
+                # omitted rather than guessed when the build had no way to look (offline).
+                "has_common": tip.has_common,
+                **({} if tip.has_image is None else {"has_image": tip.has_image}),
                 "traits": {
                     "environment": tip.taxon.environment,
                     "biomes": tip.taxon.biomes,

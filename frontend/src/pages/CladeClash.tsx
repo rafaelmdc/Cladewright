@@ -17,6 +17,7 @@ import { loadAsset, loadHybridAsset, loadMixed, loadRemoteAsset } from "../lib/a
 import { fetchScopes, type ScopeInfo } from "../lib/asset/scopes";
 import { HealthGauge } from "../components/clash/HealthGauge";
 import { RevealClado } from "../components/clash/RevealClado";
+import { RevealCountdown } from "../components/clash/RevealCountdown";
 import { SpecimenPlate } from "../components/clash/SpecimenPlate";
 import type { AssetTip, InternedAsset } from "../lib/asset/types";
 import { decodeConfig, defaultConfig, encodeConfig } from "../lib/game/config";
@@ -25,7 +26,7 @@ import {
   BOT_DELAY_MIN_MS,
   DEFAULT_ENGINE,
   HP_MAX,
-  makeRound,
+  makeShowableRound,
   type ClashRound,
 } from "../lib/game/cladeClash";
 import type { Relatedness } from "../lib/game/distance";
@@ -39,7 +40,11 @@ const ENGINE = DEFAULT_ENGINE;
 
 const ROUND_CAP = 20; // safety ceiling: if nobody's health hits 0 by here, the higher HP wins
 const ROUND_SECONDS = 12; // per-round clock; runs out → auto-reveal, an unlocked pick counts as a miss
-const REVEAL_MS = 2200; // how long the reveal lingers before the next round
+// How long the reveal lingers. 2.2s was not enough to read a drawn cladogram, take in two
+// verdicts AND notice the damage, so the next round arrived as an interruption — you were
+// still learning the last one (#144). Six seconds is enough to actually read it, the countdown
+// makes the wait legible rather than mysterious, and "next →" skips it for anyone faster.
+const REVEAL_MS = 6000;
 
 export function CladeClash() {
   useTitle("Clade Clash");
@@ -113,7 +118,12 @@ function ClashGame({
   lens: NameLens;
   fameBias: number;
 }) {
-  const [round, setRound] = useState<ClashRound | null>(() => makeRound(asset, ENGINE, Math.random, fameBias));
+  // Rounds are drawn asynchronously now: the generator screens its candidates for species
+  // that actually have a picture, which is a (cached, batched) Wikipedia lookup — see
+  // makeShowableRound. `null` + `drawing` is "still coming"; `null` + !`drawing` is a pack
+  // that can't form a fair round at all.
+  const [round, setRound] = useState<ClashRound | null>(null);
+  const [drawing, setDrawing] = useState(true);
   const [roundNum, setRoundNum] = useState(1);
   const [phase, setPhase] = useState<Phase>("playing");
   const [pick, setPick] = useState<Side | null>(null);
@@ -132,28 +142,67 @@ function ClashGame({
   const secondsRef = useRef(ROUND_SECONDS); // clock source of truth (reveal reads the live value)
   const botTimer = useRef<number | undefined>(undefined);
   const tick = useRef<number | undefined>(undefined);
+  const revealTimer = useRef<number | undefined>(undefined);
+  const nextDraw = useRef<Promise<ClashRound | null> | null>(null); // prefetched during the reveal
+  const live = useRef(true); // false once unmounted — an in-flight draw must not setState
+
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+      window.clearTimeout(revealTimer.current);
+    };
+  }, []);
+
+  // fameBias belongs in the deps: the admin default arrives asynchronously
+  // (fetchGameDefaults), so omitting it would leave every round drawing on a stale bias.
+  const draw = useCallback(
+    () => makeShowableRound(asset, { engine: ENGINE, fameBias, lens }),
+    [asset, fameBias, lens],
+  );
+
+  // The opening round. Re-runs if the pack or the draw parameters change.
+  useEffect(() => {
+    let cancelled = false;
+    setDrawing(true);
+    draw().then((r) => {
+      if (cancelled) return;
+      setRound(r);
+      setDrawing(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [draw]);
 
   // If the pool can't form a fair round at all, bail gracefully.
-  const flat = round === null;
+  const flat = round === null && !drawing;
 
   const nextRound = useCallback(() => {
     if (overRef.current || roundNum >= ROUND_CAP) {
       setPhase("over");
       return;
     }
-    setRoundNum((n) => n + 1);
-    setRound(makeRound(asset, ENGINE, Math.random, fameBias));
-    setPick(null);
-    setBotPick(null);
-    setBotLocked(false);
-    pickRef.current = null;
-    botPickRef.current = null;
-    setDmg({ you: 0, bot: 0 });
-    setSeconds(ROUND_SECONDS);
-    setPhase("playing");
-    // fameBias belongs here: the admin default arrives asynchronously (fetchGameDefaults), so
-    // omitting it would leave every round after the first drawing on a stale bias.
-  }, [asset, roundNum, fameBias]);
+    // The reveal prefetched this while you were reading it, so it's almost always already
+    // resolved and the next round appears instantly.
+    const coming = nextDraw.current ?? draw();
+    nextDraw.current = null;
+    setDrawing(true);
+    coming.then((r) => {
+      if (!live.current) return;
+      setRoundNum((n) => n + 1);
+      setRound(r);
+      setDrawing(false);
+      setPick(null);
+      setBotPick(null);
+      setBotLocked(false);
+      pickRef.current = null;
+      botPickRef.current = null;
+      setDmg({ you: 0, bot: 0 });
+      setSeconds(ROUND_SECONDS);
+      setPhase("playing");
+    });
+  }, [draw, roundNum]);
 
   const reveal = useCallback(() => {
     setPhase((p) => {
@@ -174,10 +223,13 @@ function ClashGame({
       if (youHpRef.current <= 0 || botHpRef.current <= 0) overRef.current = true; // killing blow
       window.clearTimeout(botTimer.current);
       window.clearInterval(tick.current);
-      window.setTimeout(nextRound, REVEAL_MS);
+      // Draw the next round NOW, while the reveal is on screen: its image screening is a
+      // network call, and the reveal is exactly the pause that hides it.
+      nextDraw.current = draw();
+      revealTimer.current = window.setTimeout(nextRound, REVEAL_MS);
       return "revealed";
     });
-  }, [round, nextRound]);
+  }, [round, nextRound, draw]);
 
   // Per-round clock + bot scheduling. Restarts whenever a fresh round starts.
   useEffect(() => {
@@ -230,14 +282,27 @@ function ClashGame({
     setBotHp(HP_MAX);
     setDmg({ you: 0, bot: 0 });
     setRoundNum(1);
-    setRound(makeRound(asset, ENGINE, Math.random, fameBias));
     setPick(null);
     setBotPick(null);
     setBotLocked(false);
     pickRef.current = null;
     botPickRef.current = null;
     setSeconds(ROUND_SECONDS);
-    setPhase("playing");
+    setDrawing(true);
+    setRound(null);
+    draw().then((r) => {
+      if (!live.current) return;
+      setRound(r);
+      setDrawing(false);
+      setPhase("playing");
+    });
+  }
+
+  /** Skip the rest of the reveal — for a player who has already read it. */
+  function skipReveal() {
+    if (phase !== "revealed") return;
+    window.clearTimeout(revealTimer.current);
+    nextRound();
   }
 
   if (flat) {
@@ -284,6 +349,15 @@ function ClashGame({
     );
   }
 
+  // The opening draw (or a fresh match): there is nothing to render yet.
+  if (!round) {
+    return (
+      <Shell>
+        <p className="font-hand text-2xl text-clade-ink/60 animate-pulse">dealing a round…</p>
+      </Shell>
+    );
+  }
+
   const frac = seconds / ROUND_SECONDS;
   return (
     <Shell>
@@ -306,26 +380,26 @@ function ClashGame({
 
       <div className="grid w-full max-w-3xl grid-cols-1 items-start gap-4 sm:grid-cols-3">
         <OptionCard
-          tip={round!.options[0]}
-          rel={round!.rel[0]}
+          tip={round.options[0]}
+          rel={round.rel[0]}
           side={0}
           picked={pick === 0}
-          isCorrect={round!.correct === 0}
+          isCorrect={round.correct === 0}
           botPicked={botPick === 0}
           phase={phase}
           lens={lens}
           onPick={() => choose(0)}
         />
         <div className="flex flex-col items-center justify-center gap-2">
-          <CenterCard tip={round!.center} lens={lens} />
+          <CenterCard tip={round.center} lens={lens} spoil={phase === "revealed"} />
           <div className="font-hand text-lg italic text-clade-ink/40">closer to…?</div>
         </div>
         <OptionCard
-          tip={round!.options[1]}
-          rel={round!.rel[1]}
+          tip={round.options[1]}
+          rel={round.rel[1]}
           side={1}
           picked={pick === 1}
-          isCorrect={round!.correct === 1}
+          isCorrect={round.correct === 1}
           botPicked={botPick === 1}
           phase={phase}
           lens={lens}
@@ -351,14 +425,21 @@ function ClashGame({
         )}
       </AnimatePresence>
 
-      <div className="mt-4 h-5 font-mono text-xs uppercase tracking-widest text-clade-ink/40">
-        {phase === "playing"
-          ? pick === null
-            ? "pick the closer relative"
-            : botLocked
-              ? "revealing…"
-              : "locked in — waiting on the bot"
-          : ""}
+      <div className="mt-4 flex h-7 items-center font-mono text-xs uppercase tracking-widest text-clade-ink/40">
+        {phase === "playing" ? (
+          pick === null ? (
+            "pick the closer relative"
+          ) : botLocked ? (
+            "revealing…"
+          ) : (
+            "locked in — waiting on the bot"
+          )
+        ) : (
+          /* The reveal used to just vanish after a couple of seconds with no warning, which
+             read as the game snatching the tree away mid-thought (#144). Now the wait is
+             visible and skippable. */
+          <RevealCountdown ms={REVEAL_MS} onSkip={skipReveal} waiting={drawing} />
+        )}
       </div>
     </Shell>
   );
@@ -377,13 +458,13 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function CenterCard({ tip, lens }: { tip: AssetTip; lens: NameLens }) {
+function CenterCard({ tip, lens, spoil }: { tip: AssetTip; lens: NameLens; spoil: boolean }) {
   return (
     <div className="ink-card w-full overflow-hidden bg-clade-paper p-0 shadow-sm ring-2 ring-clade-accent/25">
       <div className="border-b-2 border-clade-ink/10 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-clade-accent">
         Specimen
       </div>
-      <SpecimenPlate common={tip.common} sci={tip.sci} lens={lens} compact />
+      <SpecimenPlate common={tip.common} sci={tip.sci} lens={lens} compact spoil={spoil} />
     </div>
   );
 }
@@ -422,14 +503,17 @@ function OptionCard({
   return (
     <motion.button
       type="button"
-      disabled={phase !== "playing" || picked}
+      /* NOT `disabled`: a disabled button emits no pointer events in Chrome, which would kill
+         the hover zoom on every spent card — including during the reveal, when you most want
+         to look at the animal. The click is guarded by `choose()` instead. */
+      aria-disabled={phase !== "playing" || picked}
       onClick={onPick}
       /* It should look pickable before you commit, and spent once you have. */
       whileHover={live ? { y: -2 } : undefined}
       whileTap={live ? { y: 0, scale: 0.99 } : undefined}
       className={`ink-card relative flex flex-col overflow-hidden bg-clade-paper p-0 text-left transition ${tone} ${live ? "cursor-pointer" : "cursor-default"}`}
     >
-      <SpecimenPlate common={tip.common} sci={tip.sci} lens={lens} />
+      <SpecimenPlate common={tip.common} sci={tip.sci} lens={lens} spoil={revealed} />
 
       {/* lock-in: an ink underline sweeps the plate, so a spent pick reads as committed */}
       {picked && !revealed && (

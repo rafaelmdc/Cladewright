@@ -18,6 +18,9 @@ from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence
 
 HP_MAX = 100  # starting health for a duel (GeoGuessr-style), mirrors cladeClash.ts
+# Below this many drawable tips a pool can't form rounds at all (make_round bails), so the
+# presentability filters give up rather than empty a small pack. Mirrors make_round's floor.
+_MIN_POOL = 8
 
 
 @dataclass(frozen=True)
@@ -132,6 +135,7 @@ class ClashPool:
         lineage: dict[str, tuple[str, ...]] = {}
         common: dict[str, str] = {}
         sci: dict[str, str] = {}
+        fame: dict[str, int] = {}
         drawable: dict[str, int] = {}  # tip id -> fame (dict, so an overlap doesn't duplicate)
         for blob in blobs:
             for node in blob.get("nodes", []):
@@ -141,13 +145,23 @@ class ClashPool:
                 lineage[tid] = tuple(tip.get("lineage", []))
                 common[tid] = tip.get("common") or tip.get("sci") or tid
                 sci[tid] = tip.get("sci") or ""
-                # A species with no picture is a card with a hatched blank on it (#146). The
-                # flag is baked by builds from #146 onward; a pack built before that has no
-                # opinion, so every tip stays drawable and versus looks as it does today.
-                if tip.get("has_image") is False:
+                fame[tid] = int(tip.get("fame") or 0)
+                # A card is a picture with a name under it, so a species missing either can't
+                # be dealt (#145, #146). Both flags are baked by builds from those issues
+                # onward; a pack built before has no opinion on either, so every tip stays
+                # drawable and versus looks exactly as it does today. Versus renders both
+                # names, which is why a vernacular is required here — it matches the client's
+                # default lens (see namedPool in cladeClash.ts).
+                if tip.get("has_image") is False or tip.get("has_common") is False:
                     drawable.pop(tid, None)
                     continue
-                drawable[tid] = int(tip.get("fame") or 0)
+                drawable[tid] = fame[tid]
+        # A pack can be small AND poorly covered — Wikipedia has a picture for well under half
+        # of some groups. Rather than refuse to start a match on it, fall back to the whole
+        # pool: an ugly duel beats no duel, and it is the same "never make a pack unplayable"
+        # posture the fame bias takes when it relaxes across attempts.
+        if len(drawable) < _MIN_POOL:
+            drawable = fame
         # Fame descending, then id, so a rebuild at equal fame draws the same rounds.
         ordered = sorted(drawable.items(), key=lambda kv: (-kv[1], kv[0]))
         return cls(

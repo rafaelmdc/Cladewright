@@ -157,16 +157,35 @@ class DrawableTipTests(SimpleTestCase):
     def test_species_without_a_picture_are_not_drawn(self):
         pool = ClashPool.from_blob(
             self._blob(
-                [
-                    {"id": "a", "sci": "Aa aa", "has_image": True},
+                [{"id": f"ok{i}", "sci": f"A{i} a", "has_image": True} for i in range(8)]
+                + [
                     {"id": "b", "sci": "Bb bb", "has_image": False},
                     {"id": "c", "sci": "Cc cc"},  # no opinion -> still drawable
                 ]
             )
         )
-        self.assertEqual(set(pool.tip_ids), {"a", "c"})
+        self.assertNotIn("b", pool.tip_ids)
+        self.assertIn("c", pool.tip_ids)
         # …but they keep their lookups, so an ALREADY-dealt round still renders.
         self.assertIn("b", pool.lineage)
+
+    def test_species_without_a_common_name_are_not_drawn(self):
+        """Versus shows both names, so a card with only Latin on it is the same bug (#145)."""
+        pool = ClashPool.from_blob(
+            self._blob(
+                [{"id": f"ok{i}", "sci": f"A{i} a", "has_common": True} for i in range(8)]
+                + [{"id": "latin", "sci": "Oxyeleotris herwerdenii", "has_common": False}]
+            )
+        )
+        self.assertNotIn("latin", pool.tip_ids)
+        self.assertEqual(len(pool.tip_ids), 8)
+
+    def test_filters_give_up_rather_than_empty_a_small_pack(self):
+        """A small, badly-covered pack must still be playable — an ugly duel beats no duel."""
+        pool = ClashPool.from_blob(
+            self._blob([{"id": f"t{i}", "sci": f"A{i} a", "has_image": False} for i in range(10)])
+        )
+        self.assertEqual(len(pool.tip_ids), 10)
 
     def test_a_pack_built_before_the_flag_keeps_every_tip(self):
         pool = ClashPool.from_blob(self._blob([{"id": x, "sci": x} for x in "abcdefghij"]))

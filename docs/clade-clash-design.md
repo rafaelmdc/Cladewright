@@ -59,6 +59,12 @@ play — the Hub renders one card per row.
     (`lib/wikiImages.ts`), so packs built before the flag are fixed too. A round is drawn as
     one of a batch and the first fully-showable one wins; if none is, an unscreened round
     still plays — a pack with little art should look worse, not stop.
+
+  Coverage is the reason both flags need a *measured* answer rather than a proxy: in the Fish
+  pack **29% of species have a picture** and **29% have a real common name**. The versus pool
+  applies both server-side (it cannot call Wikipedia mid-draw, so it depends entirely on the
+  baked flags), and gives up on them entirely if they'd leave a pack under 8 drawable tips —
+  a small badly-covered pack must still deal a round.
 - **The draw favours species people know** (`fameBias`, admin-tunable — see
   [`admin.md`](admin.md)). A uniform draw over a 6,000-species pack mostly produced rounds
   like "Puntilla tuco-tuco vs Furtive tuco-tuco": unanswerable, so a coin flip rather than a
